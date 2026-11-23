@@ -18,11 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AutoFixHigh
-import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCut
-import androidx.compose.material.icons.rounded.Email
-import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.MusicNote
@@ -38,14 +35,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeCategory
@@ -61,10 +62,17 @@ import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
 import com.example.ui.theme.SpaceGroteskFontFamily
 
+private fun modeBrandDrawableRes(mode: ProcessingMode): Int? = when (mode) {
+    ProcessingMode.DISCORD_20MB -> R.drawable.ic_brand_discord
+    ProcessingMode.WHATSAPP_100MB -> R.drawable.ic_brand_whatsapp
+    ProcessingMode.GMAIL_25MB -> R.drawable.ic_brand_gmail
+    else -> null
+}
+
 private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
-    ProcessingMode.DISCORD_20MB -> Icons.Rounded.Forum
-    ProcessingMode.WHATSAPP_100MB -> Icons.Rounded.Chat
-    ProcessingMode.GMAIL_25MB -> Icons.Rounded.Email
+    ProcessingMode.DISCORD_20MB,
+    ProcessingMode.WHATSAPP_100MB,
+    ProcessingMode.GMAIL_25MB,
     ProcessingMode.CUSTOM_SIZE -> Icons.Rounded.Compress
     ProcessingMode.TRIM_VIDEO -> Icons.Rounded.ContentCut
     ProcessingMode.REMUX_FORMAT -> Icons.Rounded.SwapHoriz
@@ -73,6 +81,31 @@ private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> Icons.Rounded.AutoFixHigh
     ProcessingMode.EXTRACT_AUDIO -> Icons.Rounded.MusicNote
     ProcessingMode.CUSTOM_COMMAND -> Icons.Rounded.Terminal
+}
+
+@Composable
+private fun ModeGlyphIcon(
+    mode: ProcessingMode,
+    contentDescription: String,
+    tint: Color,
+    size: Dp
+) {
+    val brandRes = modeBrandDrawableRes(mode)
+    if (brandRes != null) {
+        Icon(
+            painter = painterResource(id = brandRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(size)
+        )
+    } else {
+        Icon(
+            imageVector = modeIcon(mode),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(size)
+        )
+    }
 }
 
 @Composable
@@ -171,11 +204,11 @@ fun TargetSizeModeRow(
                                     .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = modeIcon(mode),
+                                ModeGlyphIcon(
+                                    mode = mode,
                                     contentDescription = mode.localizedTitle(strings),
                                     tint = iconColor,
-                                    modifier = Modifier.size(19.dp)
+                                    size = 19.dp
                                 )
                             }
                             Spacer(Modifier.height(6.dp))
@@ -216,7 +249,7 @@ fun TargetSizeModeRow(
                     .testTag("mode_card_${customSizeMode.number}"),
                 shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.30f)),
+                border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
                 tonalElevation = 0.dp
             ) {
                 Row(
