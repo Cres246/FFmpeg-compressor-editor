@@ -1,0 +1,64 @@
+name: Android APK Build & Release
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodu Indir
+        uses: actions/checkout@v6
+
+      - name: Java 17 Kur
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Gradle Surumunu Tespit Et
+        id: gradle-ver
+        run: |
+          VER=""
+          if [ -f gradle/wrapper/gradle-wrapper.properties ]; then
+            VER=$( (grep -oE 'gradle-[0-9]+(\.[0-9]+)+' gradle/wrapper/gradle-wrapper.properties || true) | head -n1 | sed 's/gradle-//' )
+          fi
+          echo "version=${VER:-8.11.1}" >> "$GITHUB_OUTPUT"
+          echo "Kullanilacak Gradle surumu: ${VER:-8.11.1}"
+
+      - name: Gradle Kur
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ steps.gradle-ver.outputs.version }}
+          validate-wrappers: false
+
+      - name: APK Derle (Debug)
+        run: |
+          if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: APK Dosyasini Actions'a Yukle
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Indirme Linki Olustur (GitHub Release)
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Surum v1.0.${{ github.run_number }}
+          make_latest: "true"
+          fail_on_unmatched_files: true
+          files: app/build/outputs/apk/debug/*.apk
