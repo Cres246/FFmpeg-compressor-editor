@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.os.PerformanceHintManager
 import android.os.Process
+import com.example.domain.AppLanguageController
+import com.example.domain.AppStrings
 import java.io.File
 
 /**
@@ -180,7 +182,9 @@ class CpuPerformanceBooster(private val context: Context) {
         /**
          * Returns a concise hardware topology label (e.g., "8 çekirdek · Prime öncelikli").
          */
-        fun describeCpuBoostSummary(): String {
+        fun describeCpuBoostSummary(
+            strings: AppStrings = AppLanguageController.currentStrings()
+        ): String {
             val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
             val maxFreqKhz = runCatching {
                 (0 until cores).mapNotNull { idx ->
@@ -194,9 +198,9 @@ class CpuPerformanceBooster(private val context: Context) {
 
             return if (maxFreqKhz != null && maxFreqKhz > 0L) {
                 val ghz = String.format(java.util.Locale.US, "%.2f GHz", maxFreqKhz / 1_000_000.0)
-                "Prime ($ghz) öncelikli · $cores çekirdek tam güç"
+                strings.cpuBoostWithFreq(ghz, cores)
             } else {
-                "Prime çekirdek öncelikli · $cores çekirdek tam güç"
+                strings.cpuBoostGeneric(cores)
             }
         }
     }

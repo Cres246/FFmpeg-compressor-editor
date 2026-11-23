@@ -36,13 +36,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,15 +58,21 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.domain.AppLanguage
+import com.example.domain.AppLanguageController
 import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
+import com.example.domain.LanguagePreference
+import com.example.domain.LocalAppStrings
 import com.example.domain.ModeCategory
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
+import com.example.domain.stringsFor
 import com.example.ui.MainViewModel
 import com.example.ui.components.MediaHeroCard
 import com.example.ui.components.ModeCategoryHeader
@@ -85,6 +96,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLanguageController.init(applicationContext)
         enableEdgeToEdge()
         requestHighestRefreshRate()
         handleIncomingIntent(intent)
@@ -103,6 +115,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppLanguageController.init(applicationContext)
         requestHighestRefreshRate()
     }
 
@@ -176,19 +189,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openCompletedOutput(output: CompletedOutput) {
+        val s = AppLanguageController.currentStrings()
         val uri = Uri.parse(output.contentUriString)
         val viewIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, output.mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         runCatching {
-            startActivity(Intent.createChooser(viewIntent, "Oynat / Aç"))
+            startActivity(Intent.createChooser(viewIntent, s.actionOpen))
         }.onFailure {
-            Toast.makeText(this, "Dosyayı açacak uygulama bulunamadı.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, s.toastNoAppToOpenFile, Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun shareCompletedOutput(output: CompletedOutput) {
+        val s = AppLanguageController.currentStrings()
         val uri = Uri.parse(output.contentUriString)
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = output.mimeType
@@ -196,12 +211,13 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         runCatching {
-            startActivity(Intent.createChooser(shareIntent, "Paylaş"))
+            startActivity(Intent.createChooser(shareIntent, s.actionShare))
         }.onFailure {
-            Toast.makeText(this, "Paylaşım başlatılamadı.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, s.toastShareFailed, Toast.LENGTH_SHORT).show()
         }
     }
     private fun openSourceMedia(media: com.example.domain.MediaInfo) {
+        val s = AppLanguageController.currentStrings()
         val mime = if (media.hasVideo) {
             com.example.domain.FfmpegMath.resolveMimeType(media.fileName).takeIf { it.startsWith("video/") }
                 ?: "video/*"
@@ -213,9 +229,9 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         runCatching {
-            startActivity(Intent.createChooser(viewIntent, "Hangi uygulamada oynatılsın?"))
+            startActivity(Intent.createChooser(viewIntent, s.chooserPlayVideoWith))
         }.onFailure {
-            Toast.makeText(this, "Videoyu açacak uygulama bulunamadı.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, s.toastNoAppToPlayVideo, Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -231,6 +247,10 @@ private fun FFLabAppRoot(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val encodingState by viewModel.encodingState.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
+    val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
+    val languagePreference by viewModel.languagePreference.collectAsStateWithLifecycle()
+    val strings = remember(appLanguage) { stringsFor(appLanguage) }
+    var showLanguageMenu by remember { mutableStateOf(false) }
 
     // Zero-permission Android Photo Picker for gallery videos
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -292,6 +312,7 @@ private fun FFLabAppRoot(
         cachedEncoding = encodingState
     }
 
+    CompositionLocalProvider(LocalAppStrings provides strings) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -397,16 +418,125 @@ private fun FFLabAppRoot(
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
-                                    IconButton(
-                                        onClick = { viewModel.setShowHistorySheet(true) },
-                                        modifier = Modifier.testTag("history_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.History,
-                                            contentDescription = stringResource(R.string.history_title),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(21.dp)
-                                        )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box {
+                                            IconButton(
+                                                onClick = { showLanguageMenu = true },
+                                                modifier = Modifier.testTag("language_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Language,
+                                                    contentDescription = strings.languageSelectorCd,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(21.dp)
+                                                )
+                                            }
+                                            DropdownMenu(
+                                                expanded = showLanguageMenu,
+                                                onDismissRequest = { showLanguageMenu = false },
+                                                containerColor = MaterialTheme.colorScheme.surface
+                                            ) {
+                                                val systemDetected = remember(showLanguageMenu) {
+                                                    AppLanguageController.detectSystemLanguage()
+                                                }
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = "${strings.languageAutoSystem} · ${systemDetected.code.uppercase()}",
+                                                            fontWeight = if (languagePreference == LanguagePreference.SYSTEM) FontWeight.SemiBold else FontWeight.Normal,
+                                                            color = if (languagePreference == LanguagePreference.SYSTEM) {
+                                                                MaterialTheme.colorScheme.primary
+                                                            } else {
+                                                                MaterialTheme.colorScheme.onSurface
+                                                            }
+                                                        )
+                                                    },
+                                                    trailingIcon = if (languagePreference == LanguagePreference.SYSTEM) {
+                                                        {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Check,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    } else null,
+                                                    onClick = {
+                                                        showLanguageMenu = false
+                                                        viewModel.setLanguagePreference(LanguagePreference.SYSTEM)
+                                                    },
+                                                    modifier = Modifier.testTag("language_option_system")
+                                                )
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = AppLanguage.TR.nativeName,
+                                                            fontWeight = if (languagePreference == LanguagePreference.TR) FontWeight.SemiBold else FontWeight.Normal,
+                                                            color = if (languagePreference == LanguagePreference.TR) {
+                                                                MaterialTheme.colorScheme.primary
+                                                            } else {
+                                                                MaterialTheme.colorScheme.onSurface
+                                                            }
+                                                        )
+                                                    },
+                                                    trailingIcon = if (languagePreference == LanguagePreference.TR) {
+                                                        {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Check,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    } else null,
+                                                    onClick = {
+                                                        showLanguageMenu = false
+                                                        viewModel.setLanguagePreference(LanguagePreference.TR)
+                                                    },
+                                                    modifier = Modifier.testTag("language_option_tr")
+                                                )
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = AppLanguage.EN.nativeName,
+                                                            fontWeight = if (languagePreference == LanguagePreference.EN) FontWeight.SemiBold else FontWeight.Normal,
+                                                            color = if (languagePreference == LanguagePreference.EN) {
+                                                                MaterialTheme.colorScheme.primary
+                                                            } else {
+                                                                MaterialTheme.colorScheme.onSurface
+                                                            }
+                                                        )
+                                                    },
+                                                    trailingIcon = if (languagePreference == LanguagePreference.EN) {
+                                                        {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Check,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    } else null,
+                                                    onClick = {
+                                                        showLanguageMenu = false
+                                                        viewModel.setLanguagePreference(LanguagePreference.EN)
+                                                    },
+                                                    modifier = Modifier.testTag("language_option_en")
+                                                )
+                                            }
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.setShowHistorySheet(true) },
+                                            modifier = Modifier.testTag("history_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.History,
+                                                contentDescription = strings.historyTitle,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(21.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -488,5 +618,6 @@ private fun FFLabAppRoot(
             },
             onClearAll = viewModel::clearHistory
         )
+    }
     }
 }

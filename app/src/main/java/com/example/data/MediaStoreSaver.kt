@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
+import com.example.domain.AppLanguageController
 import com.example.domain.FfmpegMath
 import java.io.File
 import java.io.FileInputStream
@@ -63,15 +64,16 @@ object MediaStoreSaver {
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                     val resolver = context.contentResolver
+                    val s = AppLanguageController.currentStrings()
                     val insertedUri = resolver.insert(collection, values)
-                        ?: throw IllegalStateException("MediaStore kaydı oluşturulamadı")
+                        ?: throw IllegalStateException(s.errMediaStoreInsertFailed)
 
                     try {
                         resolver.openOutputStream(insertedUri)?.use { out ->
                             FileInputStream(sourceFile).use { input ->
                                 input.copyTo(out, bufferSize = 256 * 1024)
                             }
-                        } ?: throw IllegalStateException("Çıktı akışı açılamadı")
+                        } ?: throw IllegalStateException(s.errOutputStreamFailed)
 
                         val completeValues = ContentValues().apply {
                             put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -92,8 +94,9 @@ object MediaStoreSaver {
                     lastError = e
                 }
             }
+            val s = AppLanguageController.currentStrings()
             throw IllegalStateException(
-                "Dosya kaydedilemedi: ${lastError?.message ?: "Bilinmeyen MediaStore hatası"}",
+                s.errSaveFailed(lastError?.message ?: s.errUnknownMediaStore),
                 lastError
             )
         } else {

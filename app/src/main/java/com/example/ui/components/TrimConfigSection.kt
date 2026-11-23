@@ -57,10 +57,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.FfmpegEngine
 import com.example.domain.FfmpegMath
+import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.TrimCutStrategy
 import com.example.domain.TrimSubMode
+import com.example.domain.localizedSubtitle
+import com.example.domain.localizedTitle
 import com.example.ui.MainViewModel
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
@@ -79,6 +82,7 @@ fun TrimVideoPreviewCard(
 ) {
     val context = LocalContext.current
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val (effStart, effEnd, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
 
     val parsedStartSec = effStart?.let { FfmpegMath.parseTimestampToSeconds(it) }
@@ -105,15 +109,15 @@ fun TrimVideoPreviewCard(
         endSec = nextEndSec
     }
 
-    val startLabel = remember(effStart, startSec) {
+    val startLabel = remember(effStart, startSec, strings) {
         if (effStart == null) "00:00.0"
-        else FfmpegMath.formatKeyframeTime(startSec)
+        else FfmpegMath.formatKeyframeTime(startSec, strings)
     }
-    val endLabel = remember(effEnd, endSec, media.durationSec) {
+    val endLabel = remember(effEnd, endSec, media.durationSec, strings) {
         when {
-            effEnd != null -> FfmpegMath.formatKeyframeTime(endSec)
-            media.durationSec != null -> FfmpegMath.formatKeyframeTime(media.durationSec)
-            else -> "Son"
+            effEnd != null -> FfmpegMath.formatKeyframeTime(endSec, strings)
+            media.durationSec != null -> FfmpegMath.formatKeyframeTime(media.durationSec, strings)
+            else -> strings.trimEndPlaceholder
         }
     }
 
@@ -169,7 +173,7 @@ fun TrimVideoPreviewCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 SquareFramePreviewBox(
-                    tag = "BAŞLANGIÇ",
+                    tag = strings.previewStartTag,
                     timeText = startLabel,
                     bitmap = startBitmap,
                     isLoading = startLoading,
@@ -179,7 +183,7 @@ fun TrimVideoPreviewCard(
                         .testTag("trim_preview_start_frame")
                 )
                 SquareFramePreviewBox(
-                    tag = "BİTİŞ",
+                    tag = strings.previewEndTag,
                     timeText = endLabel,
                     bitmap = endBitmap,
                     isLoading = endLoading,
@@ -206,7 +210,7 @@ fun TrimVideoPreviewCard(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "Videoyu Oynat",
+                    text = strings.playVideoButton,
                     style = MaterialTheme.typography.labelLarge
                 )
             }
@@ -224,6 +228,7 @@ private fun SquareFramePreviewBox(
     modifier: Modifier = Modifier
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(12.dp)
     Box(
         modifier = modifier
@@ -236,14 +241,14 @@ private fun SquareFramePreviewBox(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
-                contentDescription = "$tag karesi ($timeText)",
+                contentDescription = strings.previewFrameCd(tag, timeText),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         } else if (!isLoading) {
             Icon(
                 imageVector = Icons.Rounded.Videocam,
-                contentDescription = "$tag karesi",
+                contentDescription = strings.previewFrameFallbackCd(tag),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                 modifier = Modifier.size(28.dp)
             )
@@ -324,6 +329,7 @@ fun TrimTimeAndKeyframeSection(
     viewModel: MainViewModel
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val (effStart, effEnd, clipDur) = FfmpegMath.resolveTrimRange(config, media.durationSec)
 
     Surface(
@@ -361,12 +367,12 @@ fun TrimTimeAndKeyframeSection(
                         Spacer(Modifier.width(6.dp))
                         val startLabel = effStart?.let {
                             val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed) else it
-                        } ?: "00:00 (Baş)"
+                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
+                        } ?: strings.trimStartPlaceholder
                         val endLabel = effEnd?.let {
                             val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed) else it
-                        } ?: "Son"
+                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
+                        } ?: strings.trimEndPlaceholder
                         Text(
                             text = "$startLabel  →  $endLabel",
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.Bold),
@@ -375,7 +381,7 @@ fun TrimTimeAndKeyframeSection(
                     }
                     if (clipDur != null) {
                         Text(
-                            text = FfmpegMath.formatDurationShort(clipDur),
+                            text = FfmpegMath.formatDurationShort(clipDur, strings),
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -393,8 +399,8 @@ fun TrimTimeAndKeyframeSection(
                 OutlinedTextField(
                     value = config.startTimeInput,
                     onValueChange = viewModel::updateStartTime,
-                    label = { Text("Başlangıç") },
-                    placeholder = { Text("00:00 (Baş)", style = MonoLabelStyle) },
+                    label = { Text(strings.trimStartLabel) },
+                    placeholder = { Text(strings.trimStartPlaceholder, style = MonoLabelStyle) },
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -403,8 +409,8 @@ fun TrimTimeAndKeyframeSection(
                 OutlinedTextField(
                     value = config.endTimeInput,
                     onValueChange = viewModel::updateEndTime,
-                    label = { Text("Bitiş") },
-                    placeholder = { Text("Son", style = MonoLabelStyle) },
+                    label = { Text(strings.trimEndLabel) },
+                    placeholder = { Text(strings.trimEndPlaceholder, style = MonoLabelStyle) },
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -465,7 +471,7 @@ fun TrimTimeAndKeyframeSection(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "Keyframe noktalarından kayıpsız kesilir; görüntü yeniden kodlanmadığı için orijinal kalır ve dosya boyutu kesilen süre oranında aynı kalır.",
+                            text = strings.trimLosslessInfo,
                             style = MaterialTheme.typography.bodySmall,
                             color = extColors.onLosslessContainer
                         )
@@ -491,11 +497,11 @@ fun TrimTimeAndKeyframeSection(
                         if (config.trimScan.isScanning) {
                             CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("Keyframe noktaları taranıyor...")
+                            Text(strings.scanningKeyframes)
                         } else {
                             Icon(Icons.Rounded.Radar, contentDescription = null, modifier = Modifier.size(17.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Keyframe Noktalarını Göster")
+                            Text(strings.showKeyframesButton)
                         }
                     }
                 }
@@ -527,7 +533,7 @@ fun TrimTimeAndKeyframeSection(
                             if (startScan != null) {
                                 val activeStartKf = config.selectedStartKfSec ?: startScan.prevKf
                                 KeyframeGridBlock(
-                                    label = "Başlangıç Keyframe'leri",
+                                    label = strings.startKeyframesLabel,
                                     keyframes = FfmpegMath.selectCenteredKeyframes(
                                         keyframes = startScan.nearbyKeyframes,
                                         targetSec = startScan.targetSec,
@@ -540,7 +546,7 @@ fun TrimTimeAndKeyframeSection(
                             if (endScan != null) {
                                 val activeEndKf = config.selectedEndKfSec ?: endScan.nextKf
                                 KeyframeGridBlock(
-                                    label = "Bitiş Keyframe'leri",
+                                    label = strings.endKeyframesLabel,
                                     keyframes = FfmpegMath.selectCenteredKeyframes(
                                         keyframes = endScan.nearbyKeyframes,
                                         targetSec = endScan.targetSec,
@@ -575,7 +581,7 @@ fun TrimTimeAndKeyframeSection(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "Video tam girdiğiniz saniyeden yeniden kodlanacağı için dosya boyutu epey büyüyebilir. CRF 16 (HEVC için CRF 20) ile kodlandığından neredeyse gözle görülemeyecek seviyede görüntü kaybı olur.",
+                            text = strings.trimPreciseInfo,
                             style = MaterialTheme.typography.bodySmall,
                             color = extColors.onKeyframeContainer
                         )
@@ -596,6 +602,7 @@ private fun TrimStrategyBox(
     modifier: Modifier = Modifier
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val icon = if (strategy == TrimCutStrategy.LOSSLESS_KEYFRAME) Icons.Rounded.Bolt else Icons.Rounded.Tune
 
     Surface(
@@ -620,7 +627,10 @@ private fun TrimStrategyBox(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
@@ -629,7 +639,7 @@ private fun TrimStrategyBox(
                     )
                     Spacer(Modifier.width(5.dp))
                     Text(
-                        text = strategy.title,
+                        text = strategy.localizedTitle(strings),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = if (selected) accentColor else MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -646,7 +656,7 @@ private fun TrimStrategyBox(
                 }
             }
             Text(
-                text = strategy.subtitle,
+                text = strategy.localizedSubtitle(strings),
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -664,6 +674,7 @@ private fun KeyframeGridBlock(
     onSelectKeyframe: (Double) -> Unit
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val rows = keyframes.chunked(4)
 
     Column(
@@ -678,7 +689,7 @@ private fun KeyframeGridBlock(
 
         if (rows.isEmpty()) {
             Text(
-                text = "Yakında keyframe bulunamadı",
+                text = strings.noNearbyKeyframes,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -716,14 +727,14 @@ private fun KeyframeGridBlock(
                                 if (isSelected) {
                                     Icon(
                                         imageVector = Icons.Rounded.Star,
-                                        contentDescription = "Seçili keyframe",
+                                        contentDescription = strings.selectedKeyframeCd,
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Spacer(Modifier.width(3.dp))
                                 }
                                 Text(
-                                    text = FfmpegMath.formatKeyframeTime(kf),
+                                    text = FfmpegMath.formatKeyframeTime(kf, strings),
                                     style = MonoLabelStyle.copy(
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                     ),
@@ -753,9 +764,10 @@ fun TrimSubModeSelector(
     onSelect: (TrimSubMode) -> Unit
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     ConfigSectionCard(
-        title = "Kesim Modu",
-        subtitle = "Kayıpsız kesimler -noaccurate_seek + -avoid_negative_ts make_zero kullanır"
+        title = strings.trimModeTitle,
+        subtitle = strings.trimModeSub
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             TrimSubMode.entries.forEach { mode ->
@@ -807,12 +819,12 @@ fun TrimSubModeSelector(
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = mode.title,
+                                text = mode.localizedTitle(strings),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = titleColor
                             )
                             Text(
-                                text = mode.subtitle,
+                                text = mode.localizedSubtitle(strings),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = subtitleColor
                             )
@@ -821,7 +833,7 @@ fun TrimSubModeSelector(
                             Spacer(Modifier.width(6.dp))
                             Icon(
                                 imageVector = Icons.Rounded.Block,
-                                contentDescription = "Hassas kesimde seçilemez",
+                                contentDescription = strings.trimModeDisabledCd,
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(18.dp)
                             )

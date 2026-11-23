@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.FfmpegEngine
 import com.example.data.PreferencesRepository
+import com.example.domain.AppLanguage
+import com.example.domain.AppLanguageController
 import com.example.domain.AudioExtractFormat
 import com.example.domain.BitDepthOption
 import com.example.domain.CompletedOutput
@@ -13,6 +15,7 @@ import com.example.domain.EncoderCapabilities
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.FpsOption
+import com.example.domain.LanguagePreference
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.PresetOption
@@ -54,6 +57,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<WorkbenchUiState> = _uiState.asStateFlow()
 
     val encodingState: StateFlow<EncodingState> = EncodingJobController.state
+    val appLanguage: StateFlow<AppLanguage> = AppLanguageController.language
+    val languagePreference: StateFlow<LanguagePreference> = AppLanguageController.preference
 
     val history: StateFlow<List<CompletedOutput>> = prefsRepo.historyFlow.stateIn(
         scope = viewModelScope,
@@ -62,6 +67,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        AppLanguageController.init(appContext)
         viewModelScope.launch {
             FfmpegEngine.cleanupOrphanTempDirs(appContext)
             val caps = FfmpegEngine.probeEncoderCapabilities()
@@ -76,6 +82,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun setLanguagePreference(pref: LanguagePreference) {
+        AppLanguageController.setPreference(appContext, pref)
+        _uiState.update { it.copy(probeError = null, validationError = null) }
     }
 
     fun onMediaSelected(uri: Uri) {
@@ -98,10 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (t: Throwable) {
+                val s = AppLanguageController.currentStrings()
                 _uiState.update {
                     it.copy(
                         isProbing = false,
-                        probeError = "Dosya analiz edilemedi: ${FfmpegEngine.describeError(t)}"
+                        probeError = s.errAnalyzeFailed(FfmpegEngine.describeError(t))
                     )
                 }
             }
@@ -109,17 +121,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectMode(mode: ProcessingMode) {
+        val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo
         if (media == null) {
-            _uiState.update { it.copy(probeError = "Önce yukarıdan bir video veya dosya seçin.") }
+            _uiState.update { it.copy(probeError = s.errSelectMediaFirst) }
             return
         }
         if (mode.requiresVideo && !media.hasVideo) {
-            _uiState.update { it.copy(probeError = "Bu dosyada video akışı bulunamadı! Sesi Çıkart veya Özel Komut kullanın.") }
+            _uiState.update { it.copy(probeError = s.errNoVideoTrack) }
             return
         }
         if (mode.requiresAudio && !media.hasAudio) {
-            _uiState.update { it.copy(probeError = "Bu videoda ses izi bulunamadı!") }
+            _uiState.update { it.copy(probeError = s.errNoAudioTrack) }
             return
         }
 
@@ -347,13 +360,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun scanTrimKeyframes() {
+        val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
         val startStr = cfg.startTimeInput.trim().replace(" ", "")
         val endStr = cfg.endTimeInput.trim().replace(" ", "")
 
         if (startStr.isEmpty() && endStr.isEmpty()) {
-            _uiState.update { it.copy(validationError = "Önce başlangıç veya bitiş zamanı girin.") }
+            _uiState.update { it.copy(validationError = s.errEnterTrimTimeFirst) }
             return
         }
 
@@ -361,31 +375,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val endSec = if (endStr.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(endStr) else null
 
         if (startStr.isNotEmpty() && startSec == null) {
-            _uiState.update { it.copy(validationError = "Başlangıç zamanı geçersiz (Örn: 00:01:00 veya 01:30).") }
+            _uiState.update { it.copy(validationError = s.errInvalidStartTime) }
             return
         }
         if (endStr.isNotEmpty() && endSec == null) {
-            _uiState.update { it.copy(validationError = "Bitiş zamanı geçersiz (Örn: 00:02:32 veya 02:32).") }
+            _uiState.update { it.copy(validationError = s.errInvalidEndTime) }
             return
         }
         if (startSec != null && endSec != null && endSec <= startSec) {
-            _uiState.update { it.copy(validationError = "Hata: Bitiş zamanı başlangıçtan büyük olmalı!") }
+            _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
             return
         }
 
         if (!media.hasVideo) {
-            _uiState.update { it.copy(validationError = "Bu dosyada video akışı yok, keyframe taraması yalnızca video için çalışır.") }
+            _uiState.update { it.copy(validationError = s.errKeyframeRequiresVideo) }
             return
         }
 
         viewModelScope.launch {
             updateConfig { it.copy(trimScan = TrimScanState(isScanning = true)) }
             try {
-                val startDeferred = startSec?.let { s ->
-                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, s, isStart = true) }
+                val startDeferred = startSec?.let { st ->
+                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, st, isStart = true) }
                 }
-                val endDeferred = endSec?.let { e ->
-                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, e, isStart = false) }
+                val endDeferred = endSec?.let { en ->
+                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, en, isStart = false) }
                 }
                 val startResult = startDeferred?.await()
                 val endResult = endDeferred?.await()
@@ -405,11 +419,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (t: Throwable) {
+                val curS = AppLanguageController.currentStrings()
                 updateConfig {
                     it.copy(
                         trimScan = TrimScanState(
                             isScanning = false,
-                            error = "Keyframe taraması başarısız: ${t.message}"
+                            error = curS.errKeyframeScanFailed(t.message ?: curS.errUnknown)
                         )
                     )
                 }
@@ -418,6 +433,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startEncoding() {
+        val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
 
@@ -427,11 +443,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProcessingMode.WHATSAPP_100MB,
             ProcessingMode.CUSTOM_SIZE -> {
                 if (cfg.mode == ProcessingMode.CUSTOM_SIZE && FfmpegMath.parsePositiveDouble(cfg.targetMbInput) == null) {
-                    _uiState.update { it.copy(validationError = "Geçerli bir MB değeri girin (Örn: 1, 8, 25).") }
+                    _uiState.update { it.copy(validationError = s.errInvalidTargetMb) }
                     return
                 }
                 if (media.durationSec == null && FfmpegMath.parsePositiveDouble(cfg.manualDurationInput) == null) {
-                    _uiState.update { it.copy(validationError = "Video süresi okunamadı, lütfen süreyi saniye olarak girin.") }
+                    _uiState.update { it.copy(validationError = s.errEnterManualDuration) }
                     return
                 }
             }
@@ -439,30 +455,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val sRaw = cfg.startTimeInput.trim().replace(" ", "")
                 val eRaw = cfg.endTimeInput.trim().replace(" ", "")
                 if (sRaw.isEmpty() && eRaw.isEmpty()) {
-                    _uiState.update { it.copy(validationError = "Başlangıç veya bitiş zamanı girmediniz!") }
+                    _uiState.update { it.copy(validationError = s.errNoTrimRangeEntered) }
                     return
                 }
                 val sSec = if (sRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(sRaw) else null
                 val eSec = if (eRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(eRaw) else null
                 if ((sRaw.isNotEmpty() && sSec == null) || (eRaw.isNotEmpty() && eSec == null)) {
-                    _uiState.update { it.copy(validationError = "Zaman formatı hatalı (Örn: 01:30 veya 00:01:30).") }
+                    _uiState.update { it.copy(validationError = s.errInvalidTimeFormat) }
                     return
                 }
                 if (sSec != null && eSec != null && eSec <= sSec) {
-                    _uiState.update { it.copy(validationError = "Hata: Bitiş zamanı başlangıçtan büyük olmalı!") }
+                    _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
                     return
                 }
             }
             ProcessingMode.AUDIO_ONLY_AAC,
             ProcessingMode.EXTRACT_AUDIO -> {
                 if (!media.hasAudio) {
-                    _uiState.update { it.copy(validationError = "Bu videoda ses izi bulunamadı!") }
+                    _uiState.update { it.copy(validationError = s.errNoAudioTrack) }
                     return
                 }
             }
             ProcessingMode.CUSTOM_COMMAND -> {
                 if (cfg.customCommandInput.isBlank()) {
-                    _uiState.update { it.copy(validationError = "Çalıştırmak için bir FFmpeg komutu girin.") }
+                    _uiState.update { it.copy(validationError = s.errEnterCustomCommand) }
                     return
                 }
             }

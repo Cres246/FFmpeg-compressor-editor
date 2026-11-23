@@ -43,10 +43,12 @@ import com.example.domain.BitDepthOption
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.FpsOption
+import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.PresetOption
 import com.example.domain.ResolutionOption
 import com.example.domain.VideoCodecOption
+import com.example.domain.localizedLabel
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -96,6 +98,7 @@ fun CodecAndBitDepthSection(
     onSelectCodec: (VideoCodecOption) -> Unit,
     onSelectBitDepth: (BitDepthOption) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     val supports10Bit = when (selectedCodec) {
         VideoCodecOption.H264 -> capabilities.x264Supports10Bit
         VideoCodecOption.H265 -> capabilities.x265Supports10Bit
@@ -103,8 +106,8 @@ fun CodecAndBitDepthSection(
     val inputHighBit = media.bitDepthIn == "10bit" || media.bitDepthIn == "12bit"
 
     ConfigSectionCard(
-        title = "Video Kodeği & Renk Derinliği",
-        subtitle = "Girdi: ${media.videoCodec?.uppercase() ?: "?"} · ${media.bitDepthIn} · H.265 çıktılar otomatik -tag:v hvc1 alır"
+        title = strings.codecSectionTitle,
+        subtitle = strings.codecSectionSub(media.videoCodec?.uppercase() ?: "?", media.bitDepthIn)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -128,7 +131,7 @@ fun CodecAndBitDepthSection(
         if (supports10Bit) {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Renk Bit Derinliği",
+                text = strings.colorBitDepthLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -138,13 +141,13 @@ fun CodecAndBitDepthSection(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 val label8 = when {
-                    selectedCodec == VideoCodecOption.H264 -> "8-bit (Uyumlu)"
-                    !inputHighBit -> "8-bit (Varsayılan)"
+                    selectedCodec == VideoCodecOption.H264 -> strings.bit8Compatible
+                    !inputHighBit -> strings.bit8Default
                     else -> "8-bit"
                 }
                 val label10 = when {
-                    selectedCodec == VideoCodecOption.H264 -> "10-bit (Sadece VLC)"
-                    inputHighBit -> "10-bit (Koru)"
+                    selectedCodec == VideoCodecOption.H264 -> strings.bit10VlcOnly
+                    inputHighBit -> strings.bit10Preserve
                     else -> "10-bit"
                 }
                 SelectableOptionTile(
@@ -180,7 +183,7 @@ fun CodecAndBitDepthSection(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "H.264 10-bit (High 10) mobil donanım çözücülerde, WhatsApp ve Discord'da açılmaz (Sadece VLC).",
+                        text = strings.h264TenBitWarning,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.secondary
                     )
@@ -199,6 +202,7 @@ fun FpsAndResolutionSection(
     onSelectFps: (FpsOption) -> Unit,
     onSelectResolution: (ResolutionOption) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     val computedScale = FfmpegMath.buildScaleFilter(
         width = media.width,
         height = media.height,
@@ -207,8 +211,8 @@ fun FpsAndResolutionSection(
     )
 
     ConfigSectionCard(
-        title = "FPS & Akıllı Çözünürlük",
-        subtitle = "3 yönlü oran koruması: Dikey (9:16 / 4:5), Sinema (2.39:1) ve 16:9 otomatik algılanır"
+        title = strings.fpsResSectionTitle,
+        subtitle = strings.fpsResSectionSub
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -216,8 +220,8 @@ fun FpsAndResolutionSection(
         ) {
             FpsOption.entries.forEach { fps ->
                 SelectableOptionTile(
-                    title = fps.label,
-                    subtitle = if (fps == FpsOption.FPS_30) "-r 30" else "Koru",
+                    title = fps.localizedLabel(strings),
+                    subtitle = if (fps == FpsOption.FPS_30) "-r 30" else strings.fpsKeepSub,
                     selected = fps == selectedFps,
                     onClick = { onSelectFps(fps) },
                     modifier = Modifier
@@ -230,7 +234,7 @@ fun FpsAndResolutionSection(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "Hedef Çözünürlük",
+            text = strings.targetResolutionLabel,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -244,7 +248,7 @@ fun FpsAndResolutionSection(
                 FilterChip(
                     selected = res == selectedResolution,
                     onClick = { onSelectResolution(res) },
-                    label = { Text(res.label, style = MonoLabelStyle) },
+                    label = { Text(res.localizedLabel(strings), style = MonoLabelStyle) },
                     modifier = Modifier.testTag("res_${res.name}"),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -257,7 +261,7 @@ fun FpsAndResolutionSection(
         if (computedScale != null) {
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Aktif Filtre: -vf $computedScale",
+                text = "${strings.activeFilterPrefix} -vf $computedScale",
                 style = MonoLabelStyle,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -272,9 +276,10 @@ fun PresetSection(
     recommendedPreset: PresetOption,
     onSelectPreset: (PresetOption) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     ConfigSectionCard(
-        title = "Kodlama Hızı (Preset)",
-        subtitle = "Önerilen: ${recommendedPreset.value} · Daha yavaş preset aynı kalitede daha küçük boyut üretir"
+        title = strings.presetSectionTitle,
+        subtitle = strings.presetSectionSub(recommendedPreset.value)
     ) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -308,14 +313,16 @@ fun AudioBitrateSection(
     bitrateInput: String,
     defaultKbps: Int,
     onBitrateChange: (String) -> Unit,
-    title: String = "Ses Bitrate (AAC · Kayıplı)"
+    title: String? = null
 ) {
+    val strings = LocalAppStrings.current
+    val resolvedTitle = title ?: strings.audioBitrateTitle
     val quickValues = listOf("64", "128", "192", "256", "320", "384")
     val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, defaultKbps)
 
     ConfigSectionCard(
-        title = title,
-        subtitle = "32k – 768k aralığı desteklenir (5.1 surround için 320k/384k+ dahil) · Aktif: ${normalized}k"
+        title = resolvedTitle,
+        subtitle = strings.audioBitrateSub(normalized)
     ) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -344,7 +351,7 @@ fun AudioBitrateSection(
         OutlinedTextField(
             value = bitrateInput,
             onValueChange = onBitrateChange,
-            label = { Text("Özel Bitrate (32..768 kbps)") },
+            label = { Text(strings.customBitrateLabel) },
             suffix = { Text("k", style = MonoLabelStyle) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -403,6 +410,7 @@ fun OutputAndCommandPreviewCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -412,7 +420,7 @@ fun OutputAndCommandPreviewCard(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "ÇIKTI DOSYA ADI",
+                text = strings.outputFileNameHeader,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -441,14 +449,14 @@ fun OutputAndCommandPreviewCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "FFmpeg Komutu Önizleme",
+                        text = strings.ffmpegCommandPreview,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
                         imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                        contentDescription = if (expanded) "Gizle" else "Göster",
+                        contentDescription = if (expanded) strings.actionHide else strings.actionShow,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )

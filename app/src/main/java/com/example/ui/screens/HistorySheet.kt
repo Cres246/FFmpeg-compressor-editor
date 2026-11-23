@@ -30,12 +30,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.domain.CompletedOutput
 import com.example.domain.FfmpegMath
+import com.example.domain.LocalAppStrings
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
 
@@ -49,6 +48,7 @@ fun HistorySheet(
     onClearAll: () -> Unit
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -71,7 +71,7 @@ fun HistorySheet(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = stringResource(R.string.history_title),
+                    text = strings.historyTitle,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f)
                 )
@@ -79,11 +79,11 @@ fun HistorySheet(
                     TextButton(onClick = onClearAll) {
                         Icon(
                             imageVector = Icons.Rounded.DeleteSweep,
-                            contentDescription = "Geçmişi temizle",
+                            contentDescription = strings.historyClearCd,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("Temizle")
+                        Text(strings.historyClear)
                     }
                 }
             }
@@ -98,7 +98,7 @@ fun HistorySheet(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = stringResource(R.string.history_empty),
+                        text = strings.historyEmpty,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -137,13 +137,13 @@ fun HistorySheet(
                                 IconButton(onClick = { onOpen(item) }) {
                                     Icon(
                                         imageVector = Icons.Rounded.OpenInNew,
-                                        contentDescription = stringResource(R.string.action_open)
+                                        contentDescription = strings.actionOpen
                                     )
                                 }
                                 IconButton(onClick = { onShare(item) }) {
                                     Icon(
                                         imageVector = Icons.Rounded.Share,
-                                        contentDescription = stringResource(R.string.action_share)
+                                        contentDescription = strings.actionShare
                                     )
                                 }
                             }

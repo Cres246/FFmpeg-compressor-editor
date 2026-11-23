@@ -114,8 +114,11 @@ object FfmpegMath {
     /**
      * Exact formatting matching script's awk fmt(x): MM:SS.d or H:MM:SS.d
      */
-    fun formatKeyframeTime(seconds: Double?): String {
-        if (seconds == null || seconds < 0.0) return "Yok"
+    fun formatKeyframeTime(
+        seconds: Double?,
+        strings: AppStrings = AppLanguageController.currentStrings()
+    ): String {
+        if (seconds == null || seconds < 0.0) return strings.noneLabel
         val t10 = (seconds * 10.0 + 0.5).toLong()
         val h = t10 / 36000
         val m = (t10 % 36000) / 600
@@ -287,14 +290,18 @@ object FfmpegMath {
         }
     }
 
-    fun formatDurationShort(durationSec: Double?): String {
+    fun formatDurationShort(
+        durationSec: Double?,
+        strings: AppStrings = AppLanguageController.currentStrings()
+    ): String {
         if (durationSec == null || durationSec <= 0.0) return "?"
-        return String.format(Locale.US, "%.1f sn", durationSec)
+        return String.format(Locale.US, "%.1f %s", durationSec, strings.secondsUnitShort)
     }
 
     /**
      * Exact live telemetry status line matching script's run_ff():
-     * Sure: 24.6 / 61.4 sn (%40) | 1.34x | 4820kb
+     * TR: Süre: 24.6 / 61.4 sn (%40) | 1.34x | 4820kb
+     * EN: Time: 24.6 / 61.4 s (40%) | 1.34x | 4820kb
      */
     fun formatTelemetryLine(
         currentSec: Double,
@@ -302,17 +309,19 @@ object FfmpegMath {
         percent: Int?,
         speed: String,
         sizeKb: Long,
-        includePercent: Boolean = false
+        includePercent: Boolean = false,
+        strings: AppStrings = AppLanguageController.currentStrings()
     ): String {
         val curStr = String.format(Locale.US, "%.1f", currentSec.coerceAtLeast(0.0))
         val sizePart = if (sizeKb > 0) " | ${sizeKb}kb" else ""
         val speedPart = speed.ifBlank { "..." }
+        val unit = strings.secondsUnitShort
         return if (totalDurationSec != null && totalDurationSec > 0.0) {
             val durStr = String.format(Locale.US, "%.1f", totalDurationSec)
-            val pctPart = if (includePercent && percent != null) " (%$percent)" else ""
-            "Süre: $curStr / $durStr sn$pctPart | $speedPart$sizePart"
+            val pctPart = if (includePercent && percent != null) " (${strings.formatPercent(percent)})" else ""
+            "${strings.telemetryPrefix}: $curStr / $durStr $unit$pctPart | $speedPart$sizePart"
         } else {
-            "Süre: $curStr sn | $speedPart$sizePart"
+            "${strings.telemetryPrefix}: $curStr $unit | $speedPart$sizePart"
         }
     }
 
@@ -355,11 +364,19 @@ object FfmpegMath {
     /**
      * Computes the exact output filename following every naming rule of the script.
      */
-    fun computeOutputFileName(media: MediaInfo, config: ModeConfigState): String {
+    fun computeOutputFileName(
+        media: MediaInfo,
+        config: ModeConfigState,
+        strings: AppStrings = AppLanguageController.currentStrings()
+    ): String {
         val base = media.baseName.ifBlank { "video" }
         val codecTag = config.codec.tag
         val bitTag = config.bitDepth.tag
         val crfVal = config.codec.crf
+        val clipTag = strings.fileTagClip
+        val silentTag = strings.fileTagSilent
+        val origTag = strings.fileTagOriginal
+        val audioTag = strings.fileTagAudio
 
         return when (config.mode) {
             ProcessingMode.DISCORD_20MB -> "${base}_${codecTag}${bitTag}_20MB.mp4"
@@ -370,21 +387,21 @@ object FfmpegMath {
             }
             ProcessingMode.TRIM_VIDEO -> {
                 when (config.trimSubMode) {
-                    TrimSubMode.FULL_LOSSLESS -> "${base}_Kesit.mp4"
+                    TrimSubMode.FULL_LOSSLESS -> "${base}_${clipTag}.mp4"
                     TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
-                        if (!media.hasAudio) "${base}_Kesit_Sessiz.mp4"
+                        if (!media.hasAudio) "${base}_${clipTag}_${silentTag}.mp4"
                         else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 192)
-                            "${base}_Kesit_AAC_${ab}k.mp4"
+                            "${base}_${clipTag}_AAC_${ab}k.mp4"
                         }
                     }
                     TrimSubMode.CRF_AUDIO_COPY ->
-                        "${base}_Kesit_${codecTag}${bitTag}_CRF${crfVal}.mp4"
+                        "${base}_${clipTag}_${codecTag}${bitTag}_CRF${crfVal}.mp4"
                     TrimSubMode.CRF_AUDIO_AAC -> {
-                        if (!media.hasAudio) "${base}_Kesit_${codecTag}${bitTag}_CRF${crfVal}_Sessiz.mp4"
+                        if (!media.hasAudio) "${base}_${clipTag}_${codecTag}${bitTag}_CRF${crfVal}_${silentTag}.mp4"
                         else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 192)
-                            "${base}_Kesit_${codecTag}${bitTag}_CRF${crfVal}_AAC_${ab}k.mp4"
+                            "${base}_${clipTag}_${codecTag}${bitTag}_CRF${crfVal}_AAC_${ab}k.mp4"
                         }
                     }
                 }
@@ -396,7 +413,7 @@ object FfmpegMath {
             }
             ProcessingMode.VIDEO_ONLY_CRF -> "${base}_${codecTag}${bitTag}_CRF${crfVal}.mp4"
             ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
-                if (!media.hasAudio) "${base}_${codecTag}${bitTag}_CRF${crfVal}_Sessiz.mp4"
+                if (!media.hasAudio) "${base}_${codecTag}${bitTag}_CRF${crfVal}_${silentTag}.mp4"
                 else {
                     val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                     "${base}_${codecTag}${bitTag}_CRF${crfVal}_AAC_${ab}k.mp4"
@@ -406,27 +423,27 @@ object FfmpegMath {
                 when (config.audioExtractFormat) {
                     AudioExtractFormat.ORIGINAL -> {
                         val ext = resolveOriginalAudioExtension(media.audioCodec)
-                        "${base}_Orijinal.$ext"
+                        "${base}_${origTag}.$ext"
                     }
                     AudioExtractFormat.AAC -> {
                         if (media.audioCodec.equals("aac", ignoreCase = true)) {
-                            "${base}_Ses.m4a"
+                            "${base}_${audioTag}.m4a"
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
-                            "${base}_Ses_${ab}k.m4a"
+                            "${base}_${audioTag}_${ab}k.m4a"
                         }
                     }
                     AudioExtractFormat.MP3 -> {
                         if (media.audioCodec.equals("mp3", ignoreCase = true)) {
-                            "${base}_Ses.mp3"
+                            "${base}_${audioTag}.mp3"
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
-                            "${base}_Ses_${ab}k.mp3"
+                            "${base}_${audioTag}_${ab}k.mp3"
                         }
                     }
                 }
             }
-            ProcessingMode.CUSTOM_COMMAND -> "Komutta belirtilen çıktı"
+            ProcessingMode.CUSTOM_COMMAND -> strings.customCommandOutputPlaceholder
         }
     }
 
@@ -439,7 +456,8 @@ object FfmpegMath {
         config: ModeConfigState,
         inputTokenProvider: () -> String,
         outputPath: String,
-        passLogPrefix: String
+        passLogPrefix: String,
+        strings: AppStrings = AppLanguageController.currentStrings()
     ): List<FfmpegStepSpec> {
         val codec = config.codec
         val pixFmt = config.bitDepth.pixFmt
@@ -523,8 +541,8 @@ object FfmpegMath {
                 pass2.addAll(listOf("-movflags", "+faststart", outputPath))
 
                 listOf(
-                    FfmpegStepSpec("1/2 Geçiş (Analiz ediliyor)", pass1, dur),
-                    FfmpegStepSpec("2/2 Geçiş (Kodlanıyor)", pass2, dur)
+                    FfmpegStepSpec(strings.stepPass1, pass1, dur),
+                    FfmpegStepSpec(strings.stepPass2, pass2, dur)
                 )
             }
 
@@ -545,7 +563,7 @@ object FfmpegMath {
                                 outputPath
                             )
                         )
-                        listOf(FfmpegStepSpec("Kayıpsız kesiliyor (-noaccurate_seek)", args, clipDur))
+                        listOf(FfmpegStepSpec(strings.stepTrimLossless, args, clipDur))
                     }
                     TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
                         if (startT != null) args.addAll(listOf("-noaccurate_seek", "-ss", startT))
@@ -564,7 +582,7 @@ object FfmpegMath {
                                 outputPath
                             )
                         )
-                        listOf(FfmpegStepSpec("Görüntü kayıpsız + Ses AAC kesiliyor", args, clipDur))
+                        listOf(FfmpegStepSpec(strings.stepTrimVideoLosslessAudioAac, args, clipDur))
                     }
                     TrimSubMode.CRF_AUDIO_COPY -> {
                         if (startT != null) args.addAll(listOf("-ss", startT))
@@ -588,7 +606,7 @@ object FfmpegMath {
                         args.addAll(listOf("-movflags", "+faststart", outputPath))
                         listOf(
                             FfmpegStepSpec(
-                                "Kesilip ${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} ($preset | ses copy)",
+                                strings.stepTrimCrfAudioCopy(codec.tag, config.bitDepth.tag, codec.crf, preset),
                                 args,
                                 clipDur
                             )
@@ -621,7 +639,7 @@ object FfmpegMath {
                         args.addAll(listOf("-movflags", "+faststart", outputPath))
                         listOf(
                             FfmpegStepSpec(
-                                "Kesilip ${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} ($preset) + AAC",
+                                strings.stepTrimCrfAudioAac(codec.tag, config.bitDepth.tag, codec.crf, preset),
                                 args,
                                 clipDur
                             )
@@ -637,7 +655,7 @@ object FfmpegMath {
                     "-movflags", "+faststart",
                     outputPath
                 )
-                listOf(FfmpegStepSpec("Kutu / format yenileniyor (-c copy)", args, media.durationSec))
+                listOf(FfmpegStepSpec(strings.stepRemux, args, media.durationSec))
             }
 
             ProcessingMode.AUDIO_ONLY_AAC -> {
@@ -650,7 +668,7 @@ object FfmpegMath {
                     "-movflags", "+faststart",
                     outputPath
                 )
-                listOf(FfmpegStepSpec("Görüntü copy · Ses ${ab}k AAC", args, media.durationSec))
+                listOf(FfmpegStepSpec(strings.stepAudioOnly(ab), args, media.durationSec))
             }
 
             ProcessingMode.VIDEO_ONLY_CRF -> {
@@ -672,7 +690,7 @@ object FfmpegMath {
                 args.addAll(listOf("-movflags", "+faststart", outputPath))
                 listOf(
                     FfmpegStepSpec(
-                        "Görüntü ${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} ($preset | ses copy)",
+                        strings.stepVideoOnly(codec.tag, config.bitDepth.tag, codec.crf, preset),
                         args,
                         media.durationSec
                     )
@@ -716,26 +734,26 @@ object FfmpegMath {
                     AudioExtractFormat.ORIGINAL -> {
                         val ext = resolveOriginalAudioExtension(media.audioCodec)
                         args.addAll(listOf("-c:a", "copy", outputPath))
-                        "Orijinal ses (%100 kayıpsız: ${media.audioCodec} → .$ext)"
+                        strings.stepExtractOriginal(media.audioCodec ?: "?", ext)
                     }
                     AudioExtractFormat.AAC -> {
                         if (media.audioCodec.equals("aac", ignoreCase = true)) {
                             args.addAll(listOf("-c:a", "copy", outputPath))
-                            "Ses zaten AAC · %100 kayıpsız kopyalanıyor"
+                            strings.stepExtractAacCopy
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                             args.addAll(listOf("-c:a", "aac", "-b:a", "${ab}k", outputPath))
-                            "Ses ${ab}k AAC olarak çıkarılıyor"
+                            strings.stepExtractAacTranscode(ab)
                         }
                     }
                     AudioExtractFormat.MP3 -> {
                         if (media.audioCodec.equals("mp3", ignoreCase = true)) {
                             args.addAll(listOf("-c:a", "copy", outputPath))
-                            "Ses zaten MP3 · %100 kayıpsız kopyalanıyor"
+                            strings.stepExtractMp3Copy
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                             args.addAll(listOf("-c:a", "libmp3lame", "-b:a", "${ab}k", outputPath))
-                            "Ses ${ab}k MP3 olarak çıkarılıyor"
+                            strings.stepExtractMp3Transcode(ab)
                         }
                     }
                 }

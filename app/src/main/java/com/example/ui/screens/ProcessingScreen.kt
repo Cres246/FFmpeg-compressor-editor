@@ -72,10 +72,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
+import com.example.domain.LocalAppStrings
 import com.example.service.CpuPerformanceBooster
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
@@ -100,6 +100,7 @@ fun ProcessingScreen(
     }
 
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     var showLogs by remember { mutableStateOf(state is EncodingState.Failed) }
 
     val topTitle = when (state) {
@@ -149,7 +150,7 @@ fun ProcessingScreen(
                             ) {
                                 Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.action_cancel))
+                                Text(strings.actionCancel)
                             }
                         }
 
@@ -162,7 +163,7 @@ fun ProcessingScreen(
                                     .testTag("new_task_button"),
                                 shape = MaterialTheme.shapes.small
                             ) {
-                                Text(stringResource(R.string.action_new_task))
+                                Text(strings.actionNewTask)
                             }
                         }
 
@@ -175,7 +176,7 @@ fun ProcessingScreen(
                                     .testTag("failed_home_button"),
                                 shape = MaterialTheme.shapes.small
                             ) {
-                                Text("Ana Menü")
+                                Text(strings.actionHome)
                             }
                             Button(
                                 onClick = onRetryEdit,
@@ -187,7 +188,7 @@ fun ProcessingScreen(
                             ) {
                                 Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Ayarlara Dön")
+                                Text(strings.actionBackToSettings)
                             }
                         }
 
@@ -269,13 +270,15 @@ fun ProcessingScreen(
 private fun RunningMonitorCard(state: EncodingState.Running) {
     val primary = MaterialTheme.colorScheme.primary
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val telemetry = FfmpegMath.formatTelemetryLine(
         currentSec = state.currentTimeSec,
         totalDurationSec = state.totalDurationSec,
         percent = state.percent,
         speed = state.speed,
         sizeKb = state.sizeKb,
-        includePercent = false
+        includePercent = false,
+        strings = strings
     )
 
     Surface(
@@ -297,9 +300,9 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 ) {
                     Text(
                         text = if (state.totalPasses > 1) {
-                            "GEÇİŞ ${state.passIndex}/${state.totalPasses}"
+                            strings.passBadge(state.passIndex, state.totalPasses)
                         } else {
-                            "İŞLENİYOR"
+                            strings.processingBadge
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = primary,
@@ -308,7 +311,7 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 }
 
                 Text(
-                    text = state.percent?.let { "%$it" } ?: "...",
+                    text = state.percent?.let { strings.formatPercent(it) } ?: "...",
                     style = MaterialTheme.typography.displaySmall,
                     color = primary
                 )
@@ -376,9 +379,9 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
 
             Spacer(Modifier.height(10.dp))
 
-            val cpuSummary = remember { CpuPerformanceBooster.describeCpuBoostSummary() }
+            val cpuSummary = remember(strings) { CpuPerformanceBooster.describeCpuBoostSummary(strings) }
             Text(
-                text = "$cpuSummary · Uyandırma kilidi aktif.",
+                text = "$cpuSummary · ${strings.wakeLockActiveSuffix}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -411,7 +414,7 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
                         Text(
-                            text = "Magic Capsule / Canlı Güncelleme İznini Aç",
+                            text = strings.enableMagicCapsuleButton,
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
@@ -424,6 +427,7 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
 @Composable
 private fun SuccessSummaryBanner(summary: String) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -443,7 +447,7 @@ private fun SuccessSummaryBanner(summary: String) {
             ) {
                 Icon(
                     imageVector = Icons.Rounded.CheckCircle,
-                    contentDescription = "Başarılı",
+                    contentDescription = strings.successCd,
                     tint = extColors.lossless,
                     modifier = Modifier.size(26.dp)
                 )
@@ -451,7 +455,7 @@ private fun SuccessSummaryBanner(summary: String) {
             Spacer(Modifier.width(14.dp))
             Column {
                 Text(
-                    text = "İşlem Tamamlandı",
+                    text = strings.successTitle,
                     style = MaterialTheme.typography.titleLarge,
                     color = extColors.onLosslessContainer
                 )
@@ -462,7 +466,7 @@ private fun SuccessSummaryBanner(summary: String) {
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "Galeri ve Son Dosyalar için MediaStore anında güncellendi.",
+                    text = strings.successMediaStoreNote,
                     style = MaterialTheme.typography.bodySmall,
                     color = extColors.onLosslessContainer.copy(alpha = 0.78f)
                 )
@@ -478,10 +482,11 @@ private fun CompletedOutputCard(
     onShare: () -> Unit
 ) {
     val extColors = LocalExtendedColors.current
-    val reductionText = remember(output) {
+    val strings = LocalAppStrings.current
+    val reductionText = remember(output, strings) {
         if (output.inputSizeBytes > 0 && output.outputSizeBytes > 0) {
             val deltaPct = ((1.0 - (output.outputSizeBytes.toDouble() / output.inputSizeBytes.toDouble())) * 100.0).toInt()
-            if (deltaPct > 0) "%$deltaPct daha küçük" else null
+            if (deltaPct > 0) strings.smallerPercentBadge(deltaPct) else null
         } else null
     }
 
@@ -556,7 +561,7 @@ private fun CompletedOutputCard(
                 ) {
                     Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.action_open))
+                    Text(strings.actionOpen)
                 }
                 Button(
                     onClick = onShare,
@@ -568,7 +573,7 @@ private fun CompletedOutputCard(
                 ) {
                     Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.action_share))
+                    Text(strings.actionShare)
                 }
             }
         }
@@ -581,6 +586,7 @@ private fun FailureBannerCard(
     hint: String?,
     wasCancelled: Boolean
 ) {
+    val strings = LocalAppStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -600,7 +606,7 @@ private fun FailureBannerCard(
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = if (wasCancelled) "İşlem İptal Edildi" else "Hata Oluştu",
+                    text = if (wasCancelled) strings.failedCancelledTitle else strings.failedErrorTitle,
                     style = MaterialTheme.typography.titleLarge,
                     color = if (wasCancelled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -647,6 +653,7 @@ private fun LogConsoleCard(
     onToggle: () -> Unit
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -670,7 +677,7 @@ private fun LogConsoleCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Durum ve Hata Günlüğü (${logs.size})",
+                    text = strings.logConsoleHeader(logs.size),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.weight(1f)
                 )
@@ -696,7 +703,7 @@ private fun LogConsoleCard(
                 ) {
                     Text(
                         text = if (logs.isEmpty()) {
-                            "Başlatıldı, aşama değişiklikleri ve varsa hatalar burada gösterilir."
+                            strings.logConsoleEmpty
                         } else {
                             logs.takeLast(80).joinToString("\n")
                         },

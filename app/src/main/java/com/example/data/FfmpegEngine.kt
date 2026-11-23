@@ -13,6 +13,7 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.LogRedirectionStrategy
 import com.arthenica.ffmpegkit.ReturnCode
+import com.example.domain.AppLanguageController
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.KeyframePointResult
@@ -85,7 +86,7 @@ object FfmpegEngine {
             current = current.cause
             depth++
         }
-        return parts.joinToString(" → ").ifBlank { "Bilinmeyen hata" }
+        return parts.joinToString(" → ").ifBlank { AppLanguageController.currentStrings().errUnknown }
     }
 
     /**
@@ -119,7 +120,7 @@ object FfmpegEngine {
             try {
                 ensureSilentLogcat()
                 FFmpegKitConfig.getSafParameterForRead(context, uri)
-                    ?: throw IllegalStateException("Dosya okuma erişimi alınamadı (SAF)")
+                    ?: throw IllegalStateException(AppLanguageController.currentStrings().errSafReadFailed)
             } catch (t: Throwable) {
                 if (t is LinkageError || t is ExceptionInInitializerError) {
                     if (nativeInitFailure == null) nativeInitFailure = t

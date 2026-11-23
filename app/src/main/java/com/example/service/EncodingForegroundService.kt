@@ -18,6 +18,8 @@ import com.example.R
 import com.example.data.FfmpegEngine
 import com.example.data.MediaStoreSaver
 import com.example.data.PreferencesRepository
+import com.example.domain.AppLanguageController
+import com.example.domain.AppStrings
 import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
@@ -25,6 +27,8 @@ import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
 import com.example.domain.TrimSubMode
+import com.example.domain.localizedLabel
+import com.example.domain.localizedTitle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -144,6 +148,7 @@ class EncodingForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AppLanguageController.init(applicationContext)
         cpuBooster = CpuPerformanceBooster(applicationContext)
         createNotificationChannel()
     }
@@ -166,6 +171,7 @@ class EncodingForegroundService : Service() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
+                val s = AppLanguageController.currentStrings()
                 val initialPasses = when (jobData.config.mode) {
                     ProcessingMode.DISCORD_20MB,
                     ProcessingMode.WHATSAPP_100MB,
@@ -174,8 +180,8 @@ class EncodingForegroundService : Service() {
                 }
                 startForegroundCompat(
                     buildNotification(
-                        title = "FFmpeg · ${jobData.config.mode.title}",
-                        text = "Hazırlanıyor...",
+                        title = "FFmpeg · ${jobData.config.mode.localizedTitle(s)}",
+                        text = s.notifPreparing,
                         percent = 0,
                         passIndex = 1,
                         totalPasses = initialPasses
@@ -193,11 +199,13 @@ class EncodingForegroundService : Service() {
 
     private suspend fun runEncodingPipeline(runId: Long, media: MediaInfo, config: ModeConfigState) {
         cpuBooster.start()
+        val s = AppLanguageController.currentStrings()
         val workDir = FfmpegEngine.createWorkDir(applicationContext)
         val collectedLogs = mutableListOf<String>()
-        val modeTitle = "${config.mode.formattedNumber} · ${config.mode.title}"
-        val expectedOutputName = FfmpegMath.computeOutputFileName(media, config)
-        val summaryBanner = buildSummaryBanner(media, config)
+        val modeLocalizedTitle = config.mode.localizedTitle(s)
+        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
+        val summaryBanner = buildSummaryBanner(media, config, s)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -207,11 +215,11 @@ class EncodingForegroundService : Service() {
             }
         }
 
-        appendLog("[Başlatıldı] $modeTitle — $summaryBanner")
+        appendLog("${s.logTagStarted} $modeTitle — $summaryBanner")
 
         try {
             if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
-                runCustomCommandMode(runId, media, config, workDir, modeTitle, summaryBanner, collectedLogs, ::appendLog)
+                runCustomCommandMode(runId, media, config, workDir, modeTitle, summaryBanner, s, collectedLogs, ::appendLog)
                 return
             }
 
@@ -223,7 +231,8 @@ class EncodingForegroundService : Service() {
                 config = config,
                 inputTokenProvider = { inputPlaceholder },
                 outputPath = tempOutFile.absolutePath,
-                passLogPrefix = passLogPrefix
+                passLogPrefix = passLogPrefix,
+                strings = s
             )
 
             for ((idx, step) in steps.withIndex()) {
@@ -231,7 +240,7 @@ class EncodingForegroundService : Service() {
                 val passNum = idx + 1
                 val totalPasses = steps.size
                 if (totalPasses > 1) {
-                    appendLog("[Aşama $passNum/$totalPasses] ${step.label}")
+                    appendLog("${s.logTagStep(passNum, totalPasses)} ${step.label}")
                 }
 
                 EncodingJobController.updateStateIfActive(
@@ -253,7 +262,7 @@ class EncodingForegroundService : Service() {
                 )
                 updateNotificationThrottled(
                     runId = runId,
-                    title = "FFmpeg · ${config.mode.title}",
+                    title = "FFmpeg · $modeLocalizedTitle",
                     text = step.label,
                     percent = 0,
                     passIndex = passNum,
@@ -275,6 +284,7 @@ class EncodingForegroundService : Service() {
                     onProgress = { curSec, pct, spd, kb ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
                         cpuBooster.pulseIfDue()
+                        val liveStrings = AppLanguageController.currentStrings()
                         EncodingJobController.updateStateIfActive(
                             runId,
                             EncodingState.Running(
@@ -298,12 +308,13 @@ class EncodingForegroundService : Service() {
                             percent = pct,
                             speed = spd,
                             sizeKb = kb,
-                            includePercent = false
+                            includePercent = false,
+                            strings = liveStrings
                         )
                         val titlePrefix = if (totalPasses > 1) "($passNum/$totalPasses) " else ""
                         updateNotificationThrottled(
                             runId = runId,
-                            title = "FFmpeg · $titlePrefix${config.mode.title}",
+                            title = "FFmpeg · $titlePrefix${config.mode.localizedTitle(liveStrings)}",
                             text = notifText,
                             percent = pct,
                             passIndex = passNum,
@@ -325,18 +336,18 @@ class EncodingForegroundService : Service() {
                 )
 
                 if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
-                    // Cancelled by user: stay cleanly on Home (Idle), never reopen ProcessingScreen
                     return
                 }
 
                 if (!stepResult.success) {
-                    appendLog("[Hata] FFmpeg hata kodu: ${stepResult.returnCode}")
-                    val hint = resolveContextualHint(config)
+                    val curS = AppLanguageController.currentStrings()
+                    appendLog("${curS.logTagError} ${curS.errFfmpegExitCode(stepResult.returnCode)}")
+                    val hint = resolveContextualHint(config, curS)
                     EncodingJobController.updateStateIfActive(
                         runId,
                         EncodingState.Failed(
                             modeTitle = modeTitle,
-                            errorMessage = "FFmpeg hata kodu ile durdu (kod: ${stepResult.returnCode}).",
+                            errorMessage = curS.errFfmpegExitCode(stepResult.returnCode),
                             hint = hint,
                             logs = synchronized(collectedLogs) { collectedLogs.toList() },
                             wasCancelled = false
@@ -349,13 +360,14 @@ class EncodingForegroundService : Service() {
             if (!EncodingJobController.isRunActive(runId)) return
 
             if (!tempOutFile.exists() || tempOutFile.length() == 0L) {
-                appendLog("[Hata] Çıktı dosyası oluşturulamadı.")
+                val curS = AppLanguageController.currentStrings()
+                appendLog("${curS.logTagError} ${curS.errOutputNotCreated}")
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
-                        errorMessage = "Çıktı dosyası oluşturulamadı.",
-                        hint = resolveContextualHint(config),
+                        errorMessage = curS.errOutputNotCreated,
+                        hint = resolveContextualHint(config, curS),
                         logs = synchronized(collectedLogs) { collectedLogs.toList() }
                     )
                 )
@@ -363,6 +375,7 @@ class EncodingForegroundService : Service() {
             }
 
             // Publish cleanly to MediaStore (Movies/TermuxVideo or Music/TermuxVideo)
+            val curS = AppLanguageController.currentStrings()
             val saved = MediaStoreSaver.saveToPublicStorage(
                 context = applicationContext,
                 sourceFile = tempOutFile,
@@ -376,32 +389,33 @@ class EncodingForegroundService : Service() {
                 mimeType = saved.mimeType,
                 outputSizeBytes = saved.sizeBytes,
                 inputSizeBytes = media.sizeBytes,
-                modeLabel = config.mode.title,
+                modeLabel = config.mode.localizedTitle(curS),
                 timestampMs = System.currentTimeMillis()
             )
             runCatching { PreferencesRepository(applicationContext).appendHistory(listOf(completed)) }
 
-            appendLog("[Tamamlandı] ${completed.fileName} (${FfmpegMath.formatSizeBytes(saved.sizeBytes)})")
+            appendLog("${curS.logTagCompleted} ${completed.fileName} (${FfmpegMath.formatSizeBytes(saved.sizeBytes)})")
             EncodingJobController.updateStateIfActive(
                 runId,
                 EncodingState.Success(
                     outputs = listOf(completed),
                     modeTitle = modeTitle,
-                    summaryMessage = "Başarılı! Çıktı Boyutu: ${FfmpegMath.formatSizeBytes(saved.sizeBytes)}",
+                    summaryMessage = curS.successOutputSize(FfmpegMath.formatSizeBytes(saved.sizeBytes)),
                     logs = synchronized(collectedLogs) { collectedLogs.toList() }
                 )
             )
         } catch (_: CancellationException) {
-            // Cancelled cleanly: keep state Idle (Ana Menü) and let finally clean resources
+            // Cancelled cleanly: keep state Idle and let finally clean resources
         } catch (t: Throwable) {
             if (EncodingJobController.isRunActive(runId)) {
-                appendLog("[Hata] ${t.message ?: "Beklenmeyen hata"}")
+                val curS = AppLanguageController.currentStrings()
+                appendLog("${curS.logTagError} ${t.message ?: curS.errUnexpected}")
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
-                        errorMessage = t.message ?: "Beklenmeyen bir hata oluştu.",
-                        hint = resolveContextualHint(config),
+                        errorMessage = t.message ?: curS.errUnexpected,
+                        hint = resolveContextualHint(config, curS),
                         logs = synchronized(collectedLogs) { collectedLogs.toList() }
                     )
                 )
@@ -423,18 +437,19 @@ class EncodingForegroundService : Service() {
         workDir: File,
         modeTitle: String,
         summaryBanner: String,
+        s: AppStrings,
         collectedLogs: MutableList<String>,
         appendLog: (String) -> Unit
     ) {
         val commands = FfmpegMath.parseCustomCommandChain(config.customCommandInput)
         if (commands.isEmpty()) {
-            appendLog("[Hata] Geçerli bir FFmpeg komutu girilmedi.")
+            appendLog("${s.logTagError} ${s.errCustomCmdEmpty}")
             EncodingJobController.updateStateIfActive(
                 runId,
                 EncodingState.Failed(
                     modeTitle = modeTitle,
-                    errorMessage = "Geçerli bir FFmpeg komutu girilmedi.",
-                    hint = "Örnek: ffmpeg -i \"\$IN\" -c:v libx264 -crf 20 cikti.mp4",
+                    errorMessage = s.errCustomCmdEmpty,
+                    hint = s.hintCustomCmdExample,
                     logs = synchronized(collectedLogs) { collectedLogs.toList() }
                 )
             )
@@ -451,16 +466,16 @@ class EncodingForegroundService : Service() {
                 inputTokenProvider = { FfmpegEngine.resolveInputPath(applicationContext, media.uri) }
             )
             val passNum = idx + 1
-            val label = if (totalSteps > 1) "Komut $passNum/$totalSteps çalıştırılıyor" else "Özel FFmpeg komutu çalıştırılıyor"
+            val label = if (totalSteps > 1) s.customCmdStepMulti(passNum, totalSteps) else s.customCmdStepSingle
             if (totalSteps > 1) {
-                appendLog("[Aşama $passNum/$totalSteps] $label")
+                appendLog("${s.logTagStep(passNum, totalSteps)} $label")
             }
 
             EncodingJobController.updateStateIfActive(
                 runId,
                 EncodingState.Running(
                     modeTitle = modeTitle,
-                    outputFileName = "Özel Komut",
+                    outputFileName = s.customCmdOutputLabel,
                     passIndex = passNum,
                     totalPasses = totalSteps,
                     statusMessage = label,
@@ -475,7 +490,7 @@ class EncodingForegroundService : Service() {
             )
             updateNotificationThrottled(
                 runId = runId,
-                title = "FFmpeg · Özel Komut",
+                title = "FFmpeg · ${s.customCmdOutputLabel}",
                 text = label,
                 percent = 0,
                 passIndex = passNum,
@@ -489,11 +504,12 @@ class EncodingForegroundService : Service() {
                 onProgress = { curSec, pct, spd, kb ->
                     if (!EncodingJobController.isRunActive(runId)) return@executeStep
                     cpuBooster.pulseIfDue()
+                    val liveS = AppLanguageController.currentStrings()
                     EncodingJobController.updateStateIfActive(
                         runId,
                         EncodingState.Running(
                             modeTitle = modeTitle,
-                            outputFileName = "Özel Komut",
+                            outputFileName = liveS.customCmdOutputLabel,
                             passIndex = passNum,
                             totalPasses = totalSteps,
                             statusMessage = label,
@@ -508,8 +524,8 @@ class EncodingForegroundService : Service() {
                     )
                     updateNotificationThrottled(
                         runId = runId,
-                        title = "FFmpeg · Özel Komut",
-                        text = FfmpegMath.formatTelemetryLine(curSec, media.durationSec, pct, spd, kb, includePercent = false),
+                        title = "FFmpeg · ${liveS.customCmdOutputLabel}",
+                        text = FfmpegMath.formatTelemetryLine(curSec, media.durationSec, pct, spd, kb, includePercent = false, strings = liveS),
                         percent = pct,
                         passIndex = passNum,
                         totalPasses = totalSteps,
@@ -533,13 +549,14 @@ class EncodingForegroundService : Service() {
                 return
             }
             if (!res.success) {
-                appendLog("[Hata] Özel komut başarısız (kod: ${res.returnCode})")
+                val curS = AppLanguageController.currentStrings()
+                appendLog("${curS.logTagError} ${curS.errCustomCmdFailed(res.returnCode)}")
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
-                        errorMessage = "Özel FFmpeg komutu başarısız oldu (kod: ${res.returnCode}).",
-                        hint = "Komut sözdizimini ve girdi kısayollarını (\"\$IN\" veya input.${media.extension}) kontrol edin.",
+                        errorMessage = curS.errCustomCmdFailed(res.returnCode),
+                        hint = curS.hintCustomCmdSyntax(media.extension),
                         logs = synchronized(collectedLogs) { collectedLogs.toList() }
                     )
                 )
@@ -549,6 +566,7 @@ class EncodingForegroundService : Service() {
 
         if (!EncodingJobController.isRunActive(runId)) return
 
+        val curS = AppLanguageController.currentStrings()
         // Clean 2-pass log artifacts exactly like Option 10 in the script
         val savedOutputs = mutableListOf<CompletedOutput>()
         workDir.listFiles()?.forEach { file ->
@@ -572,7 +590,7 @@ class EncodingForegroundService : Service() {
                         mimeType = saved.mimeType,
                         outputSizeBytes = saved.sizeBytes,
                         inputSizeBytes = media.sizeBytes,
-                        modeLabel = config.mode.title,
+                        modeLabel = config.mode.localizedTitle(curS),
                         timestampMs = System.currentTimeMillis()
                     )
                 )
@@ -584,13 +602,13 @@ class EncodingForegroundService : Service() {
         }
 
         val summary = if (savedOutputs.isEmpty()) {
-            "Başarılı! Komut tamamlandı."
+            curS.successCustomCmdDoneNoFiles
         } else {
             val totalBytes = savedOutputs.sumOf { it.outputSizeBytes }
-            "Başarılı! ${savedOutputs.size} dosya kaydedildi (${FfmpegMath.formatSizeBytes(totalBytes)})"
+            curS.successCustomCmdSavedFiles(savedOutputs.size, FfmpegMath.formatSizeBytes(totalBytes))
         }
 
-        appendLog("[Tamamlandı] $summary")
+        appendLog("${curS.logTagCompleted} $summary")
         EncodingJobController.updateStateIfActive(
             runId,
             EncodingState.Success(
@@ -602,7 +620,7 @@ class EncodingForegroundService : Service() {
         )
     }
 
-    private fun buildSummaryBanner(media: MediaInfo, config: ModeConfigState): String {
+    private fun buildSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
         return when (config.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
@@ -616,36 +634,43 @@ class EncodingForegroundService : Service() {
                 val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(mb)
                 val ab = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
                 val vkbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(mb, dur, ab)
-                "Hedef: < ${FfmpegMath.formatMbTag(mb)} MB | ${config.codec.tag}${config.bitDepth.tag} ${vkbps}k | Ses: ${ab}k | ${config.preset.value}"
+                s.twoPassSummaryLine(
+                    FfmpegMath.formatMbTag(mb),
+                    config.codec.tag,
+                    config.bitDepth.tag,
+                    vkbps,
+                    ab,
+                    config.preset.value
+                )
             }
             ProcessingMode.TRIM_VIDEO -> {
-                val (s, e, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                "Aralık: ${s ?: "00:00"} → ${e ?: "Son"} | ${config.trimSubMode.title}"
+                val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
+                s.bannerTrimRange(startStr ?: "00:00", endStr ?: s.trimEndPlaceholder, config.trimSubMode.localizedTitle(s))
             }
-            ProcessingMode.REMUX_FORMAT -> "Kayıpsız MP4 kutu yenileme (-c copy +faststart)"
+            ProcessingMode.REMUX_FORMAT -> s.bannerRemux
             ProcessingMode.AUDIO_ONLY_AAC -> {
                 val ab = FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)
-                "Görüntü %100 copy | Ses: ${ab}k AAC"
+                s.bannerAudioOnly(ab)
             }
             ProcessingMode.VIDEO_ONLY_CRF ->
-                "${config.codec.tag}${config.bitDepth.tag} CRF ${config.codec.crf} (${config.preset.value}) | Ses copy"
+                s.bannerVideoOnly(config.codec.tag, config.bitDepth.tag, config.codec.crf, config.preset.value)
             ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
-                val ab = if (!media.hasAudio) "Sessiz" else "${FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)}k AAC"
+                val ab = if (!media.hasAudio) s.bannerSilentAudio else "${FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)}k AAC"
                 "${config.codec.tag}${config.bitDepth.tag} CRF ${config.codec.crf} (${config.preset.value}) | $ab"
             }
-            ProcessingMode.EXTRACT_AUDIO -> "Ses Ayırma · ${config.audioExtractFormat.label}"
-            ProcessingMode.CUSTOM_COMMAND -> "Özel FFmpeg Komutu (Çıktılar otomatik taşınır)"
+            ProcessingMode.EXTRACT_AUDIO -> s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s))
+            ProcessingMode.CUSTOM_COMMAND -> s.bannerCustomCmd
         }
     }
 
-    private fun resolveContextualHint(config: ModeConfigState): String? {
+    private fun resolveContextualHint(config: ModeConfigState, s: AppStrings): String? {
         return when {
             config.mode == ProcessingMode.TRIM_VIDEO && config.trimSubMode == TrimSubMode.FULL_LOSSLESS ->
-                "İpucu: Ses kodeği MP4 kutusuna uymuyorsa (ör. Opus/DTS/EAC3) 2. kesim modunu (Görüntü Kayıpsız + Ses AAC) seçin."
+                s.hintTrimLosslessAudio
             config.mode == ProcessingMode.VIDEO_ONLY_CRF ->
-                "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 8. seçeneği (Görüntü + Ses Değiştir) kullanın."
+                s.hintVideoOnlyAudio
             config.mode == ProcessingMode.REMUX_FORMAT ->
-                "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 6. (Sadece Ses AAC) veya 8. seçeneği deneyin."
+                s.hintRemuxCompat
             else -> null
         }
     }
@@ -721,10 +746,11 @@ class EncodingForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val s = AppLanguageController.currentStrings()
         val safePct = (percent ?: 0).coerceIn(0, 100)
-        // Strict <= 4 chars ("%0".."%100") so Honor Magic Capsule displays it completely static without marquee scrolling
-        val capsulePercentChip = "%$safePct"
-        val drawerSubText = if (totalPasses > 1) "$passIndex/$totalPasses · %$safePct" else "%$safePct"
+        // Strict <= 4 chars ("%0".."%100" / "0%".."100%") so Honor Magic Capsule displays it completely static
+        val capsulePercentChip = s.formatPercent(safePct)
+        val drawerSubText = if (totalPasses > 1) "$passIndex/$totalPasses · $capsulePercentChip" else capsulePercentChip
 
         val celloColor = 0xFF562812.toInt()
         val amberColor = 0xFF844B27.toInt()
@@ -768,7 +794,7 @@ class EncodingForegroundService : Service() {
             .setShortCriticalText(capsulePercentChip)
             .setStyle(progressStyle)
             .setContentIntent(openPending)
-            .addAction(0, getString(R.string.action_cancel), cancelPending)
+            .addAction(0, s.actionCancel, cancelPending)
 
         if (percent != null) {
             builder.setProgress(100, safePct, false)
@@ -780,12 +806,13 @@ class EncodingForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val s = AppLanguageController.currentStrings()
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.notification_channel_name),
+                s.notifChannelName,
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = getString(R.string.notification_channel_desc)
+                description = s.notifChannelDesc
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)

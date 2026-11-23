@@ -39,8 +39,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.domain.FfmpegMath
+import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
@@ -57,6 +57,7 @@ fun MediaHeroCard(
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -89,7 +90,7 @@ fun MediaHeroCard(
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            text = "Medya analiz ediliyor...",
+                            text = strings.analyzingMedia,
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -113,7 +114,7 @@ fun MediaHeroCard(
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Rounded.Movie,
-                                        contentDescription = "Kaynak medya seç",
+                                        contentDescription = strings.selectSourceMedia,
                                         tint = primary,
                                         modifier = Modifier.size(22.dp)
                                     )
@@ -121,7 +122,7 @@ fun MediaHeroCard(
                             }
                             Spacer(Modifier.width(12.dp))
                             Text(
-                                text = "Kaynak Medya Seç",
+                                text = strings.selectSourceMedia,
                                 style = MaterialTheme.typography.headlineSmall.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
@@ -158,7 +159,7 @@ fun MediaHeroCard(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = stringResource(R.string.pick_gallery_video),
+                                    text = strings.pickGalleryVideo,
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -185,7 +186,7 @@ fun MediaHeroCard(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = "Dosya Seç",
+                                    text = strings.pickFile,
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -237,7 +238,7 @@ fun MediaHeroCard(
                                 )
                                 Text(
                                     text = buildString {
-                                        append(FfmpegMath.formatDurationShort(mediaInfo.durationSec))
+                                        append(FfmpegMath.formatDurationShort(mediaInfo.durationSec, strings))
                                         append("  ·  ")
                                         append(FfmpegMath.formatSizeBytes(mediaInfo.sizeBytes))
                                     },
@@ -260,12 +261,12 @@ fun MediaHeroCard(
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.SwapHoriz,
-                                    contentDescription = "Dosyayı değiştir",
+                                    contentDescription = strings.changeFileCd,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = stringResource(R.string.change_file),
+                                    text = strings.changeFile,
                                     style = MaterialTheme.typography.labelMedium
                                 )
                             }
@@ -278,7 +279,7 @@ fun MediaHeroCard(
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             val vText = buildString {
-                                append(mediaInfo.videoCodec?.uppercase() ?: "SES")
+                                append(mediaInfo.videoCodec?.uppercase() ?: strings.audioOnlyTag)
                                 if (mediaInfo.bitShort.isNotEmpty()) {
                                     append(" ")
                                     append(mediaInfo.bitShort)
@@ -289,10 +290,10 @@ fun MediaHeroCard(
                                 CompactMetaChip(text = "${mediaInfo.width}×${mediaInfo.height}")
                             }
                             CompactMetaChip(
-                                text = "Ses: ${mediaInfo.audioCodec?.uppercase() ?: "Yok"}"
+                                text = "${strings.audioTrackPrefix}: ${mediaInfo.audioCodec?.uppercase() ?: strings.noneLabel}"
                             )
                             if (mediaInfo.needsEvenScale) {
-                                CompactMetaChip(text = "Tek Piksel Koruması")
+                                CompactMetaChip(text = strings.evenDimensionFixChip)
                             }
                         }
 

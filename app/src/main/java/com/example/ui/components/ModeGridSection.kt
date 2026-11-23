@@ -44,12 +44,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeCategory
 import com.example.domain.ProcessingMode
 import com.example.domain.QualityBadgeTone
+import com.example.domain.localizedQualityTag
+import com.example.domain.localizedShortSubtitle
+import com.example.domain.localizedShortTitle
+import com.example.domain.localizedSubtitle
+import com.example.domain.localizedTitle
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
+import java.util.Locale
 
 private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
     ProcessingMode.DISCORD_20MB -> Icons.Rounded.Forum
@@ -69,13 +76,15 @@ fun ModeCategoryHeader(
     category: ModeCategory,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
+    val upperLocale = if (strings.language.code == "tr") Locale("tr", "TR") else Locale.US
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
-            text = category.title.uppercase(),
+            text = category.localizedTitle(strings).uppercase(upperLocale),
             style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -97,6 +106,7 @@ fun TargetSizeModeRow(
     onSelectMode: (ProcessingMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -134,14 +144,14 @@ fun TargetSizeModeRow(
                     ) {
                         Icon(
                             imageVector = modeIcon(mode),
-                            contentDescription = mode.title,
+                            contentDescription = mode.localizedTitle(strings),
                             tint = iconColor,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                     Spacer(Modifier.height(5.dp))
                     Text(
-                        text = mode.shortTitle,
+                        text = mode.localizedShortTitle(strings),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -149,7 +159,7 @@ fun TargetSizeModeRow(
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = mode.shortSubtitle,
+                        text = mode.localizedShortSubtitle(strings),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -172,6 +182,7 @@ fun TrimFeatureCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     val available = mediaInfo != null && (!mode.requiresVideo || mediaInfo.hasVideo)
     val iconColor = MaterialTheme.colorScheme.primary
 
@@ -203,7 +214,7 @@ fun TrimFeatureCard(
             ) {
                 Icon(
                     imageVector = modeIcon(mode),
-                    contentDescription = mode.title,
+                    contentDescription = mode.localizedTitle(strings),
                     tint = iconColor,
                     modifier = Modifier.size(18.dp)
                 )
@@ -211,14 +222,14 @@ fun TrimFeatureCard(
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = mode.title,
+                    text = mode.localizedTitle(strings),
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = mode.subtitle,
+                    text = mode.localizedSubtitle(strings),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -227,7 +238,7 @@ fun TrimFeatureCard(
             }
             Spacer(Modifier.width(8.dp))
             QualityStatusBadge(
-                label = if (mediaInfo != null && !mediaInfo.hasVideo) "Video yok" else mode.qualityTag,
+                label = if (mediaInfo != null && !mediaInfo.hasVideo) strings.noVideoBadge else mode.localizedQualityTag(strings),
                 tone = if (mediaInfo != null && !mediaInfo.hasVideo) QualityBadgeTone.LOSSY else mode.qualityTone
             )
             Spacer(Modifier.width(4.dp))
@@ -242,8 +253,7 @@ fun TrimFeatureCard(
 }
 
 /**
- * Group 3: Sleek vertical single-column list for Diğer İşlemler (6 modes stacked cleanly so
- * the entire 3-group home screen still fits on one portrait screen without scrolling).
+ * Group 3: Sleek vertical single-column list for Diğer İşlemler / More Tools.
  */
 @Composable
 fun OtherModesList(
@@ -252,6 +262,7 @@ fun OtherModesList(
     onSelectMode: (ProcessingMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(5.dp)
@@ -290,14 +301,14 @@ fun OtherModesList(
                     ) {
                         Icon(
                             imageVector = modeIcon(mode),
-                            contentDescription = mode.shortTitle,
+                            contentDescription = mode.localizedShortTitle(strings),
                             tint = iconColor,
                             modifier = Modifier.size(17.dp)
                         )
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = mode.shortTitle,
+                        text = mode.localizedShortTitle(strings),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -305,9 +316,9 @@ fun OtherModesList(
                         modifier = Modifier.weight(1f)
                     )
                     val (badgeLabel, badgeTone) = when {
-                        missingVideo -> "Video yok" to QualityBadgeTone.LOSSY
-                        missingAudio -> "Ses izi yok" to QualityBadgeTone.LOSSY
-                        else -> mode.qualityTag to mode.qualityTone
+                        missingVideo -> strings.noVideoBadge to QualityBadgeTone.LOSSY
+                        missingAudio -> strings.noAudioBadge to QualityBadgeTone.LOSSY
+                        else -> mode.localizedQualityTag(strings) to mode.qualityTone
                     }
                     if (badgeLabel.isNotBlank()) {
                         Spacer(Modifier.width(8.dp))

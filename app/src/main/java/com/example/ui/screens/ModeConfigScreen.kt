@@ -48,15 +48,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.domain.AudioExtractFormat
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
+import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
 import com.example.domain.TrimSubMode
+import com.example.domain.localizedLabel
+import com.example.domain.localizedTitle
 import com.example.ui.MainViewModel
 import com.example.ui.components.AudioBitrateSection
 import com.example.ui.components.CodecAndBitDepthSection
@@ -86,10 +88,11 @@ fun ModeConfigScreen(
     BackHandler(enabled = isActiveStage) { viewModel.closeConfig() }
 
     val extColors = LocalExtendedColors.current
-    val outputFileName = remember(media, config) {
-        FfmpegMath.computeOutputFileName(media, config)
+    val strings = LocalAppStrings.current
+    val outputFileName = remember(media, config, strings) {
+        FfmpegMath.computeOutputFileName(media, config, strings)
     }
-    val commandPreview = remember(media, config) {
+    val commandPreview = remember(media, config, strings) {
         if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
             config.customCommandInput.trim()
         } else {
@@ -98,7 +101,8 @@ fun ModeConfigScreen(
                 config = config,
                 inputTokenProvider = { "\$IN" },
                 outputPath = outputFileName,
-                passLogPrefix = "\$PASSDIR/ff2pass"
+                passLogPrefix = "\$PASSDIR/ff2pass",
+                strings = strings
             )
             FfmpegMath.formatCommandPreview(steps)
         }
@@ -111,7 +115,7 @@ fun ModeConfigScreen(
                 title = {
                     Column {
                         Text(
-                            text = "${config.mode.formattedNumber} · ${config.mode.title}",
+                            text = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(strings)}",
                             style = MaterialTheme.typography.titleLarge
                         )
                         Text(
@@ -129,7 +133,7 @@ fun ModeConfigScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back)
+                            contentDescription = strings.actionBack
                         )
                     }
                 },
@@ -189,7 +193,7 @@ fun ModeConfigScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = stringResource(R.string.action_start),
+                            text = strings.actionStart,
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -328,8 +332,8 @@ fun ModeConfigScreen(
                 ProcessingMode.REMUX_FORMAT -> {
                     item {
                         ConfigSectionCard(
-                            title = "%100 Kayıpsız MP4 Paketleme",
-                            subtitle = "Görüntü ve sese dokunmadan (-c copy) MP4 kabı yenilenir, moov başlığı dosya başına alınır (+faststart) ve uyumsuz altyazı/veri izleri elenir (-sn -dn)."
+                            title = strings.remuxCardTitle,
+                            subtitle = strings.remuxCardSub
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -340,7 +344,7 @@ fun ModeConfigScreen(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = "Saniyeler içinde tamamlanır · Sıfır kalite kaybı",
+                                    text = strings.remuxCardHighlight,
                                     style = MaterialTheme.typography.titleSmall,
                                     color = extColors.lossless
                                 )
@@ -352,11 +356,11 @@ fun ModeConfigScreen(
                 ProcessingMode.AUDIO_ONLY_AAC -> {
                     item {
                         ConfigSectionCard(
-                            title = "Görüntü %100 Kayıpsız Kopyalanır",
-                            subtitle = "Yalnızca ses akışı (${media.audioCodec?.uppercase() ?: "?"}) seçilen bitrate'te AAC'ye çevrilir (-c:v copy)."
+                            title = strings.audioOnlyCardTitle,
+                            subtitle = strings.audioOnlyCardSub(media.audioCodec?.uppercase() ?: "?")
                         ) {
                             Text(
-                                text = "Opus, DTS, AC3 veya EAC3 sesli videoları telefon, WhatsApp ve MP4 oynatıcılarla tam uyumlu yapmak için idealdir.",
+                                text = strings.audioOnlyCardBody,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -392,15 +396,15 @@ fun ModeConfigScreen(
                     }
                     item {
                         ConfigSectionCard(
-                            title = "Ses Akışı",
+                            title = strings.videoOnlyAudioTitle,
                             subtitle = if (media.hasAudio) {
-                                "Kaynak ses (${media.audioCodec?.uppercase()}) yeniden kodlanmadan %100 kayıpsız kopyalanır (-c:a copy)."
+                                strings.videoOnlyAudioCopySub(media.audioCodec?.uppercase() ?: "?")
                             } else {
-                                "Videoda ses izi yok (-an)."
+                                strings.videoOnlyNoAudioSub
                             }
                         ) {
                             Text(
-                                text = "H.264 için CRF 16, H.265 için buna denk arşiv kalitesi CRF 20 uygulanır.",
+                                text = strings.videoOnlyCrfBody,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -456,7 +460,7 @@ fun ModeConfigScreen(
                                 bitrateInput = config.audioBitrateInput,
                                 defaultKbps = 256,
                                 onBitrateChange = viewModel::updateAudioBitrate,
-                                title = "Çıktı Ses Bitrate (${config.audioExtractFormat.label})"
+                                title = strings.audioBitrateExtractTitle(config.audioExtractFormat.localizedLabel(strings))
                             )
                         }
                     }
@@ -490,6 +494,7 @@ private fun TwoPassTargetSummaryCard(
     onTargetMbChange: (String) -> Unit,
     onManualDurChange: (String) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     val targetMb = when (config.mode) {
         ProcessingMode.DISCORD_20MB -> 20.0
         ProcessingMode.WHATSAPP_100MB -> 100.0
@@ -503,14 +508,14 @@ private fun TwoPassTargetSummaryCard(
     } else null
 
     ConfigSectionCard(
-        title = "Gerçek 2-Pass Hedef Boyut Hesabı",
-        subtitle = "Tek seferlik %4 güvenlik payı (MB × 8000 × 0.96) ile kapsayıcı taşması önlenir"
+        title = strings.twoPassTitle,
+        subtitle = strings.twoPassSub
     ) {
         if (config.mode == ProcessingMode.CUSTOM_SIZE) {
             OutlinedTextField(
                 value = config.targetMbInput,
                 onValueChange = onTargetMbChange,
-                label = { Text("Hedef Boyut (MB) · Örn: 1, 8, 25") },
+                label = { Text(strings.targetMbInputLabel) },
                 suffix = { Text("MB", style = MonoLabelStyle) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -525,8 +530,8 @@ private fun TwoPassTargetSummaryCard(
             OutlinedTextField(
                 value = config.manualDurationInput,
                 onValueChange = onManualDurChange,
-                label = { Text("Süre okunamadı · Saniye olarak girin") },
-                suffix = { Text("sn", style = MonoLabelStyle) },
+                label = { Text(strings.manualDurationLabel) },
+                suffix = { Text(strings.secondsUnitShort, style = MonoLabelStyle) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier
@@ -543,7 +548,14 @@ private fun TwoPassTargetSummaryCard(
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                     Text(
-                        text = "Hedef: < ${FfmpegMath.formatMbTag(targetMb)} MB  |  ${config.codec.tag}${config.bitDepth.tag} ${vkbps}k  |  Ses: ${abps}k  |  ${config.preset.value}",
+                        text = strings.twoPassSummaryLine(
+                            FfmpegMath.formatMbTag(targetMb),
+                            config.codec.tag,
+                            config.bitDepth.tag,
+                            vkbps,
+                            abps,
+                            config.preset.value
+                        ),
                         style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
@@ -558,7 +570,7 @@ private fun TwoPassTargetSummaryCard(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "Not: Hedef/ses oranına göre video bitrati çok düşük, boyut aşabilir.",
+                                text = strings.lowBitrateWarning,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -570,8 +582,6 @@ private fun TwoPassTargetSummaryCard(
     }
 }
 
-
-
 @Composable
 private fun AudioExtractSection(
     media: MediaInfo,
@@ -579,19 +589,20 @@ private fun AudioExtractSection(
     onSelectFormat: (AudioExtractFormat) -> Unit
 ) {
     val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
     val origExt = FfmpegMath.resolveOriginalAudioExtension(media.audioCodec)
     val aacLossless = media.audioCodec.equals("aac", ignoreCase = true)
     val mp3Lossless = media.audioCodec.equals("mp3", ignoreCase = true)
 
     ConfigSectionCard(
-        title = "Ses Çıkarma Formatı",
-        subtitle = "Kaynak ses zaten AAC veya MP3 ise yeniden kodlanmadan %100 kayıpsız kopyalanır"
+        title = strings.audioExtractTitle,
+        subtitle = strings.audioExtractSub
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val items = listOf(
                 Triple(
                     AudioExtractFormat.ORIGINAL,
-                    "Orijinal (${media.audioCodec?.uppercase() ?: "?"} → .$origExt)",
+                    strings.audioExtractOriginalOption(media.audioCodec?.uppercase() ?: "?", origExt),
                     true
                 ),
                 Triple(AudioExtractFormat.AAC, "AAC (.m4a)", aacLossless),
@@ -627,7 +638,7 @@ private fun AudioExtractSection(
                             color = statusColor.copy(alpha = 0.14f)
                         ) {
                             Text(
-                                text = if (isLossless) "Kayıpsız" else "Kayıplı",
+                                text = if (isLossless) strings.badgeLossless else strings.badgeLossy,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = statusColor,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -647,14 +658,16 @@ private fun CustomCommandSection(
     commandInput: String,
     onCommandChange: (String) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     val inputAlias = if (media.extension.isNotBlank()) "input.${media.extension}" else "input.mp4"
+    val defaultOut = strings.customCmdDefaultOutput
 
     ConfigSectionCard(
-        title = "Özel FFmpeg Komutu (Tam Komut)",
-        subtitle = "Çoklu && zincir komutları dahil · Oluşan çıktılar otomatik Movies/TermuxVideo klasörüne taşınır"
+        title = strings.customCmdTitle,
+        subtitle = strings.customCmdSub
     ) {
         Text(
-            text = "Girdi kısayolları (dokunarak ekle):",
+            text = strings.customCmdShortcutsLabel,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -664,14 +677,14 @@ private fun CustomCommandSection(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             listOf(
-                "ffmpeg -y -i \"\$IN\" -c copy cikti.mp4" to "Hızlı Remux",
+                "ffmpeg -y -i \"\$IN\" -c copy $defaultOut" to strings.customCmdQuickRemuxChip,
                 "\"\$IN\"" to "\"\$IN\"",
                 inputAlias to inputAlias,
-                "cikti.mp4" to "cikti.mp4"
+                defaultOut to defaultOut
             ).forEach { (snippet, chipLabel) ->
                 AssistChip(
                     onClick = {
-                        val updated = if (commandInput.isBlank() || chipLabel == "Hızlı Remux") {
+                        val updated = if (commandInput.isBlank() || chipLabel == strings.customCmdQuickRemuxChip) {
                             snippet
                         } else {
                             "$commandInput $snippet"
@@ -686,10 +699,10 @@ private fun CustomCommandSection(
         OutlinedTextField(
             value = commandInput,
             onValueChange = onCommandChange,
-            label = { Text("FFmpeg Komutu") },
+            label = { Text(strings.customCmdInputLabel) },
             placeholder = {
                 Text(
-                    "ffmpeg -y -i \"\$IN\" -c:v libx264 -crf 18 -c:a copy cikti.mp4",
+                    "ffmpeg -y -i \"\$IN\" -c:v libx264 -crf 18 -c:a copy $defaultOut",
                     style = MonoCodeStyle
                 )
             },
