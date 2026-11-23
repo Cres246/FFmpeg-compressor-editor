@@ -1,4 +1,4 @@
-# FFmpeg Compressor & Editor
+# FFmpeg Compressor&Editor
 
 ✅ True 2-Pass video compress for Discord, WhatsApp and Gmail uploads
 
