@@ -28,7 +28,9 @@ import com.example.domain.TrimTimeChoice
 import com.example.domain.VideoCodecOption
 import com.example.service.EncodingForegroundService
 import com.example.service.EncodingJobController
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +59,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(WorkbenchUiState())
     val uiState: StateFlow<WorkbenchUiState> = _uiState.asStateFlow()
+    private var probeErrorAutoClearJob: Job? = null
 
     val encodingState: StateFlow<EncodingState> = EncodingJobController.state
     val appLanguage: StateFlow<AppLanguage> = AppLanguageController.language
@@ -112,12 +115,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (t: Throwable) {
                 val s = AppLanguageController.currentStrings()
-                _uiState.update {
-                    it.copy(
-                        isProbing = false,
-                        probeError = s.errAnalyzeFailed(FfmpegEngine.describeError(t))
-                    )
-                }
+                _uiState.update { it.copy(isProbing = false) }
+                showProbeError(s.errAnalyzeFailed(FfmpegEngine.describeError(t)))
             }
         }
     }
@@ -126,15 +125,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo
         if (media == null) {
-            _uiState.update { it.copy(probeError = s.errSelectMediaFirst) }
+            showProbeError(s.errSelectMediaFirst)
             return
         }
         if (mode.requiresVideo && !media.hasVideo) {
-            _uiState.update { it.copy(probeError = s.errNoVideoTrack) }
+            showProbeError(s.errNoVideoTrack)
             return
         }
         if (mode.requiresAudio && !media.hasAudio) {
-            _uiState.update { it.copy(probeError = s.errNoAudioTrack) }
+            showProbeError(s.errNoAudioTrack)
             return
         }
 
@@ -408,7 +407,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateAudioExtractFormat(format: AudioExtractFormat) {
-        updateConfig { it.copy(audioExtractFormat = format) }
+        updateConfig { cfg ->
+            val adjustedBitrate = if (format == AudioExtractFormat.MP3) {
+                val parsed = cfg.audioBitrateInput.trim().replace("k", "", ignoreCase = true).toIntOrNull()
+                if (parsed != null && parsed > 320) "320" else cfg.audioBitrateInput
+            } else {
+                cfg.audioBitrateInput
+            }
+            cfg.copy(audioExtractFormat = format, audioBitrateInput = adjustedBitrate)
+        }
     }
 
     fun updateCustomCommand(command: String) {
@@ -591,7 +598,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearProbeError() {
+        probeErrorAutoClearJob?.cancel()
+        probeErrorAutoClearJob = null
         _uiState.update { it.copy(probeError = null) }
+    }
+
+    private fun showProbeError(message: String) {
+        probeErrorAutoClearJob?.cancel()
+        _uiState.update { it.copy(probeError = message) }
+        probeErrorAutoClearJob = viewModelScope.launch {
+            delay(5_000L)
+            _uiState.update { state ->
+                if (state.probeError == message) state.copy(probeError = null) else state
+            }
+        }
     }
 
     private fun updateConfig(transform: (ModeConfigState) -> ModeConfigState) {

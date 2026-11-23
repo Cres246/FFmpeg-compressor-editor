@@ -207,6 +207,8 @@ class EncodingForegroundService : Service() {
         val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
         val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
         val summaryBanner = buildSummaryBanner(media, config, s)
+        val videoSpecsSummary = buildVideoSpecsSummary(media, config)
+        val presetLabel = resolvePresetDisplayLabel(config)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -258,7 +260,9 @@ class EncodingForegroundService : Service() {
                         speed = "...",
                         sizeKb = 0L,
                         logs = synchronized(collectedLogs) { collectedLogs.toList() },
-                        summaryBanner = summaryBanner
+                        summaryBanner = summaryBanner,
+                        videoSpecsSummary = videoSpecsSummary,
+                        presetLabel = presetLabel
                     )
                 )
                 updateNotificationThrottled(
@@ -300,7 +304,9 @@ class EncodingForegroundService : Service() {
                                 speed = spd,
                                 sizeKb = kb,
                                 logs = synchronized(collectedLogs) { collectedLogs.toList() },
-                                summaryBanner = summaryBanner
+                                summaryBanner = summaryBanner,
+                                videoSpecsSummary = videoSpecsSummary,
+                                presetLabel = presetLabel
                             )
                         )
                         val notifText = FfmpegMath.formatTelemetryLine(
@@ -663,6 +669,90 @@ class EncodingForegroundService : Service() {
             }
             ProcessingMode.EXTRACT_AUDIO -> s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s))
             ProcessingMode.CUSTOM_COMMAND -> s.bannerCustomCmd
+        }
+    }
+
+    private fun buildVideoSpecsSummary(media: MediaInfo, config: ModeConfigState): String? {
+        if (!media.hasVideo ||
+            config.mode == ProcessingMode.EXTRACT_AUDIO ||
+            config.mode == ProcessingMode.CUSTOM_COMMAND
+        ) return null
+
+        val isTwoPass = config.mode == ProcessingMode.DISCORD_20MB ||
+            config.mode == ProcessingMode.WHATSAPP_100MB ||
+            config.mode == ProcessingMode.GMAIL_25MB ||
+            config.mode == ProcessingMode.CUSTOM_SIZE
+        val isTrimCrf = config.mode == ProcessingMode.TRIM_VIDEO &&
+            (config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_COPY ||
+                config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_AAC)
+        val isVideoReencode = isTwoPass ||
+            isTrimCrf ||
+            config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+            config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF
+        val supportsFpsAndRes = isTwoPass || isTrimCrf
+
+        val resText = when {
+            supportsFpsAndRes && config.resolution != com.example.domain.ResolutionOption.ORIGINAL -> {
+                when (config.resolution) {
+                    com.example.domain.ResolutionOption.P2160 -> "4K"
+                    com.example.domain.ResolutionOption.P1440 -> "1440p"
+                    com.example.domain.ResolutionOption.P1080 -> "1080p"
+                    com.example.domain.ResolutionOption.P720 -> "720p"
+                    com.example.domain.ResolutionOption.P480 -> "480p"
+                    com.example.domain.ResolutionOption.ORIGINAL -> null
+                }
+            }
+            media.width != null && media.height != null -> "${media.width}×${media.height}"
+            else -> null
+        }
+
+        val fpsText = when {
+            supportsFpsAndRes && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
+            media.fps != null -> {
+                val rounded = kotlin.math.round(media.fps)
+                if (kotlin.math.abs(media.fps - rounded) < 0.08) {
+                    "${rounded.toInt()} FPS"
+                } else {
+                    val fmt = String.format(java.util.Locale.US, "%.2f", media.fps)
+                        .trimEnd('0')
+                        .trimEnd('.')
+                    "$fmt FPS"
+                }
+            }
+            else -> null
+        }
+
+        val bitText = if (isVideoReencode) {
+            config.bitDepth.label
+        } else {
+            when (media.bitDepthIn) {
+                "10bit" -> "10-bit"
+                "12bit" -> "12-bit"
+                else -> "8-bit"
+            }
+        }
+
+        return listOfNotNull(resText, fpsText, bitText).joinToString(" · ").ifBlank { null }
+    }
+
+    private fun resolvePresetDisplayLabel(config: ModeConfigState): String? {
+        val usesPreset = when (config.mode) {
+            ProcessingMode.DISCORD_20MB,
+            ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
+            ProcessingMode.CUSTOM_SIZE,
+            ProcessingMode.VIDEO_ONLY_CRF,
+            ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
+            ProcessingMode.TRIM_VIDEO -> config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_COPY ||
+                config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_AAC
+            else -> false
+        }
+        if (!usesPreset) return null
+        return when (config.preset) {
+            com.example.domain.PresetOption.FAST -> "Fast"
+            com.example.domain.PresetOption.MEDIUM -> "Medium"
+            com.example.domain.PresetOption.SLOW -> "Slow"
+            com.example.domain.PresetOption.VERYSLOW -> "Very Slow"
         }
     }
 

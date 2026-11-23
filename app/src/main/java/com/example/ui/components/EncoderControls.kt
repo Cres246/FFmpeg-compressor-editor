@@ -406,16 +406,22 @@ fun AudioBitrateSection(
     bitrateInput: String,
     defaultKbps: Int,
     onBitrateChange: (String) -> Unit,
-    title: String? = null
+    title: String? = null,
+    maxKbps: Int = 768
 ) {
     val strings = LocalAppStrings.current
+    val isMp3 = maxKbps <= 320
     val resolvedTitle = title ?: strings.audioBitrateTitle
-    val quickValues = listOf("64", "128", "192", "256", "320", "384")
-    val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, defaultKbps)
+    val quickValues = if (isMp3) {
+        listOf("64", "128", "192", "256", "320")
+    } else {
+        listOf("64", "128", "192", "256", "320", "384", "512", "640", "768")
+    }
+    val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, defaultKbps, maxKbps)
 
     ConfigSectionCard(
         title = resolvedTitle,
-        subtitle = strings.audioBitrateSub(normalized)
+        subtitle = if (isMp3) strings.audioBitrateMp3Sub(normalized) else strings.audioBitrateSub(normalized)
     ) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -444,7 +450,7 @@ fun AudioBitrateSection(
         OutlinedTextField(
             value = bitrateInput,
             onValueChange = onBitrateChange,
-            label = { Text(strings.customBitrateLabel) },
+            label = { Text(if (isMp3) strings.customBitrateMp3Label else strings.customBitrateLabel) },
             suffix = { Text("k", style = MonoLabelStyle) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

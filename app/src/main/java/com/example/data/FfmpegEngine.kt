@@ -158,6 +158,7 @@ object FfmpegEngine {
         var width: Int? = null
         var height: Int? = null
         var pixFmt: String? = null
+        var fps: Double? = null
         var aCodec: String? = null
 
         val streams = info?.streams.orEmpty()
@@ -168,6 +169,8 @@ object FfmpegEngine {
                 width = stream.width?.toInt()
                 height = stream.height?.toInt()
                 pixFmt = stream.getStringProperty("pix_fmt")
+                fps = parseFrameRate(stream.getStringProperty("avg_frame_rate"))
+                    ?: parseFrameRate(stream.getStringProperty("r_frame_rate"))
             } else if (type == "audio" && aCodec == null) {
                 aCodec = stream.codec
             }
@@ -184,8 +187,25 @@ object FfmpegEngine {
             width = width,
             height = height,
             pixFmt = pixFmt,
-            audioCodec = aCodec
+            audioCodec = aCodec,
+            fps = fps
         )
+    }
+
+    private fun parseFrameRate(raw: String?): Double? {
+        val cleaned = raw?.trim().orEmpty()
+        if (cleaned.isEmpty() || cleaned == "0/0") return null
+        val parsed = if (cleaned.contains('/')) {
+            val parts = cleaned.split('/')
+            if (parts.size != 2) return null
+            val num = parts[0].toDoubleOrNull() ?: return null
+            val den = parts[1].toDoubleOrNull() ?: return null
+            if (den <= 0.0) return null
+            num / den
+        } else {
+            cleaned.toDoubleOrNull() ?: return null
+        }
+        return if (parsed.isFinite() && parsed in 1.0..240.0) parsed else null
     }
 
     /**

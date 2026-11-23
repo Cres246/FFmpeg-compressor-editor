@@ -23,7 +23,9 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,13 +34,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.History
@@ -47,10 +53,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,13 +70,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.domain.AppLanguage
@@ -91,6 +102,10 @@ import com.example.ui.screens.HistorySheet
 import com.example.ui.screens.ModeConfigScreen
 import com.example.ui.screens.ProcessingScreen
 import com.example.ui.theme.FFLabTheme
+import com.example.ui.theme.LocalExtendedColors
+import com.example.ui.theme.MonoLabelStyle
+import com.example.ui.theme.PlayfairDisplayFontFamily
+import com.example.ui.theme.SpaceGroteskFontFamily
 
 private enum class AppScreenStage(val depth: Int) {
     HOME(0),
@@ -285,6 +300,7 @@ private fun FFLabAppRoot(
     val languagePreference by viewModel.languagePreference.collectAsStateWithLifecycle()
     val strings = remember(appLanguage) { stringsFor(appLanguage) }
     var showLanguageMenu by remember { mutableStateOf(false) }
+    var showCreditsDialog by remember { mutableStateOf(false) }
     var batteryDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
     // Zero-permission Android Photo Picker for gallery videos
@@ -444,15 +460,32 @@ private fun FFLabAppRoot(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .statusBarsPadding()
-                                        .padding(start = 18.dp, end = 6.dp, top = 4.dp, bottom = 0.dp),
+                                        .padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 0.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(
-                                        text = stringResource(R.string.app_name),
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { showCreditsDialog = true }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                            .testTag("ffmpeg_credits_button"),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Info,
+                                            contentDescription = strings.creditsInfoCd,
+                                            tint = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                        Spacer(Modifier.width(7.dp))
+                                        Text(
+                                            text = stringResource(R.string.app_name),
+                                            style = MaterialTheme.typography.headlineSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Box {
                                             IconButton(
@@ -701,5 +734,153 @@ private fun FFLabAppRoot(
             }
         )
     }
+
+    if (showCreditsDialog) {
+        OpenSourceCreditsDialog(
+            onDismiss = { showCreditsDialog = false }
+        )
+    }
+    }
+}
+
+@Composable
+private fun OpenSourceCreditsDialog(
+    onDismiss: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = strings.creditsDialogTitle,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontFamily = PlayfairDisplayFontFamily,
+                        fontStyle = FontStyle.Italic,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 23.sp,
+                        lineHeight = 28.sp
+                    ),
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = strings.creditsDialogSubtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CreditEntryCard(
+                    sectionLabel = strings.creditsCoreSectionLabel,
+                    libraryName = "FFmpeg",
+                    authorLine = strings.creditsCoreCreators,
+                    extraNote = strings.creditsCoreEncoders,
+                    borderColor = extColors.subtleBorder
+                )
+                CreditEntryCard(
+                    sectionLabel = strings.creditsOriginalLibSectionLabel,
+                    libraryName = "FFmpegKit",
+                    packageTag = "arthenica/ffmpeg-kit",
+                    authorLine = strings.creditsOriginalLibCreator,
+                    borderColor = extColors.subtleBorder
+                )
+                CreditEntryCard(
+                    sectionLabel = strings.creditsForkSectionLabel,
+                    libraryName = "FFmpegKit Maintained (Full GPL)",
+                    packageTag = "dev.ffmpegkit-maintained · v8.1.9",
+                    authorLine = strings.creditsForkMaintainer,
+                    borderColor = extColors.subtleBorder
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("credits_close_button")
+            ) {
+                Text(
+                    text = strings.actionClose,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun CreditEntryCard(
+    sectionLabel: String,
+    libraryName: String,
+    authorLine: String,
+    borderColor: androidx.compose.ui.graphics.Color,
+    packageTag: String? = null,
+    extraNote: String? = null
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.background,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = sectionLabel,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = PlayfairDisplayFontFamily,
+                    fontStyle = FontStyle.Italic,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.5.sp
+                ),
+                color = MaterialTheme.colorScheme.secondary
+            )
+            Text(
+                text = libraryName,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontFamily = SpaceGroteskFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.5.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (!packageTag.isNullOrBlank()) {
+                Text(
+                    text = packageTag,
+                    style = MonoLabelStyle.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 2.dp),
+                thickness = 0.8.dp,
+                color = borderColor
+            )
+            Text(
+                text = authorLine,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 17.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (!extraNote.isNullOrBlank()) {
+                Text(
+                    text = extraNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }

@@ -67,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +80,7 @@ import com.example.service.CpuPerformanceBooster
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
+import com.example.ui.theme.PlayfairDisplayFontFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -290,7 +292,7 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Surface(
@@ -309,14 +311,33 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                     )
                 }
 
-                Text(
-                    text = state.percent?.let { strings.formatPercent(it) } ?: "...",
-                    style = MaterialTheme.typography.displaySmall,
-                    color = primary
-                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = state.percent?.let { strings.formatPercent(it) } ?: "...",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = primary
+                    )
+                    if (!state.presetLabel.isNullOrBlank()) {
+                        Text(
+                            text = state.presetLabel,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = PlayfairDisplayFontFamily,
+                                fontStyle = FontStyle.Italic,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                lineHeight = 16.sp,
+                                letterSpacing = 0.4.sp
+                            ),
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .testTag("running_preset_label")
+                        )
+                    }
+                }
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
             Text(
                 text = state.statusMessage,
@@ -331,7 +352,29 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(Modifier.height(18.dp))
+            if (!state.videoSpecsSummary.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(7.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(1.dp, extColors.subtleBorder),
+                    modifier = Modifier.testTag("running_video_specs_chip")
+                ) {
+                    Text(
+                        text = state.videoSpecsSummary,
+                        style = MonoLabelStyle.copy(
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
 
             if (state.percent != null) {
                 LinearProgressIndicator(

@@ -482,7 +482,8 @@ fun ModeConfigScreen(
                                 bitrateInput = config.audioBitrateInput,
                                 defaultKbps = 256,
                                 onBitrateChange = viewModel::updateAudioBitrate,
-                                title = strings.audioBitrateExtractTitle(config.audioExtractFormat.localizedLabel(strings))
+                                title = strings.audioBitrateExtractTitle(config.audioExtractFormat.localizedLabel(strings)),
+                                maxKbps = if (config.audioExtractFormat == AudioExtractFormat.MP3) 320 else 768
                             )
                         }
                     }

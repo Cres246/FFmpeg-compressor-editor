@@ -13,7 +13,8 @@ data class MediaInfo(
     val width: Int?,
     val height: Int?,
     val pixFmt: String?,
-    val audioCodec: String?
+    val audioCodec: String?,
+    val fps: Double? = null
 ) {
     val bitDepthIn: String
         get() = when {
@@ -50,7 +51,7 @@ data class EncoderCapabilities(
 enum class ModeCategory(val title: String) {
     TARGET_SIZE("Hedef Boyut"),
     TRIM("Videoyu Kes"),
-    OTHER("Diğer İşlemler")
+    OTHER("Daha Fazla")
 }
 
 enum class QualityBadgeTone {
@@ -355,7 +356,9 @@ sealed interface EncodingState {
         val speed: String,
         val sizeKb: Long,
         val logs: List<String>,
-        val summaryBanner: String
+        val summaryBanner: String,
+        val videoSpecsSummary: String? = null,
+        val presetLabel: String? = null
     ) : EncodingState
 
     data class Success(

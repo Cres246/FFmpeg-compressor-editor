@@ -71,12 +71,12 @@ object FfmpegMath {
     }
 
     /**
-     * Normalizes audio bitrate input (strips k/K, clamps 32..768, falls back to default).
+     * Normalizes audio bitrate input (strips k/K, clamps 32..maxKbps, falls back to default).
      */
-    fun normalizeAudioBitrate(raw: String, defaultKbps: Int): Int {
+    fun normalizeAudioBitrate(raw: String, defaultKbps: Int, maxKbps: Int = 768): Int {
         val cleaned = raw.trim().replace("k", "", ignoreCase = true)
         val parsed = cleaned.toIntOrNull()
-        return if (parsed != null && parsed in 32..768) parsed else defaultKbps
+        return if (parsed != null && parsed in 32..maxKbps) parsed else defaultKbps.coerceIn(32, maxKbps)
     }
 
     fun defaultAudioBitrateForTwoPass(targetMb: Double): Int =
@@ -471,7 +471,7 @@ object FfmpegMath {
                         if (media.audioCodec.equals("mp3", ignoreCase = true)) {
                             "${base}_${audioTag}.mp3"
                         } else {
-                            val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
+                            val ab = normalizeAudioBitrate(config.audioBitrateInput, 256, maxKbps = 320)
                             "${base}_${audioTag}_${ab}k.mp3"
                         }
                     }
@@ -787,7 +787,7 @@ object FfmpegMath {
                             args.addAll(listOf("-c:a", "copy", outputPath))
                             strings.stepExtractMp3Copy
                         } else {
-                            val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
+                            val ab = normalizeAudioBitrate(config.audioBitrateInput, 256, maxKbps = 320)
                             args.addAll(listOf("-c:a", "libmp3lame", "-b:a", "${ab}k", outputPath))
                             strings.stepExtractMp3Transcode(ab)
                         }
