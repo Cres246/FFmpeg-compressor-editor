@@ -85,6 +85,7 @@ import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.ui.theme.LocalExtendedColors
+import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
 import com.example.ui.theme.SpaceGroteskFontFamily
@@ -366,9 +367,15 @@ private fun TurboSpeedometerHeroCard(state: EncodingState.Running) {
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val pct = (state.percent ?: 0).coerceIn(0, 100)
-    val elapsedText = remember(state.elapsedSec, strings) {
-        FfmpegMath.formatElapsedTime(state.elapsedSec, strings)
-    }
+    val telemetry = FfmpegMath.formatTelemetryLine(
+        currentSec = state.currentTimeSec,
+        totalDurationSec = state.totalDurationSec,
+        percent = state.percent,
+        speed = state.speed,
+        sizeKb = state.sizeKb,
+        includePercent = false,
+        strings = strings
+    )
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -419,47 +426,38 @@ private fun TurboSpeedometerHeroCard(state: EncodingState.Running) {
                     .testTag("turbo_speedometer_gauge")
             )
 
-            Spacer(Modifier.height(10.dp))
+            if (state.statusMessage.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = state.statusMessage,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
 
-            Text(
-                text = state.statusMessage,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
-            )
+            Spacer(Modifier.height(12.dp))
 
-            Spacer(Modifier.height(6.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Classic live telemetry bar: Time processed / total | speed (e.g. 4.20x) | size
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(1.dp, extColors.subtleBorder)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.background,
-                    border = BorderStroke(1.dp, extColors.subtleBorder)
-                ) {
-                    Text(
-                        text = strings.turboElapsedLabel(elapsedText),
-                        style = MonoLabelStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                    )
-                }
-                if (state.sizeKb > 0L) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.background,
-                        border = BorderStroke(1.dp, extColors.subtleBorder)
-                    ) {
-                        Text(
-                            text = FfmpegMath.formatSizeBytes(state.sizeKb * 1024L),
-                            style = MonoLabelStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                }
+                Text(
+                    text = telemetry,
+                    style = MonoCodeStyle.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("turbo_telemetry_bar")
+                )
             }
         }
     }
@@ -784,11 +782,13 @@ private fun CarSpeedometerGauge(
                 Text(
                     text = subLabel,
                     style = MonoLabelStyle.copy(
-                        fontSize = 9.5.sp,
+                        fontSize = 8.2.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.1.sp
+                        letterSpacing = 0.55.sp
                     ),
-                    color = secondary
+                    color = secondary,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -844,28 +844,31 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
                 )
             }
 
-            if (!state.videoSpecsSummary.isNullOrBlank()) {
+            val stripText = state.videoSpecsSummary?.takeIf { it.isNotBlank() } ?: state.summaryBanner
+            if (stripText.isNotBlank()) {
                 Surface(
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     border = BorderStroke(1.dp, extColors.subtleBorder)
                 ) {
                     Text(
-                        text = state.videoSpecsSummary,
-                        style = MonoLabelStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+                        text = stripText,
+                        style = MonoLabelStyle.copy(
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 16.sp
+                        ),
                         color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .testTag("turbo_unified_specs_strip")
                     )
                 }
             }
-
-            Text(
-                text = state.summaryBanner,
-                style = MonoLabelStyle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
             Text(
                 text = strings.wakeLockActiveSuffix,

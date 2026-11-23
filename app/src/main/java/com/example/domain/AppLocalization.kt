@@ -287,10 +287,24 @@ interface AppStrings {
     val audioExtractOriginalLabel: String
     val customCmdTitle: String
     val customCmdSub: String
+    val customCmdAiTip: String
+    val customCmdPasteButton: String
+    val customCmdClearButton: String
     val customCmdShortcutsLabel: String
     val customCmdQuickRemuxChip: String
+    val customCmdQuickTwoPassChip: String
+    val customCmdQuickGifChip: String
+    val customCmdQuickMuteChip: String
     val customCmdDefaultOutput: String
     val customCmdInputLabel: String
+    val customCmdPlaceholder: String
+    val customCmdStepsDetected: (count: Int) -> String
+    val customCmdBadgeInputAutoBound: String
+    val customCmdBadgeTwoPassReady: String
+    val customCmdBadgeMarkdownCleaned: String
+    val customCmdBadgeWindowsNullFixed: String
+    val customCmdBadgeOutputAutoAdded: String
+    val customCmdNoValidCommandWarning: String
 
     // Processing screen
     val passBadge: (passIndex: Int, totalPasses: Int) -> String
@@ -592,12 +606,28 @@ object TurkishStrings : AppStrings {
     override val audioExtractSub = "Kaynak ses zaten AAC veya MP3 ise yeniden kodlanmadan %100 kayıpsız kopyalanır"
     override val audioExtractOriginalOption: (String, String) -> String = { codec, ext -> "Orijinal ($codec → .$ext)" }
     override val audioExtractOriginalLabel = "Orijinal Kodek"
-    override val customCmdTitle = "Özel FFmpeg Komutu (Tam Komut)"
-    override val customCmdSub = "Çoklu && zincir komutları dahil · Oluşan çıktılar otomatik Movies/FFmpeg klasörüne taşınır"
-    override val customCmdShortcutsLabel = "Girdi kısayolları (dokunarak ekle):"
+    override val customCmdTitle = "Özel FFmpeg Komutu (Yapıştır & Çalıştır)"
+    override val customCmdSub = "ChatGPT, Gemini veya herhangi bir yapay zekâdan aldığınız FFmpeg kodunu hiç düzenlemeden doğrudan yapıştırın."
+    override val customCmdAiTip = "2-pass, çok satırlı (\\ veya ^), Markdown ``` bloklu, Windows NUL veya farklı girdi dosya adlı (input.mp4, video.mkv vb.) kodlar seçili dosyanıza otomatik uyarlanır."
+    override val customCmdPasteButton = "Panodan Yapıştır"
+    override val customCmdClearButton = "Temizle"
+    override val customCmdShortcutsLabel = "Hazır örnekler (dokunarak dene):"
     override val customCmdQuickRemuxChip = "Hızlı Remux"
+    override val customCmdQuickTwoPassChip = "2-Pass (20MB)"
+    override val customCmdQuickGifChip = "GIF (Paletli)"
+    override val customCmdQuickMuteChip = "Sesi Kaldır"
     override val customCmdDefaultOutput = "cikti.mp4"
-    override val customCmdInputLabel = "FFmpeg Komutu"
+    override val customCmdInputLabel = "FFmpeg Kodunu Buraya Yapıştırın"
+    override val customCmdPlaceholder = "Örn. yapay zekâdan kopyalanan tek veya çoklu (2-pass) FFmpeg komutu..."
+    override val customCmdStepsDetected: (Int) -> String = { count ->
+        if (count > 1) "$count aşamalı zincir komut algılandı" else "1 FFmpeg komutu hazır"
+    }
+    override val customCmdBadgeInputAutoBound = "Seçili dosya otomatik bağlandı"
+    override val customCmdBadgeTwoPassReady = "2-Pass log & null yolu ayarlandı"
+    override val customCmdBadgeMarkdownCleaned = "Kod bloğu / açıklamalar temizlendi"
+    override val customCmdBadgeWindowsNullFixed = "NUL → /dev/null"
+    override val customCmdBadgeOutputAutoAdded = "Çıktı adı otomatik eklendi"
+    override val customCmdNoValidCommandWarning = "Metinde çalıştırılabilir FFmpeg komutu bulunamadı."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "GEÇİŞ $p/$t" }
     override val processingBadge = "İŞLENİYOR"
@@ -648,7 +678,7 @@ object TurkishStrings : AppStrings {
     override val customCmdStepSingle = "Özel FFmpeg komutu çalıştırılıyor"
     override val customCmdOutputLabel = "Özel Komut"
     override val errCustomCmdFailed: (Int) -> String = { code -> "Özel FFmpeg komutu başarısız oldu (kod: $code)." }
-    override val hintCustomCmdSyntax: (String) -> String = { ext -> "Komut sözdizimini ve girdi kısayollarını (\"\$IN\" veya input.$ext) kontrol edin." }
+    override val hintCustomCmdSyntax: (String) -> String = { _ -> "Hata günlüğündeki FFmpeg mesajına göz atın; desteklenmeyen kodek veya filtre yazım hatası olabilir." }
     override val successCustomCmdDoneNoFiles = "Başarılı! Komut tamamlandı."
     override val successCustomCmdSavedFiles: (Int, String) -> String = { count, total -> "Başarılı! $count dosya kaydedildi ($total)" }
     override val bannerTrimRange: (String, String, String) -> String = { s, e, sub -> "Aralık: $s → $e | $sub" }
@@ -673,11 +703,11 @@ object TurkishStrings : AppStrings {
     override val stepPass2 = "2/2 Geçiş (Kodlanıyor)"
     override val stepTrimLossless = "Kayıpsız kesiliyor (-noaccurate_seek)"
     override val stepTrimVideoLosslessAudioAac = "Görüntü kayıpsız + Ses AAC kesiliyor"
-    override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Kesilip ${codec}${bit} CRF $crf ($preset | ses copy)" }
-    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Kesilip ${codec}${bit} CRF $crf ($preset) + AAC" }
+    override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Kesilip ${codec}${bit} CRF $crf · Ses copy" }
+    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Kesilip ${codec}${bit} CRF $crf + AAC" }
     override val stepRemux = "Kutu / format yenileniyor (-c copy)"
     override val stepAudioOnly: (Int) -> String = { ab -> "Görüntü copy · Ses ${ab}k AAC" }
-    override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Görüntü ${codec}${bit} CRF $crf ($preset | ses copy)" }
+    override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Görüntü ${codec}${bit} CRF $crf · Ses copy" }
     override val stepExtractOriginal: (String, String) -> String = { codec, ext -> "Orijinal ses (%100 kayıpsız: $codec → .$ext)" }
     override val stepExtractAacCopy = "Ses zaten AAC · %100 kayıpsız kopyalanıyor"
     override val stepExtractAacTranscode: (Int) -> String = { ab -> "Ses ${ab}k AAC olarak çıkarılıyor" }
@@ -697,10 +727,10 @@ object TurkishStrings : AppStrings {
     override val turboConfirmYes = "Evet, Hızlandır"
     override val turboConfirmNo = "Vazgeç"
     override val turboScreenTitle = "Turbo · MediaCodec"
-    override val turboGaugeSubLabel = "DONANIM TURBO"
+    override val turboGaugeSubLabel = "DONANIM HIZLANDIRMA"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
     override val turboStatusPreparing = "MediaCodec donanım motoru hazırlanıyor..."
-    override val turboStatusEncoding = "Donanım hızlandırma ile tam gaz kodlanıyor"
+    override val turboStatusEncoding = ""
     override val turboStatusSaving = "Çıktı Movies/FFmpeg klasörüne kaydediliyor..."
     override val turboElapsedLabel: (String) -> String = { t -> "Geçen Süre: $t" }
     override val turboSuccessBadge = "MediaCodec Donanım Çıktısı"
@@ -894,12 +924,28 @@ object EnglishStrings : AppStrings {
     override val audioExtractSub = "If the source audio is already AAC or MP3, it is stream-copied losslessly without re-encoding"
     override val audioExtractOriginalOption: (String, String) -> String = { codec, ext -> "Original ($codec → .$ext)" }
     override val audioExtractOriginalLabel = "Original Codec"
-    override val customCmdTitle = "Custom FFmpeg Command (Full CLI)"
-    override val customCmdSub = "Supports multi-step && command chains · Generated outputs are automatically saved to Movies/FFmpeg"
-    override val customCmdShortcutsLabel = "Input placeholders (tap to insert):"
+    override val customCmdTitle = "Custom FFmpeg Command (Paste & Run)"
+    override val customCmdSub = "Paste any FFmpeg snippet straight from ChatGPT, Gemini, or any AI without manual editing."
+    override val customCmdAiTip = "2-pass chains, multi-line (\\ or ^), Markdown ``` blocks, Windows NUL, and any placeholder filename (input.mp4, video.mkv, etc.) are auto-adapted to your selected file."
+    override val customCmdPasteButton = "Paste from Clipboard"
+    override val customCmdClearButton = "Clear"
+    override val customCmdShortcutsLabel = "Quick templates (tap to insert):"
     override val customCmdQuickRemuxChip = "Quick Remux"
+    override val customCmdQuickTwoPassChip = "2-Pass (20MB)"
+    override val customCmdQuickGifChip = "Palette GIF"
+    override val customCmdQuickMuteChip = "Remove Audio"
     override val customCmdDefaultOutput = "output.mp4"
-    override val customCmdInputLabel = "FFmpeg Command"
+    override val customCmdInputLabel = "Paste FFmpeg Code Here"
+    override val customCmdPlaceholder = "e.g., any single or multi-step (2-pass) FFmpeg snippet copied from an AI..."
+    override val customCmdStepsDetected: (Int) -> String = { count ->
+        if (count > 1) "$count-step command chain detected" else "1 FFmpeg command ready"
+    }
+    override val customCmdBadgeInputAutoBound = "Selected file auto-linked"
+    override val customCmdBadgeTwoPassReady = "2-Pass log & null path ready"
+    override val customCmdBadgeMarkdownCleaned = "Markdown / prose cleaned"
+    override val customCmdBadgeWindowsNullFixed = "NUL → /dev/null"
+    override val customCmdBadgeOutputAutoAdded = "Output filename auto-added"
+    override val customCmdNoValidCommandWarning = "No runnable FFmpeg command found in this text."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "PASS $p/$t" }
     override val processingBadge = "PROCESSING"
@@ -950,7 +996,7 @@ object EnglishStrings : AppStrings {
     override val customCmdStepSingle = "Running custom FFmpeg command"
     override val customCmdOutputLabel = "Custom Command"
     override val errCustomCmdFailed: (Int) -> String = { code -> "Custom FFmpeg command failed (code: $code)." }
-    override val hintCustomCmdSyntax: (String) -> String = { ext -> "Check command syntax and input placeholders (\"\$IN\" or input.$ext)." }
+    override val hintCustomCmdSyntax: (String) -> String = { _ -> "Check the FFmpeg message in the error log; an unsupported codec or filter syntax error may be present." }
     override val successCustomCmdDoneNoFiles = "Done! Command completed."
     override val successCustomCmdSavedFiles: (Int, String) -> String = { count, total ->
         if (count == 1) "Done! Saved 1 file ($total)" else "Done! Saved $count files ($total)"
@@ -977,11 +1023,11 @@ object EnglishStrings : AppStrings {
     override val stepPass2 = "Pass 2/2 (Encoding)"
     override val stepTrimLossless = "Trimming losslessly (-noaccurate_seek)"
     override val stepTrimVideoLosslessAudioAac = "Trimming (Lossless Video + AAC Audio)"
-    override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Trimming ${codec}${bit} CRF $crf ($preset | audio copy)" }
-    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Trimming ${codec}${bit} CRF $crf ($preset) + AAC" }
+    override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Trimming ${codec}${bit} CRF $crf · Audio copy" }
+    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Trimming ${codec}${bit} CRF $crf + AAC" }
     override val stepRemux = "Remuxing container (-c copy)"
     override val stepAudioOnly: (Int) -> String = { ab -> "Video copy · Audio ${ab}k AAC" }
-    override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, preset -> "Video ${codec}${bit} CRF $crf ($preset | audio copy)" }
+    override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Video ${codec}${bit} CRF $crf · Audio copy" }
     override val stepExtractOriginal: (String, String) -> String = { codec, ext -> "Original audio (100% lossless: $codec → .$ext)" }
     override val stepExtractAacCopy = "Audio is already AAC · Lossless stream copy"
     override val stepExtractAacTranscode: (Int) -> String = { ab -> "Extracting audio as ${ab}k AAC" }
@@ -1001,10 +1047,10 @@ object EnglishStrings : AppStrings {
     override val turboConfirmYes = "Yes, Go Turbo"
     override val turboConfirmNo = "Cancel"
     override val turboScreenTitle = "Turbo · MediaCodec"
-    override val turboGaugeSubLabel = "HARDWARE TURBO"
+    override val turboGaugeSubLabel = "HARDWARE ACCEL"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
     override val turboStatusPreparing = "Initializing MediaCodec hardware engine..."
-    override val turboStatusEncoding = "Encoding at full hardware speed"
+    override val turboStatusEncoding = ""
     override val turboStatusSaving = "Saving output to Movies/FFmpeg..."
     override val turboElapsedLabel: (String) -> String = { t -> "Elapsed: $t" }
     override val turboSuccessBadge = "MediaCodec Hardware Output"

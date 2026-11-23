@@ -565,6 +565,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _uiState.update { it.copy(validationError = s.errEnterCustomCommand) }
                     return
                 }
+                val parsed = com.example.domain.CustomFfmpegParser.buildPlan(
+                    rawCommand = cfg.customCommandInput,
+                    media = media,
+                    workDirPath = "",
+                    defaultOutputFileName = s.customCmdDefaultOutput,
+                    inputTokenProvider = { "\$IN" },
+                    isPreview = true
+                )
+                if (parsed.steps.isEmpty()) {
+                    _uiState.update { it.copy(validationError = s.customCmdNoValidCommandWarning) }
+                    return
+                }
             }
             else -> Unit
         }

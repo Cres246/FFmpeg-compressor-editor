@@ -23,6 +23,7 @@ import com.example.data.PreferencesRepository
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
 import com.example.domain.CompletedOutput
+import com.example.domain.CustomFfmpegParser
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.MediaInfo
@@ -205,7 +206,12 @@ class EncodingForegroundService : Service() {
             val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(s)}"
             val baseOut = FfmpegMath.computeOutputFileName(media, config, s)
             val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
-            val specs = buildTurboSpecsSummary(media, config)
+            val unifiedSpecs = buildTurboUnifiedSpecs(media, config, s)
+            val expectedDur = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
             val initialRunning = EncodingState.Running(
                 modeTitle = modeTitle,
                 outputFileName = turboOut,
@@ -213,13 +219,13 @@ class EncodingForegroundService : Service() {
                 totalPasses = 1,
                 statusMessage = s.turboStatusPreparing,
                 currentTimeSec = 0.0,
-                totalDurationSec = media.durationSec,
+                totalDurationSec = expectedDur,
                 percent = 0,
-                speed = "HW",
+                speed = "...",
                 sizeKb = 0L,
                 logs = emptyList(),
-                summaryBanner = buildTurboSummaryBanner(media, config, s),
-                videoSpecsSummary = specs,
+                summaryBanner = unifiedSpecs,
+                videoSpecsSummary = unifiedSpecs,
                 presetLabel = "MediaCodec",
                 isHardwareTurbo = true,
                 canSwitchToTurbo = false,
@@ -251,7 +257,7 @@ class EncodingForegroundService : Service() {
                 sizeKb = 0L,
                 logs = emptyList(),
                 summaryBanner = s.bannerRemux,
-                videoSpecsSummary = buildTurboSpecsSummary(media, config),
+                videoSpecsSummary = null,
                 presetLabel = null,
                 isHardwareTurbo = false,
                 canSwitchToTurbo = false,
@@ -276,17 +282,44 @@ class EncodingForegroundService : Service() {
             runCatching { context.startService(intent) }
         }
 
-        internal fun buildTurboSpecsSummary(media: MediaInfo, config: ModeConfigState): String {
-            val (outW, outH) = Media3TurboEngine.resolveTargetDimensions(media, config)
-            val resPart = "${outW}×${outH}"
-            val supportsFps = config.mode == ProcessingMode.DISCORD_20MB ||
+        internal fun formatCompactVideoSpecsParts(
+            media: MediaInfo,
+            config: ModeConfigState,
+            isTurbo: Boolean,
+            displayDimsOverride: Pair<Int, Int>? = null
+        ): List<String> {
+            val isTwoPass = config.mode == ProcessingMode.DISCORD_20MB ||
                 config.mode == ProcessingMode.WHATSAPP_100MB ||
                 config.mode == ProcessingMode.GMAIL_25MB ||
-                config.mode == ProcessingMode.CUSTOM_SIZE ||
-                (config.mode == ProcessingMode.TRIM_VIDEO &&
-                    (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY || config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC))
+                config.mode == ProcessingMode.CUSTOM_SIZE
+            val isTrimCrf = config.mode == ProcessingMode.TRIM_VIDEO &&
+                (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY || config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC)
+            val isVideoReencode = isTurbo || isTwoPass || isTrimCrf ||
+                config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+                config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF
+            val supportsFpsAndRes = isTwoPass || isTrimCrf
+
+            val resPart = when {
+                supportsFpsAndRes && config.resolution != com.example.domain.ResolutionOption.ORIGINAL -> {
+                    when (config.resolution) {
+                        com.example.domain.ResolutionOption.P2160 -> "4K"
+                        com.example.domain.ResolutionOption.P1440 -> "1440p"
+                        com.example.domain.ResolutionOption.P1080 -> "1080p"
+                        com.example.domain.ResolutionOption.P720 -> "720p"
+                        com.example.domain.ResolutionOption.P480 -> "480p"
+                        com.example.domain.ResolutionOption.ORIGINAL -> null
+                    }
+                }
+                isTurbo -> {
+                    val (outW, outH) = Media3TurboEngine.resolveTargetDimensions(media, config, displayDimsOverride)
+                    "${outW}×${outH}"
+                }
+                media.width != null && media.height != null -> "${media.width}×${media.height}"
+                else -> null
+            }
+
             val fpsPart = when {
-                supportsFps && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
+                supportsFpsAndRes && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
                 media.fps != null -> {
                     val rounded = kotlin.math.round(media.fps)
                     if (kotlin.math.abs(media.fps - rounded) < 0.08) "${rounded.toInt()} FPS"
@@ -294,29 +327,53 @@ class EncodingForegroundService : Service() {
                 }
                 else -> null
             }
-            val codecPart = config.codec.tag
-            val bitPart = config.bitDepth.label
-            return listOfNotNull(codecPart, resPart, fpsPart, bitPart).joinToString(" · ")
+
+            val bitPart = if (isVideoReencode) {
+                if (config.bitDepth == com.example.domain.BitDepthOption.BIT_10) "10b" else "8b"
+            } else {
+                media.bitShort.ifBlank { "8b" }
+            }
+
+            return listOfNotNull(resPart, fpsPart, bitPart)
         }
 
-        internal fun buildTurboSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
-            val bps = Media3TurboEngine.resolveTargetVideoBitrateBps(media, config)
+        /**
+         * Unified Turbo strip format:
+         * <20MB · H264 635k · AAC · 1080p · 30 FPS · 8b
+         */
+        internal fun buildTurboUnifiedSpecs(
+            media: MediaInfo,
+            config: ModeConfigState,
+            s: AppStrings,
+            overrideVideoBitrateBps: Int? = null,
+            displayDimsOverride: Pair<Int, Int>? = null
+        ): String {
+            val bps = overrideVideoBitrateBps ?: Media3TurboEngine.estimateInitialVideoBitrateBps(media, config)
             val kbps = (bps / 1000).coerceAtLeast(100)
             val audioPart = if (!media.hasAudio) s.bannerSilentAudio else "AAC"
-            return when (config.mode) {
-                ProcessingMode.DISCORD_20MB -> "< 20 MB · ${config.codec.tag} ${kbps}k · $audioPart"
-                ProcessingMode.WHATSAPP_100MB -> "< 100 MB · ${config.codec.tag} ${kbps}k · $audioPart"
-                ProcessingMode.GMAIL_25MB -> "< 25 MB · ${config.codec.tag} ${kbps}k · $audioPart"
+            val tailSpecs = formatCompactVideoSpecsParts(
+                media = media,
+                config = config,
+                isTurbo = true,
+                displayDimsOverride = displayDimsOverride
+            )
+
+            val headParts = when (config.mode) {
+                ProcessingMode.DISCORD_20MB -> listOf("<20MB", "${config.codec.tag} ${kbps}k", audioPart)
+                ProcessingMode.WHATSAPP_100MB -> listOf("<100MB", "${config.codec.tag} ${kbps}k", audioPart)
+                ProcessingMode.GMAIL_25MB -> listOf("<25MB", "${config.codec.tag} ${kbps}k", audioPart)
                 ProcessingMode.CUSTOM_SIZE -> {
                     val mb = FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
-                    "< ${FfmpegMath.formatMbTag(mb)} MB · ${config.codec.tag} ${kbps}k · $audioPart"
+                    listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${kbps}k", audioPart)
                 }
                 ProcessingMode.TRIM_VIDEO -> {
                     val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                    "${startStr ?: "00:00"} → ${endStr ?: s.trimEndPlaceholder} · ${config.codec.tag} ${kbps}k"
+                    listOf("${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}", "${config.codec.tag} ${kbps}k", audioPart)
                 }
-                else -> "${config.codec.tag} ${kbps}k · $audioPart"
+                else -> listOf("${config.codec.tag} ${kbps}k", audioPart)
             }
+
+            return (headParts + tailSpecs).joinToString(" · ")
         }
     }
 
@@ -443,7 +500,7 @@ class EncodingForegroundService : Service() {
         val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
         val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
         val summaryBanner = buildSummaryBanner(media, config, s)
-        val videoSpecsSummary = buildVideoSpecsSummary(media, config)
+        val videoSpecsSummary: String? = null
         val presetLabel = resolvePresetDisplayLabel(config)
         val canSwitchToTurbo = supportsMedia3HardwareTurbo(media, config)
 
@@ -695,7 +752,7 @@ class EncodingForegroundService : Service() {
         val collectedLogs = mutableListOf<String>()
         val modeLocalizedTitle = config.mode.localizedTitle(s)
         val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
-        val specsSummary = buildTurboSpecsSummary(media, config)
+        val specsSummary = buildTurboUnifiedSpecs(media, config, s)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -717,6 +774,8 @@ class EncodingForegroundService : Service() {
                 "-map", "0:a:0?",
                 "-c", "copy",
                 "-sn", "-dn",
+                "-avoid_negative_ts", "make_zero",
+                "-max_muxing_queue_size", "1024",
                 "-movflags", "+faststart",
                 remuxFile.absolutePath
             )
@@ -743,7 +802,7 @@ class EncodingForegroundService : Service() {
                             sizeKb = kb,
                             logs = synchronized(collectedLogs) { collectedLogs.toList() },
                             summaryBanner = liveS.bannerRemux,
-                            videoSpecsSummary = specsSummary,
+                            videoSpecsSummary = null,
                             presetLabel = null,
                             isHardwareTurbo = false,
                             canSwitchToTurbo = false,
@@ -801,6 +860,12 @@ class EncodingForegroundService : Service() {
             val curS = AppLanguageController.currentStrings()
             val baseOut = FfmpegMath.computeOutputFileName(media, config, curS)
             val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
+            val turboUnifiedSpecs = buildTurboUnifiedSpecs(media, config, curS)
+            val expectedDur = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
             EncodingJobController.markTurboEngineActive(true)
             EncodingJobController.updateStateIfActive(
                 runId,
@@ -811,13 +876,13 @@ class EncodingForegroundService : Service() {
                     totalPasses = 1,
                     statusMessage = curS.turboStatusPreparing,
                     currentTimeSec = 0.0,
-                    totalDurationSec = media.durationSec,
+                    totalDurationSec = expectedDur,
                     percent = 0,
-                    speed = "HW",
+                    speed = "...",
                     sizeKb = 0L,
                     logs = emptyList(),
-                    summaryBanner = buildTurboSummaryBanner(media, config, curS),
-                    videoSpecsSummary = specsSummary,
+                    summaryBanner = turboUnifiedSpecs,
+                    videoSpecsSummary = turboUnifiedSpecs,
                     presetLabel = "MediaCodec",
                     isHardwareTurbo = true,
                     canSwitchToTurbo = false,
@@ -879,8 +944,13 @@ class EncodingForegroundService : Service() {
         val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
         val baseOutputName = FfmpegMath.computeOutputFileName(media, config, s)
         val turboOutputName = Media3TurboEngine.buildTurboOutputFileName(baseOutputName)
-        val summaryBanner = buildTurboSummaryBanner(media, config, s)
-        val videoSpecsSummary = buildTurboSpecsSummary(media, config)
+        var liveTurboSpecs = buildTurboUnifiedSpecs(media, config, s)
+        var resolvedDurationSec = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+            FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec ?: 0.0
+        } else {
+            media.durationSec ?: 0.0
+        }
+        var lastKnownSpeed = "..."
 
         try {
             val tempOutFile = File(workDir, turboOutputName)
@@ -892,9 +962,34 @@ class EncodingForegroundService : Service() {
                 config = config,
                 outputFile = tempOutFile,
                 inputUriOverride = inputUriOverride,
-                onProgress = { pct, elapsedSec ->
+                onPlanResolved = { plan ->
+                    val liveS = AppLanguageController.currentStrings()
+                    resolvedDurationSec = plan.effectiveDurationSec
+                    liveTurboSpecs = buildTurboUnifiedSpecs(
+                        media = media,
+                        config = config,
+                        s = liveS,
+                        overrideVideoBitrateBps = plan.videoBitrateBps,
+                        displayDimsOverride = plan.resolvedDisplayDims
+                    )
+                    val cur = EncodingJobController.state.value
+                    if (cur is EncodingState.Running && cur.isHardwareTurbo) {
+                        EncodingJobController.updateStateIfActive(
+                            runId,
+                            cur.copy(
+                                totalDurationSec = resolvedDurationSec.takeIf { it > 0.0 } ?: cur.totalDurationSec,
+                                summaryBanner = liveTurboSpecs,
+                                videoSpecsSummary = liveTurboSpecs
+                            )
+                        )
+                    }
+                },
+                onProgress = { pct, elapsedSec, effectiveDur ->
                     if (!EncodingJobController.isRunActive(runId)) return@transcode
                     val liveS = AppLanguageController.currentStrings()
+                    if (effectiveDur > 0.0) {
+                        resolvedDurationSec = effectiveDur
+                    }
                     if (pct >= 0) {
                         lastKnownPercent = pct.coerceIn(0, 100)
                     }
@@ -903,6 +998,20 @@ class EncodingForegroundService : Service() {
                     } else {
                         liveS.turboStatusEncoding
                     }
+                    val totalDur = resolvedDurationSec.takeIf { it > 0.0 }
+                    val processedSec = if (totalDur != null) {
+                        (totalDur * (lastKnownPercent / 100.0)).coerceIn(0.0, totalDur)
+                    } else {
+                        elapsedSec
+                    }
+                    val speedStr = if (totalDur != null && elapsedSec >= 0.4 && processedSec >= 0.05) {
+                        String.format(java.util.Locale.US, "%.2fx", processedSec / elapsedSec)
+                    } else {
+                        "..."
+                    }
+                    lastKnownSpeed = speedStr
+                    val liveSizeKb = if (tempOutFile.exists()) tempOutFile.length() / 1024L else 0L
+
                     EncodingJobController.updateStateIfActive(
                         runId,
                         EncodingState.Running(
@@ -911,25 +1020,33 @@ class EncodingForegroundService : Service() {
                             passIndex = 1,
                             totalPasses = 1,
                             statusMessage = statusMsg,
-                            currentTimeSec = elapsedSec,
-                            totalDurationSec = media.durationSec,
+                            currentTimeSec = processedSec,
+                            totalDurationSec = totalDur,
                             percent = lastKnownPercent,
-                            speed = "HW",
-                            sizeKb = if (tempOutFile.exists()) tempOutFile.length() / 1024L else 0L,
+                            speed = speedStr,
+                            sizeKb = liveSizeKb,
                             logs = emptyList(),
-                            summaryBanner = summaryBanner,
-                            videoSpecsSummary = videoSpecsSummary,
+                            summaryBanner = liveTurboSpecs,
+                            videoSpecsSummary = liveTurboSpecs,
                             presetLabel = "MediaCodec",
                             isHardwareTurbo = true,
                             canSwitchToTurbo = false,
                             elapsedSec = elapsedSec
                         )
                     )
-                    val elapsedText = FfmpegMath.formatElapsedTime(elapsedSec, liveS)
+                    val notifTelemetry = FfmpegMath.formatTelemetryLine(
+                        currentSec = processedSec,
+                        totalDurationSec = totalDur,
+                        percent = lastKnownPercent,
+                        speed = speedStr,
+                        sizeKb = liveSizeKb,
+                        includePercent = false,
+                        strings = liveS
+                    )
                     updateNotificationThrottled(
                         runId = runId,
                         title = "${liveS.turboNotifTitle} · ${config.mode.localizedTitle(liveS)}",
-                        text = "${liveS.turboElapsedLabel(elapsedText)} · $videoSpecsSummary",
+                        text = notifTelemetry,
                         percent = lastKnownPercent,
                         passIndex = 1,
                         totalPasses = 1,
@@ -997,6 +1114,7 @@ class EncodingForegroundService : Service() {
             }
 
             val curS = AppLanguageController.currentStrings()
+            val finalDur = resolvedDurationSec.takeIf { it > 0.0 }
             EncodingJobController.updateStateIfActive(
                 runId,
                 EncodingState.Running(
@@ -1005,14 +1123,14 @@ class EncodingForegroundService : Service() {
                     passIndex = 1,
                     totalPasses = 1,
                     statusMessage = curS.turboStatusSaving,
-                    currentTimeSec = result.elapsedSec,
-                    totalDurationSec = media.durationSec,
+                    currentTimeSec = finalDur ?: result.elapsedSec,
+                    totalDurationSec = finalDur,
                     percent = 100,
-                    speed = "HW",
+                    speed = lastKnownSpeed,
                     sizeKb = tempOutFile.length() / 1024L,
                     logs = emptyList(),
-                    summaryBanner = summaryBanner,
-                    videoSpecsSummary = videoSpecsSummary,
+                    summaryBanner = liveTurboSpecs,
+                    videoSpecsSummary = liveTurboSpecs,
                     presetLabel = "MediaCodec",
                     isHardwareTurbo = true,
                     canSwitchToTurbo = false,
@@ -1090,8 +1208,16 @@ class EncodingForegroundService : Service() {
         collectedLogs: MutableList<String>,
         appendLog: (String) -> Unit
     ) {
-        val commands = FfmpegMath.parseCustomCommandChain(config.customCommandInput)
-        if (commands.isEmpty()) {
+        val inputPlaceholder = "__FFMPEG_CUSTOM_LAZY_INPUT__"
+        val plan = CustomFfmpegParser.buildPlan(
+            rawCommand = config.customCommandInput,
+            media = media,
+            workDirPath = workDir.absolutePath,
+            defaultOutputFileName = s.customCmdDefaultOutput,
+            inputTokenProvider = { inputPlaceholder },
+            isPreview = false
+        )
+        if (plan.steps.isEmpty()) {
             appendLog("${s.logTagError} ${s.errCustomCmdEmpty}")
             EncodingJobController.updateStateIfActive(
                 runId,
@@ -1105,17 +1231,20 @@ class EncodingForegroundService : Service() {
             return
         }
 
-        val totalSteps = commands.size
-        for ((idx, rawTokens) in commands.withIndex()) {
+        val totalSteps = plan.steps.size
+        val displayOutName = plan.primaryFinalOutputName ?: s.customCmdOutputLabel
+        for ((idx, step) in plan.steps.withIndex()) {
             if (!EncodingJobController.isRunActive(runId)) return
-            val resolvedArgs = FfmpegMath.resolveCustomCommandArgs(
-                tokens = rawTokens,
-                media = media,
-                workDirPath = workDir.absolutePath,
-                inputTokenProvider = { FfmpegEngine.resolveInputPath(applicationContext, media.uri) }
-            )
+            val resolvedArgs = step.args.map { arg ->
+                if (arg == inputPlaceholder) {
+                    FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                } else {
+                    arg
+                }
+            }
             val passNum = idx + 1
             val label = if (totalSteps > 1) s.customCmdStepMulti(passNum, totalSteps) else s.customCmdStepSingle
+            val stepExpectedDur = step.expectedDurationSec ?: media.durationSec
             if (totalSteps > 1) {
                 appendLog("${s.logTagStep(passNum, totalSteps)} $label")
             }
@@ -1124,13 +1253,13 @@ class EncodingForegroundService : Service() {
                 runId,
                 EncodingState.Running(
                     modeTitle = modeTitle,
-                    outputFileName = s.customCmdOutputLabel,
+                    outputFileName = displayOutName,
                     passIndex = passNum,
                     totalPasses = totalSteps,
                     statusMessage = label,
                     currentTimeSec = 0.0,
-                    totalDurationSec = media.durationSec,
-                    percent = null,
+                    totalDurationSec = stepExpectedDur,
+                    percent = if (stepExpectedDur != null) 0 else null,
                     speed = "...",
                     sizeKb = 0L,
                     logs = synchronized(collectedLogs) { collectedLogs.toList() },
@@ -1139,7 +1268,7 @@ class EncodingForegroundService : Service() {
             )
             updateNotificationThrottled(
                 runId = runId,
-                title = "FFmpeg · ${s.customCmdOutputLabel}",
+                title = if (totalSteps > 1) "FFmpeg · ($passNum/$totalSteps) ${s.customCmdOutputLabel}" else "FFmpeg · ${s.customCmdOutputLabel}",
                 text = label,
                 percent = 0,
                 passIndex = passNum,
@@ -1149,7 +1278,7 @@ class EncodingForegroundService : Service() {
 
             val res = FfmpegEngine.executeStep(
                 args = resolvedArgs,
-                expectedDurationSec = media.durationSec,
+                expectedDurationSec = stepExpectedDur,
                 onProgress = { curSec, pct, spd, kb ->
                     if (!EncodingJobController.isRunActive(runId)) return@executeStep
                     cpuBooster.pulseIfDue()
@@ -1158,12 +1287,12 @@ class EncodingForegroundService : Service() {
                         runId,
                         EncodingState.Running(
                             modeTitle = modeTitle,
-                            outputFileName = liveS.customCmdOutputLabel,
+                            outputFileName = displayOutName,
                             passIndex = passNum,
                             totalPasses = totalSteps,
                             statusMessage = label,
                             currentTimeSec = curSec,
-                            totalDurationSec = media.durationSec,
+                            totalDurationSec = stepExpectedDur,
                             percent = pct,
                             speed = spd,
                             sizeKb = kb,
@@ -1171,10 +1300,11 @@ class EncodingForegroundService : Service() {
                             summaryBanner = summaryBanner
                         )
                     )
+                    val titlePrefix = if (totalSteps > 1) "($passNum/$totalSteps) " else ""
                     updateNotificationThrottled(
                         runId = runId,
-                        title = "FFmpeg · ${liveS.customCmdOutputLabel}",
-                        text = FfmpegMath.formatTelemetryLine(curSec, media.durationSec, pct, spd, kb, includePercent = false, strings = liveS),
+                        title = "FFmpeg · $titlePrefix${liveS.customCmdOutputLabel}",
+                        text = FfmpegMath.formatTelemetryLine(curSec, stepExpectedDur, pct, spd, kb, includePercent = false, strings = liveS),
                         percent = pct,
                         passIndex = passNum,
                         totalPasses = totalSteps,
@@ -1216,34 +1346,48 @@ class EncodingForegroundService : Service() {
         if (!EncodingJobController.isRunActive(runId)) return
 
         val curS = AppLanguageController.currentStrings()
-        // Clean 2-pass log artifacts exactly like Option 10 in the script
-        val savedOutputs = mutableListOf<CompletedOutput>()
-        workDir.listFiles()?.forEach { file ->
-            if (!file.isFile) return@forEach
-            val n = file.name
+        // Clean 2-pass log artifacts (x264/x265/vpx) and skip consumed intermediate files (e.g. palette.png)
+        // whenever final output files were produced.
+        val candidateFiles = workDir.listFiles().orEmpty().filter { file ->
+            if (!file.isFile) return@filter false
+            val n = file.name.lowercase(java.util.Locale.US)
             val isTempPassArtifact = n.endsWith(".log") ||
                 n.endsWith(".log.temp") ||
+                n.endsWith(".log.mbtree") ||
+                n.endsWith(".log.cutree") ||
                 n.endsWith(".cutree") ||
                 n.endsWith(".mbtree") ||
-                n.startsWith("ffmpeg2pass")
+                n.startsWith("ffmpeg2pass") ||
+                n.startsWith("x265_2pass") ||
+                n == "nul"
             if (isTempPassArtifact) {
                 file.delete()
-            } else if (file.length() > 0L) {
-                val saved = MediaStoreSaver.saveToPublicStorage(applicationContext, file, file.name)
-                savedOutputs.add(
-                    CompletedOutput(
-                        id = UUID.randomUUID().toString(),
-                        fileName = file.name,
-                        displayPath = saved.displayPath,
-                        contentUriString = saved.uri.toString(),
-                        mimeType = saved.mimeType,
-                        outputSizeBytes = saved.sizeBytes,
-                        inputSizeBytes = media.sizeBytes,
-                        modeLabel = config.mode.localizedTitle(curS),
-                        timestampMs = System.currentTimeMillis()
-                    )
-                )
+                false
+            } else {
+                file.length() > 0L
             }
+        }
+
+        val finalOutputFiles = candidateFiles.filter { it.name !in plan.consumedIntermediateFiles }
+            .ifEmpty { candidateFiles }
+            .sortedBy { it.name }
+
+        val savedOutputs = mutableListOf<CompletedOutput>()
+        finalOutputFiles.forEach { file ->
+            val saved = MediaStoreSaver.saveToPublicStorage(applicationContext, file, file.name)
+            savedOutputs.add(
+                CompletedOutput(
+                    id = UUID.randomUUID().toString(),
+                    fileName = file.name,
+                    displayPath = saved.displayPath,
+                    contentUriString = saved.uri.toString(),
+                    mimeType = saved.mimeType,
+                    outputSizeBytes = saved.sizeBytes,
+                    inputSizeBytes = media.sizeBytes,
+                    modeLabel = config.mode.localizedTitle(curS),
+                    timestampMs = System.currentTimeMillis()
+                )
+            )
         }
 
         if (savedOutputs.isNotEmpty()) {
@@ -1269,8 +1413,27 @@ class EncodingForegroundService : Service() {
         )
     }
 
+    /**
+     * Unified plain-text summary line for FFmpeg processing screen matching the exact Turbo order:
+     * <20MB · H264 635k · AAC · 1080p · 30 FPS · 8b
+     * (Preset is already shown in Playfair italic beneath the percentage, so it is never repeated here.)
+     */
     private fun buildSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
-        return when (config.mode) {
+        val tailSpecs = if (media.hasVideo &&
+            config.mode != ProcessingMode.EXTRACT_AUDIO &&
+            config.mode != ProcessingMode.CUSTOM_COMMAND
+        ) {
+            formatCompactVideoSpecsParts(media, config, isTurbo = false)
+        } else {
+            emptyList()
+        }
+
+        val audioPart = if (!media.hasAudio) s.bannerSilentAudio else "AAC"
+        val audioCopyPart = if (!media.hasAudio) s.bannerSilentAudio else {
+            if (s.language == com.example.domain.AppLanguage.TR) "Ses copy" else "Audio copy"
+        }
+
+        val headParts: List<String> = when (config.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
             ProcessingMode.GMAIL_25MB,
@@ -1285,96 +1448,31 @@ class EncodingForegroundService : Service() {
                 val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(mb)
                 val ab = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
                 val vkbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(mb, dur, ab)
-                s.twoPassSummaryLine(
-                    FfmpegMath.formatMbTag(mb),
-                    config.codec.tag,
-                    config.bitDepth.tag,
-                    vkbps,
-                    ab,
-                    config.preset.value
-                )
+                listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${vkbps}k", audioPart)
             }
             ProcessingMode.TRIM_VIDEO -> {
                 val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                s.bannerTrimRange(startStr ?: "00:00", endStr ?: s.trimEndPlaceholder, config.trimSubMode.localizedTitle(s))
+                val range = "${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}"
+                when (config.trimSubMode) {
+                    TrimSubMode.CRF_AUDIO_COPY -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
+                    TrimSubMode.CRF_AUDIO_AAC -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioPart)
+                    else -> listOf(range, config.trimSubMode.localizedTitle(s))
+                }
             }
-            ProcessingMode.REMUX_FORMAT -> s.bannerRemux
+            ProcessingMode.REMUX_FORMAT -> listOf(s.bannerRemux)
             ProcessingMode.AUDIO_ONLY_AAC -> {
                 val ab = FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)
-                s.bannerAudioOnly(ab)
+                listOf(s.bannerAudioOnly(ab))
             }
             ProcessingMode.VIDEO_ONLY_CRF ->
-                s.bannerVideoOnly(config.codec.tag, config.bitDepth.tag, config.codec.crf, config.preset.value)
-            ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
-                val ab = if (!media.hasAudio) s.bannerSilentAudio else "${FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)}k AAC"
-                "${config.codec.tag}${config.bitDepth.tag} CRF ${config.codec.crf} (${config.preset.value}) | $ab"
-            }
-            ProcessingMode.EXTRACT_AUDIO -> s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s))
-            ProcessingMode.CUSTOM_COMMAND -> s.bannerCustomCmd
-        }
-    }
-
-    private fun buildVideoSpecsSummary(media: MediaInfo, config: ModeConfigState): String? {
-        if (!media.hasVideo ||
-            config.mode == ProcessingMode.EXTRACT_AUDIO ||
-            config.mode == ProcessingMode.CUSTOM_COMMAND
-        ) return null
-
-        val isTwoPass = config.mode == ProcessingMode.DISCORD_20MB ||
-            config.mode == ProcessingMode.WHATSAPP_100MB ||
-            config.mode == ProcessingMode.GMAIL_25MB ||
-            config.mode == ProcessingMode.CUSTOM_SIZE
-        val isTrimCrf = config.mode == ProcessingMode.TRIM_VIDEO &&
-            (config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_COPY ||
-                config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_AAC)
-        val isVideoReencode = isTwoPass ||
-            isTrimCrf ||
-            config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
-            config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF
-        val supportsFpsAndRes = isTwoPass || isTrimCrf
-
-        val resText = when {
-            supportsFpsAndRes && config.resolution != com.example.domain.ResolutionOption.ORIGINAL -> {
-                when (config.resolution) {
-                    com.example.domain.ResolutionOption.P2160 -> "4K"
-                    com.example.domain.ResolutionOption.P1440 -> "1440p"
-                    com.example.domain.ResolutionOption.P1080 -> "1080p"
-                    com.example.domain.ResolutionOption.P720 -> "720p"
-                    com.example.domain.ResolutionOption.P480 -> "480p"
-                    com.example.domain.ResolutionOption.ORIGINAL -> null
-                }
-            }
-            media.width != null && media.height != null -> "${media.width}×${media.height}"
-            else -> null
+                listOf("${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
+            ProcessingMode.VIDEO_AND_AUDIO_CRF ->
+                listOf("${config.codec.tag} CRF ${config.codec.crf}", audioPart)
+            ProcessingMode.EXTRACT_AUDIO -> listOf(s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s)))
+            ProcessingMode.CUSTOM_COMMAND -> listOf(s.bannerCustomCmd)
         }
 
-        val fpsText = when {
-            supportsFpsAndRes && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
-            media.fps != null -> {
-                val rounded = kotlin.math.round(media.fps)
-                if (kotlin.math.abs(media.fps - rounded) < 0.08) {
-                    "${rounded.toInt()} FPS"
-                } else {
-                    val fmt = String.format(java.util.Locale.US, "%.2f", media.fps)
-                        .trimEnd('0')
-                        .trimEnd('.')
-                    "$fmt FPS"
-                }
-            }
-            else -> null
-        }
-
-        val bitText = if (isVideoReencode) {
-            config.bitDepth.label
-        } else {
-            when (media.bitDepthIn) {
-                "10bit" -> "10-bit"
-                "12bit" -> "12-bit"
-                else -> "8-bit"
-            }
-        }
-
-        return listOfNotNull(resText, fpsText, bitText).joinToString(" · ").ifBlank { null }
+        return (headParts + tailSpecs).joinToString(" · ")
     }
 
     private fun resolvePresetDisplayLabel(config: ModeConfigState): String? {

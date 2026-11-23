@@ -304,6 +304,11 @@ object FfmpegMath {
             "eac3" -> "audio/eac3"
             "mka" -> "audio/x-matroska"
             "gif" -> "image/gif"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            "bmp" -> "image/bmp"
+            "avif" -> "image/avif"
             else -> "application/octet-stream"
         }
     }
@@ -774,7 +779,7 @@ object FfmpegMath {
                 args.addAll(listOf("-movflags", "+faststart", outputPath))
                 listOf(
                     FfmpegStepSpec(
-                        "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} ($preset) + AAC",
+                        "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} + AAC",
                         args,
                         media.durationSec
                     )

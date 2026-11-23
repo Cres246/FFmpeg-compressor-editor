@@ -454,28 +454,6 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            if (!state.videoSpecsSummary.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Surface(
-                    shape = RoundedCornerShape(7.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    border = BorderStroke(1.dp, extColors.subtleBorder),
-                    modifier = Modifier.testTag("running_video_specs_chip")
-                ) {
-                    Text(
-                        text = state.videoSpecsSummary,
-                        style = MonoLabelStyle.copy(
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
-                    )
-                }
-            }
-
             Spacer(Modifier.height(16.dp))
 
             if (state.percent != null) {

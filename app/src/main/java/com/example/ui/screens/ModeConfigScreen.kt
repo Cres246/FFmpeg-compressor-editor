@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -22,16 +24,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -43,11 +51,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.domain.AudioExtractFormat
+import com.example.domain.CustomCommandPlan
+import com.example.domain.CustomFfmpegParser
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
@@ -88,12 +100,32 @@ fun ModeConfigScreen(
 
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    val outputFileName = remember(media, config, strings) {
-        FfmpegMath.computeOutputFileName(media, config, strings)
-    }
-    val commandPreview = remember(media, config, strings) {
+    val customCommandPreviewPlan = remember(media, config.mode, config.customCommandInput, strings) {
         if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
-            config.customCommandInput.trim()
+            CustomFfmpegParser.buildPlan(
+                rawCommand = config.customCommandInput,
+                media = media,
+                workDirPath = "",
+                defaultOutputFileName = strings.customCmdDefaultOutput,
+                inputTokenProvider = { "\$IN" },
+                isPreview = true
+            )
+        } else {
+            null
+        }
+    }
+    val outputFileName = remember(media, config, strings, customCommandPreviewPlan) {
+        if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
+            customCommandPreviewPlan?.primaryFinalOutputName ?: strings.customCommandOutputPlaceholder
+        } else {
+            FfmpegMath.computeOutputFileName(media, config, strings)
+        }
+    }
+    val commandPreview = remember(media, config, strings, customCommandPreviewPlan) {
+        if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
+            customCommandPreviewPlan?.let { CustomFfmpegParser.formatPreview(it) }
+                ?.ifBlank { config.customCommandInput.trim() }
+                .orEmpty()
         } else {
             val steps = FfmpegMath.buildFfmpegSteps(
                 media = media,
@@ -494,6 +526,7 @@ fun ModeConfigScreen(
                         CustomCommandSection(
                             media = media,
                             commandInput = config.customCommandInput,
+                            previewPlan = customCommandPreviewPlan,
                             onCommandChange = viewModel::updateCustomCommand
                         )
                     }
@@ -680,16 +713,204 @@ private fun AudioExtractSection(
 private fun CustomCommandSection(
     media: MediaInfo,
     commandInput: String,
+    previewPlan: CustomCommandPlan?,
     onCommandChange: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    val inputAlias = if (media.extension.isNotBlank()) "input.${media.extension}" else "input.mp4"
     val defaultOut = strings.customCmdDefaultOutput
+    val twoPassTargetKbps = remember(media.durationSec) {
+        FfmpegMath.calculateTwoPassVideoBitrateKbps(
+            targetMb = 20.0,
+            durationSec = media.durationSec ?: 60.0,
+            audioBitrateKbps = if (media.hasAudio) 128 else 0
+        )
+    }
 
     ConfigSectionCard(
         title = strings.customCmdTitle,
         subtitle = strings.customCmdSub
     ) {
+        // AI-ready reassurance tip banner
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier
+                        .padding(top = 1.dp)
+                        .size(16.dp)
+                )
+                Text(
+                    text = strings.customCmdAiTip,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // One-tap Paste from Clipboard + Clear action bar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilledTonalButton(
+                onClick = {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clipText = cm?.primaryClip
+                        ?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)
+                        ?.coerceToText(context)
+                        ?.toString()
+                    if (!clipText.isNullOrBlank()) {
+                        onCommandChange(clipText)
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("custom_cmd_paste_button"),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ContentPaste,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(strings.customCmdPasteButton)
+            }
+
+            if (commandInput.isNotBlank()) {
+                OutlinedButton(
+                    onClick = { onCommandChange("") },
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("custom_cmd_clear_button"),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Clear,
+                        contentDescription = strings.customCmdClearButton,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(strings.customCmdClearButton)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = commandInput,
+            onValueChange = onCommandChange,
+            label = { Text(strings.customCmdInputLabel) },
+            placeholder = {
+                Text(
+                    text = strings.customCmdPlaceholder,
+                    style = MonoCodeStyle
+                )
+            },
+            textStyle = MonoCodeStyle,
+            minLines = 5,
+            maxLines = 12,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("custom_command_input")
+        )
+
+        // Live smart-detection & auto-adaptation badges
+        if (commandInput.isNotBlank() && previewPlan != null) {
+            Spacer(Modifier.height(10.dp))
+            if (previewPlan.steps.isEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = strings.customCmdNoValidCommandWarning,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            } else {
+                val adapt = previewPlan.adaptations
+                val statusBadges = buildList {
+                    if (adapt.autoBoundInputsCount > 0) add(strings.customCmdBadgeInputAutoBound)
+                    if (adapt.autoConfiguredTwoPassLogs) add(strings.customCmdBadgeTwoPassReady)
+                    if (adapt.strippedMarkdownOrProse) add(strings.customCmdBadgeMarkdownCleaned)
+                    if (adapt.mappedWindowsNull) add(strings.customCmdBadgeWindowsNullFixed)
+                    if (adapt.autoAddedOutputFileName != null) add(strings.customCmdBadgeOutputAutoAdded)
+                }
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = extColors.losslessContainer,
+                        border = BorderStroke(1.dp, extColors.lossless.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = extColors.lossless,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = strings.customCmdStepsDetected(previewPlan.steps.size),
+                                style = MonoLabelStyle.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                                color = extColors.onLosslessContainer
+                            )
+                        }
+                    }
+
+                    statusBadges.forEach { badgeText ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            border = BorderStroke(1.dp, extColors.subtleBorder)
+                        ) {
+                            Text(
+                                text = badgeText,
+                                style = MonoLabelStyle.copy(fontSize = 10.5.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         Text(
             text = strings.customCmdShortcutsLabel,
             style = MaterialTheme.typography.labelMedium,
@@ -700,42 +921,28 @@ private fun CustomCommandSection(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            val twoPassSample = buildString {
+                append("ffmpeg -y -i input.mp4 -c:v libx264 -b:v ${twoPassTargetKbps}k -pass 1 -an -f null /dev/null && \\\n")
+                append("ffmpeg -y -i input.mp4 -c:v libx264 -b:v ${twoPassTargetKbps}k -pass 2 ")
+                if (media.hasAudio) append("-c:a aac -b:a 128k ") else append("-an ")
+                append("-movflags +faststart $defaultOut")
+            }
+            val gifSample = "ffmpeg -y -i input.mp4 -vf \"fps=15,scale=480:-1:flags=lanczos,palettegen\" palette.png\n" +
+                "ffmpeg -y -i input.mp4 -i palette.png -filter_complex \"fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse\" animasyon.gif"
+            val remuxSample = "ffmpeg -y -i input.mp4 -c copy -movflags +faststart $defaultOut"
+            val muteSample = "ffmpeg -y -i input.mp4 -c:v copy -an -movflags +faststart sessiz_$defaultOut"
+
             listOf(
-                "ffmpeg -y -i \"\$IN\" -c copy $defaultOut" to strings.customCmdQuickRemuxChip,
-                "\"\$IN\"" to "\"\$IN\"",
-                inputAlias to inputAlias,
-                defaultOut to defaultOut
-            ).forEach { (snippet, chipLabel) ->
+                strings.customCmdQuickRemuxChip to remuxSample,
+                strings.customCmdQuickTwoPassChip to twoPassSample,
+                strings.customCmdQuickGifChip to gifSample,
+                strings.customCmdQuickMuteChip to muteSample
+            ).forEach { (chipLabel, template) ->
                 AssistChip(
-                    onClick = {
-                        val updated = if (commandInput.isBlank() || chipLabel == strings.customCmdQuickRemuxChip) {
-                            snippet
-                        } else {
-                            "$commandInput $snippet"
-                        }
-                        onCommandChange(updated)
-                    },
+                    onClick = { onCommandChange(template) },
                     label = { Text(chipLabel, style = MonoLabelStyle) }
                 )
             }
         }
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = commandInput,
-            onValueChange = onCommandChange,
-            label = { Text(strings.customCmdInputLabel) },
-            placeholder = {
-                Text(
-                    "ffmpeg -y -i \"\$IN\" -c:v libx264 -crf 18 -c:a copy $defaultOut",
-                    style = MonoCodeStyle
-                )
-            },
-            textStyle = MonoCodeStyle,
-            minLines = 4,
-            maxLines = 8,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("custom_command_input")
-        )
     }
 }

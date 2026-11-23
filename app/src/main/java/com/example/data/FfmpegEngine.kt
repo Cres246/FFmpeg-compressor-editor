@@ -162,17 +162,28 @@ object FfmpegEngine {
         var aCodec: String? = null
 
         val streams = info?.streams.orEmpty()
+        val videoStreams = streams.filter { it.type?.equals("video", ignoreCase = true) == true }
+        val primaryVideoStream = videoStreams.firstOrNull { stream ->
+            val attachedPic = runCatching {
+                stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+            }.getOrNull() ?: 0
+            attachedPic != 1
+        } ?: videoStreams.firstOrNull()
+
+        if (primaryVideoStream != null) {
+            vCodec = primaryVideoStream.codec
+            width = primaryVideoStream.width?.toInt()
+            height = primaryVideoStream.height?.toInt()
+            pixFmt = primaryVideoStream.getStringProperty("pix_fmt")
+            fps = parseFrameRate(primaryVideoStream.getStringProperty("avg_frame_rate"))
+                ?: parseFrameRate(primaryVideoStream.getStringProperty("r_frame_rate"))
+        }
+
         for (stream in streams) {
             val type = stream.type?.lowercase(Locale.US)
-            if (type == "video" && vCodec == null) {
-                vCodec = stream.codec
-                width = stream.width?.toInt()
-                height = stream.height?.toInt()
-                pixFmt = stream.getStringProperty("pix_fmt")
-                fps = parseFrameRate(stream.getStringProperty("avg_frame_rate"))
-                    ?: parseFrameRate(stream.getStringProperty("r_frame_rate"))
-            } else if (type == "audio" && aCodec == null) {
+            if (type == "audio" && aCodec == null) {
                 aCodec = stream.codec
+                break
             }
         }
 

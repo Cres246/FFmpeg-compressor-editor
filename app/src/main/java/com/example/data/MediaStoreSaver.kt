@@ -37,9 +37,10 @@ object MediaStoreSaver {
         val mimeType = FfmpegMath.resolveMimeType(desiredFileName)
         val isVideo = FfmpegMath.isVideoFileName(desiredFileName)
         val isAudio = mimeType.startsWith("audio/")
+        val isImage = mimeType.startsWith("image/")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Try primary collection first (Movies/FFmpeg for video, Music/FFmpeg for audio)
+            // Try primary collection first (Movies/FFmpeg for video, Music/FFmpeg for audio, Pictures/FFmpeg for images/GIFs)
             val candidates: List<Pair<Uri, String>> = when {
                 isVideo -> listOf(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_MOVIES}/$SUBFOLDER",
@@ -47,6 +48,10 @@ object MediaStoreSaver {
                 )
                 isAudio -> listOf(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_MUSIC}/$SUBFOLDER",
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_DOWNLOADS}/$SUBFOLDER"
+                )
+                isImage -> listOf(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_PICTURES}/$SUBFOLDER",
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_DOWNLOADS}/$SUBFOLDER"
                 )
                 else -> listOf(
@@ -100,14 +105,19 @@ object MediaStoreSaver {
                 lastError
             )
         } else {
-            // API 24-28 fallback: /sdcard/Movies/FFmpeg + MediaScannerConnection
+            // API 24-28 fallback: /sdcard/{Movies|Music|Pictures}/FFmpeg + MediaScannerConnection
+            val baseDirType = when {
+                isAudio -> Environment.DIRECTORY_MUSIC
+                isImage -> Environment.DIRECTORY_PICTURES
+                else -> Environment.DIRECTORY_MOVIES
+            }
             @Suppress("DEPRECATION")
-            val moviesDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+            val targetDir = File(
+                Environment.getExternalStoragePublicDirectory(baseDirType),
                 SUBFOLDER
             )
-            if (!moviesDir.exists()) moviesDir.mkdirs()
-            val targetFile = File(moviesDir, desiredFileName)
+            if (!targetDir.exists()) targetDir.mkdirs()
+            val targetFile = File(targetDir, desiredFileName)
             FileInputStream(sourceFile).use { input ->
                 targetFile.outputStream().use { out ->
                     input.copyTo(out, bufferSize = 256 * 1024)
@@ -126,7 +136,7 @@ object MediaStoreSaver {
             )
             return SavedMediaResult(
                 uri = uri,
-                displayPath = "Movies/$SUBFOLDER/$desiredFileName",
+                displayPath = "$baseDirType/$SUBFOLDER/$desiredFileName",
                 sizeBytes = targetFile.length(),
                 mimeType = mimeType
             )
