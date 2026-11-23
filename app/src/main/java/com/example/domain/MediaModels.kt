@@ -1,0 +1,364 @@
+package com.example.domain
+
+import android.net.Uri
+
+data class MediaInfo(
+    val uri: Uri,
+    val fileName: String,
+    val baseName: String,
+    val extension: String,
+    val sizeBytes: Long,
+    val durationSec: Double?,
+    val videoCodec: String?,
+    val width: Int?,
+    val height: Int?,
+    val pixFmt: String?,
+    val audioCodec: String?
+) {
+    val bitDepthIn: String
+        get() = when {
+            pixFmt?.contains("10") == true -> "10bit"
+            pixFmt?.contains("12") == true -> "12bit"
+            !pixFmt.isNullOrBlank() -> "8bit"
+            else -> "8bit"
+        }
+
+    val bitShort: String
+        get() = when {
+            pixFmt?.contains("10") == true -> "10b"
+            pixFmt?.contains("12") == true -> "12b"
+            !pixFmt.isNullOrBlank() -> "8b"
+            else -> ""
+        }
+
+    val needsEvenScale: Boolean
+        get() = (width != null && width % 2 != 0) || (height != null && height % 2 != 0)
+
+    val hasAudio: Boolean
+        get() = !audioCodec.isNullOrBlank()
+
+    val hasVideo: Boolean
+        get() = !videoCodec.isNullOrBlank()
+}
+
+data class EncoderCapabilities(
+    val x264Supports10Bit: Boolean = false,
+    val x265Supports10Bit: Boolean = true,
+    val probed: Boolean = false
+)
+
+enum class ModeCategory(val title: String) {
+    TARGET_SIZE("Hedef Boyut"),
+    TRIM("Videoyu Kes"),
+    OTHER("Diğer İşlemler")
+}
+
+enum class QualityBadgeTone {
+    LOSSLESS,
+    PARTIAL,
+    LOSSY,
+    NEUTRAL
+}
+
+enum class ProcessingMode(
+    val number: Int,
+    val title: String,
+    val shortTitle: String,
+    val subtitle: String,
+    val shortSubtitle: String,
+    val badge: String,
+    val qualityTag: String,
+    val qualityTone: QualityBadgeTone,
+    val category: ModeCategory,
+    val requiresAudio: Boolean = false,
+    val requiresVideo: Boolean = false
+) {
+    DISCORD_20MB(
+        number = 1,
+        title = "Discord",
+        shortTitle = "Discord",
+        subtitle = "< 20 MB · Gerçek 2-Pass ABR",
+        shortSubtitle = "< 20 MB",
+        badge = "2-PASS",
+        qualityTag = "2-Pass",
+        qualityTone = QualityBadgeTone.NEUTRAL,
+        category = ModeCategory.TARGET_SIZE,
+        requiresVideo = true
+    ),
+    WHATSAPP_100MB(
+        number = 2,
+        title = "WhatsApp",
+        shortTitle = "WhatsApp",
+        subtitle = "< 100 MB · Gerçek 2-Pass ABR",
+        shortSubtitle = "< 100 MB",
+        badge = "2-PASS",
+        qualityTag = "2-Pass",
+        qualityTone = QualityBadgeTone.NEUTRAL,
+        category = ModeCategory.TARGET_SIZE,
+        requiresVideo = true
+    ),
+    CUSTOM_SIZE(
+        number = 3,
+        title = "Özel Boyut",
+        shortTitle = "Özel Boyut",
+        subtitle = "İstediğin MB hedefi · 2-Pass",
+        shortSubtitle = "MB Gir",
+        badge = "MB GİR",
+        qualityTag = "2-Pass",
+        qualityTone = QualityBadgeTone.NEUTRAL,
+        category = ModeCategory.TARGET_SIZE,
+        requiresVideo = true
+    ),
+    TRIM_VIDEO(
+        number = 4,
+        title = "Videoyu Kes",
+        shortTitle = "Videoyu Kes",
+        subtitle = "Akıllı Keyframe tarama · Kayıpsız / Hassas",
+        shortSubtitle = "Keyframe · Hassas",
+        badge = "KEYFRAME",
+        qualityTag = "Kayıpsız",
+        qualityTone = QualityBadgeTone.LOSSLESS,
+        category = ModeCategory.TRIM,
+        requiresVideo = true
+    ),
+    REMUX_FORMAT(
+        number = 5,
+        title = "Sadece Format Değiştir",
+        shortTitle = "Format Değiştir",
+        subtitle = "%100 kayıpsız MP4 kutu yenileme (-c copy)",
+        shortSubtitle = "Kayıpsız MP4",
+        badge = "KAYIPSIZ",
+        qualityTag = "Kayıpsız",
+        qualityTone = QualityBadgeTone.LOSSLESS,
+        category = ModeCategory.OTHER,
+        requiresVideo = true
+    ),
+    EXTRACT_AUDIO(
+        number = 6,
+        title = "Sesi Çıkart",
+        shortTitle = "Sesi Çıkart",
+        subtitle = "Orijinal (Kayıpsız) / AAC / MP3",
+        shortSubtitle = "Orijinal · AAC · MP3",
+        badge = "SES",
+        qualityTag = "Kayıpsız",
+        qualityTone = QualityBadgeTone.LOSSLESS,
+        category = ModeCategory.OTHER,
+        requiresAudio = true
+    ),
+    AUDIO_ONLY_AAC(
+        number = 7,
+        title = "Sadece Ses Değiştir",
+        shortTitle = "Sadece Ses Değiştir",
+        subtitle = "Görüntü %100 copy · Ses AAC",
+        shortSubtitle = "Kayıpsız",
+        badge = "COPY|AAC",
+        qualityTag = "Kayıpsız",
+        qualityTone = QualityBadgeTone.LOSSLESS,
+        category = ModeCategory.OTHER,
+        requiresAudio = true,
+        requiresVideo = true
+    ),
+    VIDEO_ONLY_CRF(
+        number = 8,
+        title = "Sadece Görüntü Değiştir",
+        shortTitle = "Sadece Görüntü Değiştir",
+        subtitle = "CRF 16/20 · Ses %100 copy",
+        shortSubtitle = "Kayıplı",
+        badge = "CRF|COPY",
+        qualityTag = "Kayıplı",
+        qualityTone = QualityBadgeTone.LOSSY,
+        category = ModeCategory.OTHER,
+        requiresVideo = true
+    ),
+    VIDEO_AND_AUDIO_CRF(
+        number = 9,
+        title = "Görüntü + Ses Değiştir",
+        shortTitle = "Görüntü + Ses Değiştir",
+        subtitle = "CRF 16/20 · 8/10-bit · AAC",
+        shortSubtitle = "Kayıplı",
+        badge = "CRF+AAC",
+        qualityTag = "Kayıplı",
+        qualityTone = QualityBadgeTone.LOSSY,
+        category = ModeCategory.OTHER,
+        requiresVideo = true
+    ),
+    CUSTOM_COMMAND(
+        number = 10,
+        title = "Özel FFmpeg Komutu",
+        shortTitle = "Özel FFmpeg Komutu",
+        subtitle = "Tam komut yapıştır (&& zinciri dahil)",
+        shortSubtitle = "",
+        badge = "KOMUT",
+        qualityTag = "",
+        qualityTone = QualityBadgeTone.NEUTRAL,
+        category = ModeCategory.OTHER
+    );
+
+    val formattedNumber: String get() = number.toString().padStart(2, '0')
+}
+
+enum class VideoCodecOption(
+    val encoder: String,
+    val label: String,
+    val crf: Int,
+    val tag: String
+) {
+    H264("libx264", "H.264", 16, "H264"),
+    H265("libx265", "H.265 (HEVC)", 20, "H265")
+}
+
+enum class BitDepthOption(
+    val pixFmt: String,
+    val label: String,
+    val tag: String
+) {
+    BIT_8("yuv420p", "8-bit", ""),
+    BIT_10("yuv420p10le", "10-bit", "_10bit")
+}
+
+enum class FpsOption(val label: String, val ffmpegValue: String?) {
+    ORIGINAL("Orijinal FPS", null),
+    FPS_30("30 FPS", "30")
+}
+
+enum class ResolutionOption(
+    val label: String,
+    val targetShort: Int?,
+    val maxLong: Int?
+) {
+    ORIGINAL("Orijinal", null, null),
+    P2160("2160p (4K)", 2160, 3840),
+    P1440("1440p (2K)", 1440, 2560),
+    P1080("1080p", 1080, 1920),
+    P720("720p", 720, 1280),
+    P480("480p", 480, 854)
+}
+
+enum class PresetOption(val value: String, val label: String) {
+    FAST("fast", "fast"),
+    MEDIUM("medium", "medium"),
+    SLOW("slow", "slow"),
+    SLOWER("slower", "slower"),
+    VERYSLOW("veryslow", "veryslow")
+}
+
+enum class TrimCutStrategy(val title: String, val subtitle: String) {
+    LOSSLESS_KEYFRAME("Kayıpsız Kes", "Keyframe · Orijinal boyut"),
+    PRECISE_REENCODE("Hassas Kes", "Tam saniye · CRF kodlama")
+}
+
+enum class TrimSubMode(
+    val number: Int,
+    val title: String,
+    val subtitle: String,
+    val requiresLosslessKeyframes: Boolean
+) {
+    FULL_LOSSLESS(1, "Tam Kayıpsız", "Görüntü + Ses copy (-noaccurate_seek)", true),
+    VIDEO_LOSSLESS_AUDIO_AAC(2, "Görüntü Kayıpsız + Ses AAC Değiştir", "5.1 / DTS / EAC3 için uyumlu kesim", true),
+    CRF_AUDIO_COPY(3, "Görüntü Değiştir (CRF) + Ses Kayıpsız", "Hassas kesim · Ses %100 kayıpsız", false),
+    CRF_AUDIO_AAC(4, "Görüntü + Ses Değiştir (CRF + AAC)", "Hassas kesim · Tam yeniden kodlama", false)
+}
+
+enum class TrimTimeChoice(val label: String) {
+    SNAP_KEYFRAMES("*KF'lerden Kes (Önerilen)"),
+    RAW_USER_TIMES("Yazdığım Ham Süre")
+}
+
+enum class AudioExtractFormat(val label: String, val ext: String) {
+    ORIGINAL("Orijinal Kodek", ""),
+    AAC("AAC (.m4a)", "m4a"),
+    MP3("MP3 (.mp3)", "mp3")
+}
+
+data class KeyframePointResult(
+    val targetSec: Double,
+    val prevKf: Double?,
+    val nextKf: Double?,
+    val recommendedRawSec: Double?,
+    val recommendedDisplay: String?,
+    val nearbyKeyframes: List<Double>
+)
+
+data class TrimScanState(
+    val isScanning: Boolean = false,
+    val startScan: KeyframePointResult? = null,
+    val endScan: KeyframePointResult? = null,
+    val error: String? = null
+)
+
+data class ModeConfigState(
+    val mode: ProcessingMode,
+    val targetMbInput: String = "20",
+    val manualDurationInput: String = "",
+    val codec: VideoCodecOption = VideoCodecOption.H264,
+    val bitDepth: BitDepthOption = BitDepthOption.BIT_8,
+    val fps: FpsOption = FpsOption.FPS_30,
+    val resolution: ResolutionOption = ResolutionOption.ORIGINAL,
+    val preset: PresetOption = PresetOption.MEDIUM,
+    val audioBitrateInput: String = "128",
+    // Trim specific
+    val startTimeInput: String = "",
+    val endTimeInput: String = "",
+    val trimCutStrategy: TrimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
+    val trimSubMode: TrimSubMode = TrimSubMode.FULL_LOSSLESS,
+    val trimTimeChoice: TrimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES,
+    val selectedStartKfSec: Double? = null,
+    val selectedEndKfSec: Double? = null,
+    val trimScan: TrimScanState = TrimScanState(),
+    // Audio extract specific
+    val audioExtractFormat: AudioExtractFormat = AudioExtractFormat.ORIGINAL,
+    // Custom command specific
+    val customCommandInput: String = ""
+)
+
+data class FfmpegStepSpec(
+    val label: String,
+    val args: List<String>,
+    val expectedDurationSec: Double?
+)
+
+data class CompletedOutput(
+    val id: String,
+    val fileName: String,
+    val displayPath: String,
+    val contentUriString: String,
+    val mimeType: String,
+    val outputSizeBytes: Long,
+    val inputSizeBytes: Long,
+    val modeLabel: String,
+    val timestampMs: Long
+)
+
+sealed interface EncodingState {
+    data object Idle : EncodingState
+
+    data class Running(
+        val modeTitle: String,
+        val outputFileName: String,
+        val passIndex: Int,
+        val totalPasses: Int,
+        val statusMessage: String,
+        val currentTimeSec: Double,
+        val totalDurationSec: Double?,
+        val percent: Int?,
+        val speed: String,
+        val sizeKb: Long,
+        val logs: List<String>,
+        val summaryBanner: String
+    ) : EncodingState
+
+    data class Success(
+        val outputs: List<CompletedOutput>,
+        val modeTitle: String,
+        val summaryMessage: String,
+        val logs: List<String>
+    ) : EncodingState
+
+    data class Failed(
+        val modeTitle: String,
+        val errorMessage: String,
+        val hint: String?,
+        val logs: List<String>,
+        val wasCancelled: Boolean = false
+    ) : EncodingState
+}

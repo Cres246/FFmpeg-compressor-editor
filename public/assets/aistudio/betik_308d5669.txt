@@ -1,0 +1,759 @@
+mkdir -p ~/bin
+cat << 'EOF' > ~/bin/termux-file-editor
+#!/data/data/com.termux/files/usr/bin/bash
+export LC_ALL=C
+
+INPUT="$1"
+if [ -z "$INPUT" ] || [ ! -f "$INPUT" ]; then
+  echo "Hata: Dosya bulunamadi!"
+  read -p "Cikmak icin Enter'a basin..."
+  exit 1
+fi
+
+PASSDIR=""
+OUTFILE=""
+STATUS=1
+for old in "$HOME/downloads/"*; do
+  [ -e "$old" ] && [ "$old" != "$INPUT" ] && rm -rf "$old"
+done
+cleanup() {
+  trap - EXIT INT TERM
+  [ -n "$PASSDIR" ] && [ -d "$PASSDIR" ] && rm -rf "$PASSDIR"
+  [ "$STATUS" -ne 0 ] && [ -n "$OUTFILE" ] && [ -f "$OUTFILE" ] && [ "$OUTFILE" != "$INPUT" ] && rm -f "$OUTFILE"
+  case "$INPUT" in
+    "$HOME/downloads/"*) rm -f "$INPUT" ;;
+  esac
+  command -v termux-wake-unlock >/dev/null && termux-wake-unlock
+}
+command -v termux-wake-lock >/dev/null && termux-wake-lock
+trap cleanup EXIT INT TERM
+
+OUTDIR="/sdcard/Movies/TermuxVideo"
+mkdir -p "$OUTDIR"
+
+FILENAME="$(basename -- "$INPUT")"
+BASENAME="${FILENAME%.*}"
+
+BYTES=$(wc -c < "$INPUT" 2>/dev/null || echo 0)
+SIZE_MB=$(awk -v b="$BYTES" 'BEGIN { if (b+0 > 0) printf "%.1fmb", b / 1048576; else print "?" }')
+
+DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+VCODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+WIDTH=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+PIX_FMT=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+ACODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$INPUT" | head -n 1)
+
+BIT_IN="8bit"
+BIT_SHORT=""
+if [[ "$PIX_FMT" == *10* ]]; then
+  BIT_IN="10bit"; BIT_SHORT=" 10b"
+elif [[ "$PIX_FMT" == *12* ]]; then
+  BIT_IN="12bit"; BIT_SHORT=" 12b"
+elif [ -n "$PIX_FMT" ]; then
+  BIT_IN="8bit"; BIT_SHORT=" 8b"
+fi
+
+update_dur_vars() {
+  local d="${1:-$DURATION}"
+  DUR_SHOW=$(awk -v d="$d" 'BEGIN { if (d+0 > 0) printf "%.1f", d; else print "?" }')
+  DUR_TENTHS=$(awk -v d="$d" 'BEGIN { t = int(d * 10); if (t < 0) t = 0; print t }')
+}
+update_dur_vars "$DURATION"
+
+EVEN_VF=""
+if [[ "$WIDTH" =~ ^[0-9]+$ ]] && [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
+  if [ $((WIDTH % 2)) -ne 0 ] || [ $((HEIGHT % 2)) -ne 0 ]; then
+    EVEN_VF="-vf scale=trunc(iw/2)*2:trunc(ih/2)*2"
+  fi
+fi
+
+clear
+echo "=========================================="
+echo "  Dosya : $FILENAME"
+echo "  Video : ${VCODEC:-?}${BIT_SHORT} | ${WIDTH:-?}x${HEIGHT:-?} | ${DUR_SHOW} sn | ${SIZE_MB}"
+echo "  Ses   : ${ACODEC:-Yok}"
+echo "=========================================="
+echo "  1) Discord (< 20 MB | 2-Pass)"
+echo "  2) WhatsApp (< 100 MB | 2-Pass)"
+echo "  3) Ozel Boyut (MB Gir | 2-Pass)"
+echo "  4) Videoyu Kes (Zaman Sec)"
+echo "  5) Sadece Format Degistir (-c copy)"
+echo "  6) Sadece Ses Degistir (Goruntu copy|AAC)"
+echo "  7) Sadece Goruntu Degistir (CRF16/20|Ses copy)"
+echo "  8) Goruntu + Ses Degistir (CRF16/20 + AAC)"
+echo "  9) Sesi Ayir (Orijinal / AAC / MP3)"
+echo " 10) Ozel FFmpeg Komutu (Tam Komut)"
+echo "=========================================="
+read -p "Seciminiz [1-10]: " CHOICE
+
+run_ff() {
+  local cur_t=0 sec=0 dec=0 pct=0 kb=0 spd="..." sz=""
+  ffmpeg -nostdin -hide_banner -loglevel warning -nostats -progress pipe:1 "$@" | \
+  while IFS='=' read -r k v; do
+    case "$k" in
+      out_time_us)
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+          cur_t=$((v / 100000))
+          sec=$((cur_t / 10))
+          dec=$((cur_t % 10))
+        fi
+        ;;
+      total_size)
+        if [[ "$v" =~ ^[0-9]+$ ]]; then
+          kb=$((v / 1024))
+        fi
+        ;;
+      speed)
+        spd="${v// /}"
+        ;;
+      progress)
+        if [ "$kb" -gt 0 ] 2>/dev/null; then
+          sz=" | ${kb}kb"
+        else
+          sz=""
+        fi
+        if [ "$DUR_TENTHS" -gt 0 ] 2>/dev/null; then
+          pct=$((cur_t * 100 / DUR_TENTHS))
+          [ "$pct" -gt 100 ] && pct=100
+          printf "\r  Sure: %d.%d / %s sn (%%%d) | %s%s   " "$sec" "$dec" "$DUR_SHOW" "$pct" "$spd" "$sz"
+        else
+          printf "\r  Sure: %d.%d sn | %s%s   " "$sec" "$dec" "$spd" "$sz"
+        fi
+        ;;
+    esac
+  done
+  local rc="${PIPESTATUS[0]}"
+  echo ""
+  return "$rc"
+}
+
+ask_vcodec() {
+  read -p "Kodek [Enter=H.264, 2=H.265 (HEVC)]: " C_OPT
+  case "$C_OPT" in
+    2|265|h265|H265|hevc|HEVC)
+      VCODEC_OUT="libx265"
+      CRF_VAL="20"
+      CODEC_TAG="H265"
+      ;;
+    *)
+      VCODEC_OUT="libx264"
+      CRF_VAL="16"
+      CODEC_TAG="H264"
+      ;;
+  esac
+
+  PIX_OUT="yuv420p"
+  BIT_TAG=""
+  if ffmpeg -hide_banner -h "encoder=${VCODEC_OUT}" 2>/dev/null | grep -q "yuv420p10le"; then
+    if [ "$VCODEC_OUT" = "libx265" ]; then
+      if [ "$BIT_IN" = "10bit" ] || [ "$BIT_IN" = "12bit" ]; then
+        read -p "Renk Bit [Enter=10bit (Koru), 8=8bit]: " B_OPT
+        case "$B_OPT" in
+          8|1) PIX_OUT="yuv420p" ;;
+          *) PIX_OUT="yuv420p10le"; BIT_TAG="_10bit" ;;
+        esac
+      else
+        read -p "Renk Bit [Enter=8bit, 10=10bit]: " B_OPT
+        case "$B_OPT" in
+          10|2) PIX_OUT="yuv420p10le"; BIT_TAG="_10bit" ;;
+          *) PIX_OUT="yuv420p" ;;
+        esac
+      fi
+    else
+      read -p "H.264 Bit [Enter=8bit (Uyumlu), 10=10bit (Sadece VLC)]: " B_OPT
+      case "$B_OPT" in
+        10|2) PIX_OUT="yuv420p10le"; BIT_TAG="_10bit" ;;
+        *) PIX_OUT="yuv420p" ;;
+      esac
+    fi
+  fi
+}
+
+ask_fps_and_scale() {
+  local def_fps="${1:-30}"
+  if [ "$def_fps" = "orig" ]; then
+    read -p "FPS [Enter=Orijinal FPS, 1=30 FPS]: " FPS_OPT
+    if [ "$FPS_OPT" = "1" ] || [ "$FPS_OPT" = "30" ]; then
+      FPS_ARG="-r 30"
+    else
+      FPS_ARG=""
+    fi
+  else
+    read -p "FPS [Enter=30 FPS, 2=Orijinal FPS]: " FPS_OPT
+    if [ "$FPS_OPT" = "2" ]; then
+      FPS_ARG=""
+    else
+      FPS_ARG="-r 30"
+    fi
+  fi
+
+  echo "  Cozunurluklar: 2160p | 1440p | 1080p | 720p | 480p"
+  read -p "Cozunurluk [Enter=Orijinal]: " RES_OPT
+  RES_OPT="${RES_OPT// /}"
+  RES_OPT="${RES_OPT%p}"
+  RES_OPT="${RES_OPT%P}"
+  VF_ARG="$EVEN_VF"
+  case "$RES_OPT" in
+    2160|1440|1080|720|480)
+      case "$RES_OPT" in
+        2160) L_MAX=3840 ;;
+        1440) L_MAX=2560 ;;
+        1080) L_MAX=1920 ;;
+        720)  L_MAX=1280 ;;
+        480)  L_MAX=854 ;;
+      esac
+      if [[ "$WIDTH" =~ ^[0-9]+$ ]] && [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
+        if [ "$HEIGHT" -gt "$WIDTH" ]; then
+          VF_ARG="-vf scale=${RES_OPT}:-2"
+        elif [ $((WIDTH * 9)) -gt $((HEIGHT * 16)) ]; then
+          VF_ARG="-vf scale=${L_MAX}:-2"
+        else
+          VF_ARG="-vf scale=-2:${RES_OPT}"
+        fi
+      else
+        VF_ARG="-vf scale=-2:${RES_OPT}"
+      fi
+      ;;
+  esac
+}
+
+ask_preset() {
+  DEF_P="${1:-medium}"
+  if [ "$DEF_P" = "fast" ]; then
+    read -p "Preset [Enter=fast,2=med,3=slow,4=vslow]: " P_OPT
+  else
+    read -p "Preset [1=fast,Enter=med,3=slow,4=vslow]: " P_OPT
+  fi
+  case "$P_OPT" in
+    "") PRESET="$DEF_P" ;;
+    1|f|F|fast|FAST) PRESET="fast" ;;
+    2|m|M|medium|MEDIUM) PRESET="medium" ;;
+    3|s|S|slow|SLOW) PRESET="slow" ;;
+    slower|SLOWER) PRESET="slower" ;;
+    4|v|V|vs|vslow|veryslow|VERYSLOW) PRESET="veryslow" ;;
+    *) echo "Gecersiz secim, varsayilan ($DEF_P) secildi."; PRESET="$DEF_P" ;;
+  esac
+}
+
+ask_audio_bitrate() {
+  local def_ab="${1:-256}"
+  read -p "Ses (Kayipli) [Enter=${def_ab}k, 64..768]: " AB_OPT
+  AB_OPT="${AB_OPT//k/}"
+  AB_OPT="${AB_OPT//K/}"
+  if [ -z "$AB_OPT" ]; then
+    AB_VAL="$def_ab"
+  elif [[ "$AB_OPT" =~ ^[0-9]+$ ]] && [ "$AB_OPT" -ge 32 ] && [ "$AB_OPT" -le 768 ]; then
+    AB_VAL="$AB_OPT"
+  else
+    echo "Gecersiz deger, varsayilan ${def_ab}k kullaniliyor."
+    AB_VAL="$def_ab"
+  fi
+}
+
+run_two_pass() {
+  TARGET_MB="$1"
+  if [ -z "$DURATION" ] || [ "$DURATION" = "N/A" ]; then
+    read -p "Sure okunamadi, saniye olarak girin: " DURATION
+  fi
+  DURATION="${DURATION/,/.}"
+  update_dur_vars "$DURATION"
+
+  ask_vcodec
+  ask_fps_and_scale 30
+  ask_preset medium
+
+  if [ -z "$ACODEC" ]; then
+    ABPS=0
+    AUDIO_ARGS="-an"
+  else
+    if [ "$(awk -v m="$TARGET_MB" 'BEGIN { print (m <= 3) }')" = "1" ]; then
+      ask_audio_bitrate 64
+    else
+      ask_audio_bitrate 128
+    fi
+    ABPS="$AB_VAL"
+    AUDIO_ARGS="-c:a aac -b:a ${ABPS}k"
+  fi
+
+  VKBPS=$(awk -v mb="$TARGET_MB" -v dur="$DURATION" -v ab="$ABPS" 'BEGIN {
+    if (dur <= 0) dur = 1;
+    total_kb = mb * 8000 * 0.96;
+    v = int((total_kb / dur) - ab);
+    if (v < 80) v = 80;
+    print v;
+  }')
+
+  PASSDIR=$(mktemp -d)
+  PASSLOG="$PASSDIR/ff2pass"
+  OUTFILE="$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_${TARGET_MB}MB.mp4"
+
+  if [ "$VCODEC_OUT" = "libx265" ]; then
+    PASS1_ARGS=(-x265-params "log-level=warning:pass=1:stats=${PASSLOG}.log")
+    PASS2_ARGS=(-tag:v hvc1 -x265-params "log-level=warning:pass=2:stats=${PASSLOG}.log")
+  else
+    PASS1_ARGS=(-pass 1 -passlogfile "$PASSLOG")
+    PASS2_ARGS=(-pass 2 -passlogfile "$PASSLOG")
+  fi
+
+  echo ""
+  echo "Hedef: < ${TARGET_MB} MB | ${CODEC_TAG}${BIT_TAG} ${VKBPS}k | Ses: ${ABPS}k | ${PRESET}"
+  if [ "$VKBPS" -le 120 ] 2>/dev/null; then
+    echo "Not: Hedef/ses oranina gore video bitrati cok dusuk, boyut asabilir."
+  fi
+  echo "--- 1/2 Gecis (Analiz ediliyor)... ---"
+  if run_ff -y -i "$INPUT" $FPS_ARG $VF_ARG -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -b:v "${VKBPS}k" -pix_fmt "$PIX_OUT" "${PASS1_ARGS[@]}" -an -f null /dev/null; then
+    echo "--- 2/2 Gecis (Kodlaniyor)... ---"
+    run_ff -y -i "$INPUT" $FPS_ARG $VF_ARG -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -b:v "${VKBPS}k" -pix_fmt "$PIX_OUT" "${PASS2_ARGS[@]}" $AUDIO_ARGS -movflags +faststart "$OUTFILE"
+    STATUS=$?
+  else
+    STATUS=1
+  fi
+}
+
+show_kf_at() {
+  local mode="$1" label="$2" raw_t="$3" kfile="$4"
+  local target_s seek_s
+  target_s=$(awk -v v="$raw_t" 'BEGIN {
+    n = split(v, a, ":");
+    if (n == 1) printf "%.3f", a[1] + 0;
+    else if (n == 2) printf "%.3f", a[1]*60 + a[2];
+    else if (n == 3) printf "%.3f", a[1]*3600 + a[2]*60 + a[3];
+    else print -1;
+  }')
+  if [ "$(awk -v t="$target_s" 'BEGIN { print (t >= 0) }')" != "1" ]; then
+    return
+  fi
+  seek_s=$(awk -v t="$target_s" 'BEGIN { s = int(t) - 15; if (s < 0) s = 0; print s }')
+  ffprobe -v error -select_streams v:0 -read_intervals "${seek_s}%+28" -show_packets -show_entries packet=pts_time,dts_time,flags -of compact=p=0 "$INPUT" 2>/dev/null | \
+  awk -F'|' -v tgt="$target_s" -v lbl="$label" -v raw="$raw_t" -v md="$mode" -v kf="$kfile" '
+    function fmt(x,   t10, h, m, s10) {
+      if (x < 0) return "Yok";
+      t10 = int(x * 10 + 0.5);
+      h = int(t10 / 36000);
+      m = int((t10 % 36000) / 600);
+      s10 = t10 % 600;
+      if (h > 0) return sprintf("%d:%02d:%02d.%d", h, m, int(s10 / 10), s10 % 10);
+      return sprintf("%02d:%02d.%d", m, int(s10 / 10), s10 % 10);
+    }
+    BEGIN { prev_kf = -1; next_kf = -1; near = ""; }
+    /flags=K/ {
+      t=""; d=""
+      for (i=1; i<=NF; i++) {
+        if ($i ~ /^pts_time=/) { sub(/^pts_time=/, "", $i); t=$i }
+        else if ($i ~ /^dts_time=/) { sub(/^dts_time=/, "", $i); d=$i }
+      }
+      if (t == "N/A" || t == "") t = d
+      if (t != "N/A" && t != "") {
+        val = t + 0;
+        if (val <= tgt + 0.05) prev_kf = val;
+        if (next_kf < 0 && val >= tgt - 0.05) next_kf = val;
+        if (val >= tgt - 12 && val <= tgt + 10) {
+          f = fmt(val);
+          if (f != last_f) {
+            near = (near == "" ? f : near " | " f);
+            last_f = f;
+          }
+        }
+        if (val > tgt + 12) exit;
+      }
+    }
+    END {
+      if (md == "start") {
+        printf "%s (%s): *Onceki %s | Sonraki %s\n", lbl, raw, fmt(prev_kf), fmt(next_kf);
+        if (prev_kf >= 0) printf "KF_RAW=%.3f\nKF_FMT=%s\n", prev_kf + 0.005, fmt(prev_kf) > kf;
+      } else {
+        printf "%s (%s): Onceki %s | *Sonraki %s\n", lbl, raw, fmt(prev_kf), fmt(next_kf);
+        if (next_kf >= 0) printf "KF_RAW=%.3f\nKF_FMT=%s\n", next_kf, fmt(next_kf) > kf;
+      }
+      if (near != "") printf "  Civar: %s\n", near;
+    }'
+}
+
+run_trim() {
+  local kf_tmp KF_START KF_END KF_S_DISP KF_E_DISP
+  while true; do
+    echo ""
+    read -p "Baslangic [Orn 00:01:00 veya 01:30 | Enter=Bas]: " START_T
+    read -p "Bitis     [Orn 00:02:32 veya 02:32 | Enter=Son]: " END_T
+    START_T="${START_T// /}"
+    END_T="${END_T// /}"
+    if [ -z "$START_T" ] && [ -z "$END_T" ]; then
+      echo "Baslangic veya bitis girmediniz!"
+      read -p "Cikmak icin Enter..."
+      exit 1
+    fi
+    if [ -n "$START_T" ] && [ -n "$END_T" ]; then
+      TIME_OK=$(awk -v s="$START_T" -v e="$END_T" '
+      function ts(v,   n, a) {
+        n = split(v, a, ":");
+        if (n == 1) return a[1] + 0;
+        if (n == 2) return a[1]*60 + a[2];
+        if (n == 3) return a[1]*3600 + a[2]*60 + a[3];
+        return -1;
+      }
+      BEGIN { ss = ts(s); ee = ts(e); print (ss >= 0 && ee > ss) ? 1 : 0 }')
+      if [ "$TIME_OK" != "1" ]; then
+        echo "Hata: Bitis zamani baslangictan buyuk olmali!"
+        continue
+      fi
+    fi
+
+    KF_START=""; KF_END=""
+    KF_S_DISP="${START_T:-00:00}"; KF_E_DISP="${END_T:-Son}"
+    kf_tmp=$(mktemp)
+    echo ""
+    echo "Keyframe konumlari kontrol ediliyor..."
+    if [ -n "$START_T" ] && [ -n "$VCODEC" ]; then
+      : > "$kf_tmp"
+      show_kf_at "start" "Baslangic" "$START_T" "$kf_tmp"
+      KF_RAW=""; KF_FMT=""
+      source "$kf_tmp"
+      [ -n "$KF_RAW" ] && KF_START="$KF_RAW" && KF_S_DISP="$KF_FMT"
+    fi
+    if [ -n "$END_T" ] && [ -n "$VCODEC" ]; then
+      : > "$kf_tmp"
+      show_kf_at "end" "Bitis    " "$END_T" "$kf_tmp"
+      KF_RAW=""; KF_FMT=""
+      source "$kf_tmp"
+      [ -n "$KF_RAW" ] && KF_END="$KF_RAW" && KF_E_DISP="$KF_FMT"
+    fi
+    rm -f "$kf_tmp"
+
+    echo ""
+    read -p "Enter=*KF'lerden kes | k=Yazdigim | r=Degistir: " RE_OPT
+    case "$RE_OPT" in
+      r|R) continue ;;
+      k|K) break ;;
+      *)
+        [ -n "$KF_START" ] && START_T="$KF_START"
+        [ -n "$KF_END" ] && END_T="$KF_END"
+        echo "  Secilen aralik: ${KF_S_DISP} -> ${KF_E_DISP}"
+        break
+        ;;
+    esac
+  done
+
+  CLIP_DUR=$(awk -v s="$START_T" -v e="$END_T" -v tot="$DURATION" '
+  function ts(v,   n, a) {
+    if (v == "") return -1;
+    n = split(v, a, ":");
+    if (n == 1) return a[1] + 0;
+    if (n == 2) return a[1]*60 + a[2];
+    if (n == 3) return a[1]*3600 + a[2]*60 + a[3];
+    return -1;
+  }
+  BEGIN {
+    ss = (s == "") ? 0 : ts(s);
+    ee = (e == "") ? (tot + 0) : ts(e);
+    if (ss >= 0 && ee > ss) printf "%.2f", (ee - ss);
+    else print "0";
+  }')
+  if [ "$(awk -v c="$CLIP_DUR" 'BEGIN { print (c > 0) }')" = "1" ]; then
+    update_dur_vars "$CLIP_DUR"
+  else
+    DUR_TENTHS=0
+  fi
+
+  echo ""
+  echo "  1) Tam Kayipsiz (Goruntu + Ses copy)"
+  echo "  2) Goruntu Kayipsiz + Ses AAC"
+  echo "  3) Goruntu Degistir (CRF) + Ses copy"
+  echo "  4) Goruntu + Ses Degistir (CRF + AAC)"
+  read -p "Kesim modu [1-4]: " TM_OPT
+
+  SEEK_COPY=()
+  SEEK_REENC=()
+  if [ -n "$START_T" ]; then
+    SEEK_COPY=(-noaccurate_seek -ss "$START_T")
+    SEEK_REENC=(-ss "$START_T")
+  fi
+  if [ -n "$END_T" ]; then
+    SEEK_COPY+=(-to "$END_T")
+    SEEK_REENC+=(-to "$END_T")
+  fi
+
+  case "$TM_OPT" in
+    1)
+      OUTFILE="$OUTDIR/${BASENAME}_Kesit.mp4"
+      echo ""
+      echo "--- Kayipsiz kesiliyor (-noaccurate_seek)... ---"
+      run_ff -y "${SEEK_COPY[@]}" -i "$INPUT" -sn -dn -c copy -avoid_negative_ts make_zero -movflags +faststart "$OUTFILE"
+      STATUS=$?
+      if [ "$STATUS" -ne 0 ]; then
+        echo "Ipucu: Ses MP4'e uymuyorsa 2. modu (Ses AAC) secin."
+      fi
+      ;;
+    2)
+      if [ -z "$ACODEC" ]; then
+        AUDIO_ARGS="-an"
+        OUTFILE="$OUTDIR/${BASENAME}_Kesit_Sessiz.mp4"
+      else
+        ask_audio_bitrate 192
+        AUDIO_ARGS="-c:a aac -b:a ${AB_VAL}k"
+        OUTFILE="$OUTDIR/${BASENAME}_Kesit_AAC_${AB_VAL}k.mp4"
+      fi
+      echo ""
+      echo "--- Goruntu kayipsiz + Ses AAC kesiliyor... ---"
+      run_ff -y "${SEEK_COPY[@]}" -i "$INPUT" -sn -dn -c:v copy $AUDIO_ARGS -avoid_negative_ts make_zero -movflags +faststart "$OUTFILE"
+      STATUS=$?
+      ;;
+    3)
+      ask_vcodec
+      ask_fps_and_scale orig
+      ask_preset fast
+      if [ "$VCODEC_OUT" = "libx265" ]; then
+        CRF_ARGS=(-tag:v hvc1 -x265-params "log-level=warning")
+      else
+        CRF_ARGS=()
+      fi
+      if [ -z "$ACODEC" ]; then
+        AUDIO_ARGS="-an"
+      else
+        AUDIO_ARGS="-c:a copy"
+      fi
+      OUTFILE="$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4"
+      echo ""
+      echo "--- Kesilip ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET} | ses copy) yapiliyor... ---"
+      run_ff -y "${SEEK_REENC[@]}" -i "$INPUT" $FPS_ARG $VF_ARG -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -crf "$CRF_VAL" -pix_fmt "$PIX_OUT" "${CRF_ARGS[@]}" $AUDIO_ARGS -movflags +faststart "$OUTFILE"
+      STATUS=$?
+      ;;
+    4)
+      ask_vcodec
+      ask_fps_and_scale orig
+      ask_preset fast
+      if [ "$VCODEC_OUT" = "libx265" ]; then
+        CRF_ARGS=(-tag:v hvc1 -x265-params "log-level=warning")
+      else
+        CRF_ARGS=()
+      fi
+      if [ -z "$ACODEC" ]; then
+        AUDIO_ARGS="-an"
+        OUTFILE="$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_Sessiz.mp4"
+      else
+        ask_audio_bitrate 192
+        AUDIO_ARGS="-c:a aac -b:a ${AB_VAL}k"
+        OUTFILE="$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k.mp4"
+      fi
+      echo ""
+      echo "--- Kesilip ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET}) + AAC yapiliyor... ---"
+      run_ff -y "${SEEK_REENC[@]}" -i "$INPUT" $FPS_ARG $VF_ARG -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -crf "$CRF_VAL" -pix_fmt "$PIX_OUT" "${CRF_ARGS[@]}" $AUDIO_ARGS -movflags +faststart "$OUTFILE"
+      STATUS=$?
+      ;;
+    *)
+      echo "Gecersiz secim!"
+      read -p "Cikmak icin Enter..."
+      exit 1
+      ;;
+  esac
+}
+
+case "$CHOICE" in
+  1)
+    run_two_pass 20
+    ;;
+  2)
+    run_two_pass 100
+    ;;
+  3)
+    read -p "Kac MB olsun? (Orn: 1, 8, 25): " CUSTOM_MB
+    CUSTOM_MB="${CUSTOM_MB/,/.}"
+    if ! [[ "$CUSTOM_MB" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(awk -v m="$CUSTOM_MB" 'BEGIN { print (m > 0) }')" != "1" ]; then
+      echo "Gecersiz boyut girdiniz!"
+      read -p "Cikmak icin Enter..."
+      exit 1
+    fi
+    run_two_pass "$CUSTOM_MB"
+    ;;
+  4)
+    run_trim
+    ;;
+  5)
+    OUTFILE="$OUTDIR/${BASENAME}_Remux.mp4"
+    echo ""
+    echo "--- Sadece kutu / format yenileniyor (-c copy)... ---"
+    run_ff -y -i "$INPUT" -sn -dn -c copy -movflags +faststart "$OUTFILE"
+    STATUS=$?
+    ;;
+  6)
+    if [ -z "$ACODEC" ]; then
+      echo "Bu videoda ses izi bulunamadi!"
+      read -p "Cikmak icin Enter..."
+      exit 1
+    fi
+    ask_audio_bitrate 256
+    OUTFILE="$OUTDIR/${BASENAME}_AAC_${AB_VAL}k.mp4"
+    echo ""
+    echo "--- Goruntu kopyalanip ses ${AB_VAL}k AAC yapiliyor... ---"
+    run_ff -y -i "$INPUT" -sn -dn -c:v copy -c:a aac -b:a "${AB_VAL}k" -movflags +faststart "$OUTFILE"
+    STATUS=$?
+    ;;
+  7)
+    ask_vcodec
+    ask_preset fast
+    OUTFILE="$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4"
+    if [ -z "$ACODEC" ]; then
+      AUDIO_ARGS="-an"
+    else
+      AUDIO_ARGS="-c:a copy"
+    fi
+    if [ "$VCODEC_OUT" = "libx265" ]; then
+      CRF_ARGS=(-tag:v hvc1 -x265-params "log-level=warning")
+    else
+      CRF_ARGS=()
+    fi
+    echo ""
+    echo "--- Goruntu ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET} | ses copy)... ---"
+    run_ff -y -i "$INPUT" $EVEN_VF -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -crf "$CRF_VAL" -pix_fmt "$PIX_OUT" "${CRF_ARGS[@]}" $AUDIO_ARGS -movflags +faststart "$OUTFILE"
+    STATUS=$?
+    if [ "$STATUS" -ne 0 ]; then
+      echo "Ipucu: Ses kodegi MP4 kutusuna uymuyorsa 8. secenegi kullanin."
+    fi
+    ;;
+  8)
+    ask_vcodec
+    ask_preset fast
+    if [ "$VCODEC_OUT" = "libx265" ]; then
+      CRF_ARGS=(-tag:v hvc1 -x265-params "log-level=warning")
+    else
+      CRF_ARGS=()
+    fi
+    if [ -z "$ACODEC" ]; then
+      AUDIO_ARGS="-an"
+      OUTFILE="$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_Sessiz.mp4"
+      echo ""
+      echo "--- Videoda ses yok, ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET})... ---"
+    else
+      ask_audio_bitrate 256
+      AUDIO_ARGS="-c:a aac -b:a ${AB_VAL}k"
+      OUTFILE="$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k.mp4"
+      echo ""
+      echo "--- ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET}) + Ses ${AB_VAL}k AAC... ---"
+    fi
+    run_ff -y -i "$INPUT" $EVEN_VF -sn -dn -c:v "$VCODEC_OUT" -preset "$PRESET" -crf "$CRF_VAL" -pix_fmt "$PIX_OUT" "${CRF_ARGS[@]}" $AUDIO_ARGS -movflags +faststart "$OUTFILE"
+    STATUS=$?
+    ;;
+  9)
+    if [ -z "$ACODEC" ]; then
+      echo "Bu videoda ses izi bulunamadi!"
+      read -p "Cikmak icin Enter..."
+      exit 1
+    fi
+    [ "$ACODEC" = "aac" ] && AAC_ST="Kayipsiz" || AAC_ST="Kayipli"
+    [ "$ACODEC" = "mp3" ] && MP3_ST="Kayipsiz" || MP3_ST="Kayipli"
+    echo ""
+    echo "  Enter) Orijinal ($ACODEC) - Kayipsiz"
+    echo "  2) AAC (.m4a) - $AAC_ST"
+    echo "  3) MP3 (.mp3) - $MP3_ST"
+    read -p "Secim: " AF_OPT
+    case "$AF_OPT" in
+      2|aac|AAC|m4a|M4A)
+        if [ "$ACODEC" = "aac" ]; then
+          OUTFILE="$OUTDIR/${BASENAME}_Ses.m4a"
+          echo ""
+          echo "--- Ses zaten AAC! %100 kayipsiz kopyalaniyor... ---"
+          run_ff -y -i "$INPUT" -vn -sn -dn -c:a copy "$OUTFILE"
+        else
+          ask_audio_bitrate 256
+          OUTFILE="$OUTDIR/${BASENAME}_Ses_${AB_VAL}k.m4a"
+          echo ""
+          echo "--- Ses ${AB_VAL}k AAC olarak cikariliyor... ---"
+          run_ff -y -i "$INPUT" -vn -sn -dn -c:a aac -b:a "${AB_VAL}k" "$OUTFILE"
+        fi
+        STATUS=$?
+        ;;
+      3|mp3|MP3)
+        if [ "$ACODEC" = "mp3" ]; then
+          OUTFILE="$OUTDIR/${BASENAME}_Ses.mp3"
+          echo ""
+          echo "--- Ses zaten MP3! %100 kayipsiz kopyalaniyor... ---"
+          run_ff -y -i "$INPUT" -vn -sn -dn -c:a copy "$OUTFILE"
+        else
+          ask_audio_bitrate 256
+          OUTFILE="$OUTDIR/${BASENAME}_Ses_${AB_VAL}k.mp3"
+          echo ""
+          echo "--- Ses ${AB_VAL}k MP3 olarak cikariliyor... ---"
+          run_ff -y -i "$INPUT" -vn -sn -dn -c:a libmp3lame -b:a "${AB_VAL}k" "$OUTFILE"
+        fi
+        STATUS=$?
+        ;;
+      *)
+        case "$ACODEC" in
+          aac) EXT="m4a" ;;
+          opus) EXT="opus" ;;
+          mp3) EXT="mp3" ;;
+          vorbis) EXT="ogg" ;;
+          flac) EXT="flac" ;;
+          ac3) EXT="ac3" ;;
+          eac3) EXT="eac3" ;;
+          alac) EXT="m4a" ;;
+          pcm_*) EXT="wav" ;;
+          *) EXT="mka" ;;
+        esac
+        OUTFILE="$OUTDIR/${BASENAME}_Orijinal.${EXT}"
+        echo ""
+        echo "--- Orijinal ses (%100 kayipsiz: $ACODEC -> .$EXT)... ---"
+        run_ff -y -i "$INPUT" -vn -sn -dn -c:a copy "$OUTFILE"
+        STATUS=$?
+        ;;
+    esac
+    ;;
+  10)
+    PASSDIR=$(mktemp -d)
+    ln -s "$INPUT" "$PASSDIR/$FILENAME"
+    EXT_IN="${FILENAME##*.}"
+    if [ "$EXT_IN" != "$FILENAME" ] && [ -n "$EXT_IN" ] && [ "$FILENAME" != "input.${EXT_IN}" ]; then
+      ln -s "$INPUT" "$PASSDIR/input.${EXT_IN}"
+    fi
+    IN="$INPUT"
+    echo ""
+    echo "Tam FFmpeg komutunu tek satirda yapistirin."
+    echo "Girdi kisayollari: \"\$IN\" | \"$FILENAME\" | input.${EXT_IN}"
+    echo "(cikti.mp4 yazarsaniz Movies/TermuxVideo'ya gider)"
+    echo ""
+    read -r -p "Komut: " RAW_CMD
+    if [ -z "$RAW_CMD" ]; then
+      echo "Komut girilmedi, iptal edildi."
+      read -p "Cikmak icin Enter..."
+      exit 1
+    fi
+    echo ""
+    ( cd "$PASSDIR" && eval "$RAW_CMD" )
+    STATUS=$?
+    if [ "$STATUS" -eq 0 ]; then
+      rm -f "$PASSDIR"/*.log "$PASSDIR"/*.log.temp "$PASSDIR"/*.cutree "$PASSDIR"/*.mbtree "$PASSDIR"/ffmpeg2pass* 2>/dev/null
+      for f in "$PASSDIR"/*; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then
+          mv -f "$f" "$OUTDIR/" && OUTFILE="$OUTDIR/$(basename -- "$f")"
+        fi
+      done
+    fi
+    ;;
+  *)
+    echo "Gecersiz secim!"
+    read -p "Cikmak icin Enter..."
+    exit 1
+    ;;
+esac
+
+echo ""
+if [ "${STATUS:-1}" -eq 0 ]; then
+  if [ -n "$OUTFILE" ] && [ -f "$OUTFILE" ]; then
+    SIZE_HR=$(du -h "$OUTFILE" | cut -f1)
+    echo "BASARILI! Cikti Boyutu: $SIZE_HR"
+    echo "Konum: $OUTFILE"
+    command -v termux-media-scan >/dev/null && timeout 5 termux-media-scan "$OUTFILE" >/dev/null 2>&1
+  else
+    echo "BASARILI! Komut tamamlandi."
+  fi
+  case "$INPUT" in
+    "$HOME/downloads/"*) rm -f "$INPUT" ;;
+  esac
+else
+  echo "Hata olustu!"
+fi
+
+echo ""
+read -p "Kapatmak icin Enter'a basin..."
+EOF
+chmod +x ~/bin/termux-file-editor && bash -n ~/bin/termux-file-editor && echo "KURULUM TAMAM!"

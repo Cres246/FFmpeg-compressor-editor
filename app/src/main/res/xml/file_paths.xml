@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-path name="movies_termuxvideo" path="Movies/TermuxVideo/" />
+    <external-path name="music_termuxvideo" path="Music/TermuxVideo/" />
+    <cache-path name="fflab_cache" path="." />
+</paths>

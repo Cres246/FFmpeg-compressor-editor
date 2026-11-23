@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">FFmpeg</string>
+    <string name="app_tagline">Kayıpsız Kesim · 2-Pass · 10-Bit FFmpeg Stüdyosu</string>
+    <string name="pick_gallery_video">Galeri (Video)</string>
+    <string name="pick_any_file">Dosya Seç (MKV / Film)</string>
+    <string name="change_file">Değiştir</string>
+    <string name="share_hint">Galeri veya Dosya Yöneticisinden Paylaş → FFmpeg ile doğrudan açabilirsiniz.</string>
+    <string name="notification_channel_name">Medya İşleme</string>
+    <string name="notification_channel_desc">FFmpeg dönüştürme ve kesim ilerleme bildirimi</string>
+    <string name="action_cancel">İptal Et</string>
+    <string name="action_start">İşlemi Başlat</string>
+    <string name="action_open">Oynat / Aç</string>
+    <string name="action_share">Paylaş</string>
+    <string name="action_new_task">Yeni İşlem</string>
+    <string name="action_back">Geri</string>
+    <string name="history_title">Son Çıktılar</string>
+    <string name="history_empty">Henüz işlenmiş dosya yok. Bir video seçerek başlayın.</string>
+    <string name="output_folder_label">Kayıt Klasörü: Movies/TermuxVideo</string>
+</resources>

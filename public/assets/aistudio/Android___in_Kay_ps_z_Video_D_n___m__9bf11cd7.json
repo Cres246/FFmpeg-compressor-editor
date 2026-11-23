@@ -1,0 +1,1144 @@
+
+      }],
+      "createTime": "2026-11-22T18:06:41.639Z"
+    }, {
+      "text": "Bu sohbette yapılan tüm revizeleri dikkate alarak; betiğin çalışan en son halini, sahip olduğu 10 seçeneği ve tüm ince ayarları eksiksiz şekilde özetleyen tek bir temiz teknik doküman (Markdown) hazırla",
+      "role": "user",
+      "tokenCount": 86,
+      "createTime": "2026-11-23T02:31:41.938Z"
+    }, {
+      "text": "**Defining the Project Scope**\n\nOkay, I\u0027ve got a handle on the user\u0027s request. I need to deliver a single, clean technical document in Markdown. This document will be a summary of all revisions, effectively the current working version of the script throughout this entire discussion. I\u0027m focusing on scope now to make sure I completely understand what I need to do.\n\n\n**Verifying Full Script Inclusion**\n\nI\u0027m now deep-diving to ensure absolutely *every* patch is accounted for in the final document, specifically from Turn 14 through Turn 40. I am meticulously checking each update for zero omissions. I am also working to explain all the 10 menu options. And I plan to explain the very fine technical details and engineering choices that are implemented. Furthermore, I have the goal of getting the complete, merged source code included.\n\n\n**Analyzing Technical Details**\n\nI\u0027m now focusing on specific technical features. I\u0027m noting the changes from Turns 16 through 23. This includes features like `export LC_ALL\u003dC`, the `EVEN_VF` protection, and the use of `-sn -dn`. I\u0027m also cataloging the single safety margin formula and the `CRF 16` for H.264. I\u0027m paying close attention to the interactive features, like `ask_preset`, and the moved output directory. The custom live progress bar updates, along with the integer KB counter, are also being meticulously reviewed. Lastly, I\u0027ve incorporated the audio bitrate prompt and the encoding mode variations, including H.264 and H.265 details.\n\n\n**Documenting Key Updates**\n\nI\u0027m now focusing on specific recent features. I\u0027ve documented the `termux-media-scan` hook and related MacroDroid integration. I\u0027ve also incorporated the updates to `ask_preset()`, including `veryslow`. Audio extraction with dynamic detection is cataloged, along with the full orphan and abort cleanup, and I\u0027ve described the updated video cutting options. The upgrades to Option 10\u0027s full copy-paste command are also ready. I\u0027m noting the addition of the input file size display, too.\n\n\n**Detailing Feature Additions**\n\nI\u0027ve just finished documenting the latest enhancements. I\u0027ve noted the surgical `show_kf_at()` function and the reversion of the top banner\u0027s `Keyframe:` display. I\u0027ve also detailed the added resolution scaling options for different resolutions with aspect ratio and portrait/4:5 protections, as well as the start and end validation guard. Additionally, I\u0027ve outlined the bit-depth detection and the dynamic 10-bit capability check, including the changes to H.265 and H.264 selection. Finally, I\u0027ve updated the resolution prompt and the menu item names.\n\n\n**Refining Final Snippets**\n\nI\u0027m now focusing on specific menu options. I\u0027ve updated the translation of menu options 7 and 8 and validated the Option 10 hint to the correct directory. Moreover, I\u0027m integrating the updated keyframe display in `show_kf_at()` and `run_trim()` with new start and end indicators. The \"Enter\" and \"k\" functionality have also been accounted for. The next step is a complete audit of the final unified source code, line-by-line.\n\n\n**Updating Menu Interactions**\n\nI\u0027m now documenting the final menu options. I\u0027m focusing on their interactive nature and expected user input. Specifically, I\u0027m noting the resolution choices and the `ask_fps_and_scale` prompt. I am also reviewing the keyframe and time range selection logic in `show_kf_at` and `run_trim`. Lastly, I\u0027m finalizing details around option 10\u0027s behavior, including the output file handling and command input.\n\n\n**Finalizing Document Structure**\n\nI\u0027m now detailing the Markdown document\u0027s structure, including sections for system requirements, menu options with a reference table, and technical architecture. I\u0027m focusing on the 2-pass bitrate math, codec details, and bit depth considerations for both H.264 and H.265, also noting the auto move to `$OUTDIR` and the footer command. I\u0027ve also incorporated the details of the install command into the document.\n\n\n",
+      "role": "model",
+      "tokenCount": 3026,
+      "isThought": true,
+      "parts": [{
+        "text": "**Defining the Project Scope**\n\nOkay, I\u0027ve got a handle on the user\u0027s request. I need to deliver a single, clean technical document in Markdown. This document will be a summary of all revisions, effectively the current working version of the script throughout this entire discussion. I\u0027m focusing on scope now to make sure I completely understand what I need to do.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Verifying Full Script Inclusion**\n\nI\u0027m now deep-diving to ensure absolutely *every* patch is accounted for in the final document, specifically from Turn 14 through Turn 40. I am meticulously checking each update for zero omissions. I am also working to explain all the 10 menu options. And I plan to explain the very fine technical details and engineering choices that are implemented. Furthermore, I have the goal of getting the complete, merged source code included.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Analyzing Technical Details**\n\nI\u0027m now focusing on specific technical features. I\u0027m noting the changes from Turns 16 through 23. This includes features like `export LC_ALL\u003dC`, the `EVEN_VF` protection, and the use of `-sn -dn`. I\u0027m also cataloging the single safety margin formula and the `CRF 16` for H.264. I\u0027m paying close attention to the interactive features, like `ask_preset`, and the moved output directory. The custom live progress bar updates, along with the integer KB counter, are also being meticulously reviewed. Lastly, I\u0027ve incorporated the audio bitrate prompt and the encoding mode variations, including H.264 and H.265 details.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Documenting Key Updates**\n\nI\u0027m now focusing on specific recent features. I\u0027ve documented the `termux-media-scan` hook and related MacroDroid integration. I\u0027ve also incorporated the updates to `ask_preset()`, including `veryslow`. Audio extraction with dynamic detection is cataloged, along with the full orphan and abort cleanup, and I\u0027ve described the updated video cutting options. The upgrades to Option 10\u0027s full copy-paste command are also ready. I\u0027m noting the addition of the input file size display, too.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Detailing Feature Additions**\n\nI\u0027ve just finished documenting the latest enhancements. I\u0027ve noted the surgical `show_kf_at()` function and the reversion of the top banner\u0027s `Keyframe:` display. I\u0027ve also detailed the added resolution scaling options for different resolutions with aspect ratio and portrait/4:5 protections, as well as the start and end validation guard. Additionally, I\u0027ve outlined the bit-depth detection and the dynamic 10-bit capability check, including the changes to H.265 and H.264 selection. Finally, I\u0027ve updated the resolution prompt and the menu item names.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Refining Final Snippets**\n\nI\u0027m now focusing on specific menu options. I\u0027ve updated the translation of menu options 7 and 8 and validated the Option 10 hint to the correct directory. Moreover, I\u0027m integrating the updated keyframe display in `show_kf_at()` and `run_trim()` with new start and end indicators. The \"Enter\" and \"k\" functionality have also been accounted for. The next step is a complete audit of the final unified source code, line-by-line.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Updating Menu Interactions**\n\nI\u0027m now documenting the final menu options. I\u0027m focusing on their interactive nature and expected user input. Specifically, I\u0027m noting the resolution choices and the `ask_fps_and_scale` prompt. I am also reviewing the keyframe and time range selection logic in `show_kf_at` and `run_trim`. Lastly, I\u0027m finalizing details around option 10\u0027s behavior, including the output file handling and command input.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Finalizing Document Structure**\n\nI\u0027m now detailing the Markdown document\u0027s structure, including sections for system requirements, menu options with a reference table, and technical architecture. I\u0027m focusing on the 2-pass bitrate math, codec details, and bit depth considerations for both H.264 and H.265, also noting the auto move to `$OUTDIR` and the footer command. I\u0027ve also incorporated the details of the install command into the document.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-11-23T02:31:41.941Z"
+    }, {
+      "text": "# Termux FFmpeg Medya İşleme Aracı (`termux-file-editor`) — Teknik Dokümantasyon\n\nAndroid üzerinde emülasyon katmanı olmadan doğrudan yerel **ARM64 (`aarch64`)** işlemci gücüyle çalışan; paylaşım menüsü (**Paylaş $\\rightarrow$ Termux $\\rightarrow$ Edit**) üzerinden tetiklenen, 10 modlu, kayıpsız kesim, akıllı keyframe tarama, gerçek 2-Pass sıkıştırma ve 8-bit/10-bit H.264/H.265 dönüştürme betiğidir.\n\n---\n\n## 1. Kurulum ve Ön Hazırlık\n\n1. **Termux Kurulumu:** Play Store yerine **GitHub Releases (`termux/termux-app` — `arm64-v8a`)** veya **F-Droid** sürümü kurulmalıdır.\n2. **Paketler ve Depolama İzni:**\n   ```bash\n   pkg update \u0026\u0026 pkg upgrade -y \u0026\u0026 pkg install ffmpeg gawk -y\n   termux-setup-storage\n   ```\n3. **Pil Kısıtlaması:** Uzun 4K/2-Pass işlemlerde sistemin arka planda işlemci hızını kısmaması veya süreci sonlandırmaması için **Ayarlar $\\rightarrow$ Uygulamalar $\\rightarrow$ Termux $\\rightarrow$ Pil Tasarrufu $\\rightarrow$ Kısıtlama yok** seçilmelidir.\n4. **Çıktı Klasörü:** İşlenen tüm medya dosyaları otomatik olarak `/sdcard/Movies/TermuxVideo` klasörüne kaydedilir.\n\n---\n\n## 2. Menü Seçenekleri (1–10)\n\n| No | Seçenek Adı | İşlev ve Teknik Davranış | Çıktı Dosya Adı |\n| :---: | :--- | :--- | :--- |\n| **1** | **Discord (`\u003c 20 MB \\| 2-Pass`)** | Dosyayı kesinlikle 20 MB sınırının altında kalacak şekilde gerçek **2-Pass ABR** ile sıkıştırır. | `*_H264_20MB.mp4` |\n| **2** | **WhatsApp (`\u003c 100 MB \\| 2-Pass`)** | WhatsApp\u0027ın 100 MB önizlemeli sohbet sınırının hemen altına gerçek **2-Pass ABR** ile sıkıştırır. | `*_H264_100MB.mp4` |\n| **3** | **Ozel Boyut (`MB Gir \\| 2-Pass`)** | Kullanıcının girdiği herhangi bir MB hedefine (ör. `1`, `8`, `25`) 2-Pass ABR uygular. 3 MB ve altı hedeflerde varsayılan sesi otomatik `64k` önerir. | `*_\u003cMB\u003eMB.mp4` |\n| **4** | **Videoyu Kes (`Zaman Sec`)** | Girilen başlangıç/bitiş civarındaki gerçek keyframe\u0027leri tarar; varsayılan olarak **`*Onceki` $\\rightarrow$ `*Sonraki`** keyframe aralığından 4 farklı modda kesim yapar. | `*_Kesit*.mp4` |\n| **5** | **Sadece Format Degistir (`-c copy`)** | Görüntü ve sese dokunmadan (%100 kayıpsız) MP4 kabını yeniler, başlığı (`moov`) dosya başına alır (`+faststart`). | `*_Remux.mp4` |\n| **6** | **Sadece Ses Degistir (`Goruntu copy\\|AAC`)** | Görüntüyü %100 kayıpsız kopyalar (`-c:v copy`), yalnızca uyumsuz sesi (Opus, DTS, EAC3 vb.) seçilen bitrate\u0027te **AAC**\u0027ye çevirir. | `*_AAC_\u003ck\u003ek.mp4` |\n| **7** | **Sadece Goruntu Degistir (`CRF16/20\\|Ses copy`)** | Görüntüyü `H.264 (CRF 16)` veya `H.265 (CRF 20)` olarak yüksek kalitede kodlar; ses izini %100 kayıpsız kopyalar (`-c:a copy`). | `*_H264_CRF16.mp4` |\n| **8** | **Goruntu + Ses Degistir (`CRF16/20 + AAC`)** | Hem görüntüyü (`CRF 16/20`, 8/10-bit, Preset) hem sesi (seçilen bitrate\u0027te AAC) birlikte dönüştürür. | `*_CRF16_AAC_\u003ck\u003ek.mp4` |\n| **9** | **Sesi Ayir (`Orijinal / AAC / MP3`)** | Videodan yalnızca sesi ayırır. Kaynak kodeğe göre her seçeneğin yanında dinamik **`Kayipsiz`** / **`Kayipli`** durumunu gösterir; kaynak zaten AAC/MP3 ise yeniden kodlamadan kopyalar. | `*_Orijinal.\u003cext\u003e` / `*_Ses*.m4a\\|mp3` |\n| **10** | **Ozel FFmpeg Komutu (`Tam Komut`)** | Girdi veya çıktıya müdahale etmeden doğrudan yapıştırılan tam `ffmpeg ...` komutlarını (çoklu `\u0026\u0026` komutları dahil) geçici dizinde çalıştırır, oluşan çıktıyı otomatik `Movies/TermuxVideo`\u0027ya taşır. | Komutta belirtilen ad |\n\n### 4. Seçenek (`Videoyu Kes`) Alt Modları\n1. **Tam Kayipsiz (`Goruntu + Ses copy`):** `-noaccurate_seek` + `-c copy` + `-avoid_negative_ts make_zero`.\n2. **Goruntu Kayipsiz + Ses AAC:** `-noaccurate_seek` + `-c:v copy` + `-c:a aac` (5.1/DTS/EAC3 filmleri TriMP4/mobil uyumlu kesmek için ideal).\n3. **Goruntu Degistir (`CRF`) + Ses copy:** Hassas kesim (`accurate seek`), kodek/bit/FPS/çözünürlük/preset seçimi, ses kayıpsız.\n4. **Goruntu + Ses Degistir (`CRF + AAC`):** Hassas kesim, tam video + ses yeniden kodlama.\n\n---\n\n## 3. Teknik İnce Ayarlar ve Mimari Detaylar\n\n### 3.1. Gerçek 2-Pass Hedef Boyut Hesabı\n* **Formül:**\n  $$\\text{Video Bitrate (kbps)} \u003d \\left\\lfloor \\frac{\\text{Hedef MB} \\times 8000 \\times 0.96}{\\text{Süre (sn)}} - \\text{Ses Bitrate (kbps)} \\right\\rfloor$$\n* `8000 * 0.96` katsayısı, hem `1000`-tabanlı (Android/WhatsApp) hem `1024`-tabanlı (MiB/Discord) sınırların altında kalmak ve MP4 kapsayıcı başlık payını (*muxing overhead*) karşılamak için tek seferlik %4 güvenlik payı uygular.\n* `libx264` için `-pass 1 / -pass 2 -passlogfile` kullanılır; `libx265` ise `-pass` bayrağını desteklemediğinden `-x265-params \"log-level\u003dwarning:pass\u003d1|2:stats\u003d...\"` ile çalıştırılır.\n* Tüm 2-pass log (`.log`, `.cutree`, `.mbtree`) dosyaları `mktemp -d` ile açılan geçici klasörde tutulur ve çıkışta silinir.\n\n### 3.2. Kodek, CRF Eşdeğerliği ve 8-Bit / 10-Bit Yönetimi\n* **Görsel Kalite Eşleştirmesi:** `libx264` için **`CRF 16`**, `libx265` için buna denk arşiv kalitesi olan **`CRF 20`** kullanılır. Tüm `libx265` çıktıları Apple/Android/TriMP4 tam uyumluluğu için **`-tag:v hvc1`** ile etiketlenir.\n* **Dinamik 10-Bit Denetimi:** Betik, açılışta `ffprobe` ile girdi bit derinliğini (`8b`, `10b`, `12b`) üst bilgi satırında gösterir. Dönüştürme sırasında `ffmpeg -h encoder\u003d...` üzerinden `yuv420p10le` desteğini anlık kontrol eder:\n  * **H.265:** Kaynak `10bit`/`12bit` ise varsayılan olarak **`Enter \u003d 10bit (Koru)`**, kaynak `8bit` ise **`Enter \u003d 8bit`** önerir.\n  * **H.264:** Mobil donanım çözücüler, TriMP4, WhatsApp ve Discord H.264 10-bit (`High 10`) açmadığı için varsayılan daima **`Enter \u003d 8bit (Uyumlu)`** tutulur; `libx264` derlemesi destekliyorsa `10` seçeneği `(Sadece VLC)` uyarısıyla sunulur.\n* **Preset Seçenekleri:** `1\u003dfast`, `2\u003dmedium`, `3\u003dslow`, `4\u003dveryslow` (ek olarak elle yazılırsa `slower`). 2-Pass modlarında varsayılan `medium`, CRF modlarında `fast`\u0027tir.\n* **Ses Bitrate Aralığı:** `32k` – `768k` desteklenir (5.1 surround filmler için `320k`/`384k`+ dahil). Kullanıcı `192k` veya `192` yazsa da `k`/`K` otomatik normalize edilir.\n\n### 3.3. Akıllı Çözünürlük ve En-Boy Oranı Ölçekleme\n* Desteklenen hedefler: **`2160p`**, **`1440p`**, **`1080p`**, **`720p`**, **`480p`** (sondaki `p`/`P` otomatik temizlenir; boş bırakılırsa `Enter \u003d Orijinal`).\n* **3 Yönlü Oran Koruması:**\n  1. **Dikey videolar (`HEIGHT \u003e WIDTH`, ör. 9:16 Reels, 4:5 Instagram):** `scale\u003d\u003chedef\u003e:-2`\n  2. **Geniş sinema filmleri (`WIDTH * 9 \u003e HEIGHT * 16`, ör. `3840x1600` 2.39:1):** Uzun kenarı `3840/2560/1920/1280/854` sınırına oturtarak `scale\u003d\u003cL_MAX\u003e:-2` (ör. `1920x800`, genişliğin `2592`\u0027ye taşmasını önler).\n  3. **Standart `16:9` / `4:3` / `1:1`:** `scale\u003d-2:\u003chedef\u003e`\n* **Tek Piksel Koruması (`EVEN_VF`):** Orijinal çözünürlük korunurken kaynak en/boyu tek sayıysa (`1079x1920` gibi ekran kayıtları) `yuv420p` / `yuv420p10le` çökmesini önlemek için otomatik `scale\u003dtrunc(iw/2)*2:trunc(ih/2)*2` devreye girer.\n\n### 3.4. Keyframe Tarayıcı ve Garantili Kayıpsız Kesim\n* `show_kf_at()`, videoyu çözmeden (`-show_packets`, `-read_intervals \"${seek_s}%+28\"`) yalnızca girilen zamanların ±12 sn çevresindeki paket başlıklarını milisaniyeler içinde tarar (`pts_time`, yoksa `dts_time`).\n* Başlangıçta **`*Onceki`**, bitişte **`*Sonraki`** keyframe işaretlenir.\n  * **`Enter`** basıldığında başlangıç **`prev_kf + 0.005`** (1 mikrosaniyelik yuvarlama sapmasıyla önceki GOP\u0027a sıçramayı engelleyen 5 ms tampon) ve bitiş **`next_kf`** ham PTS değerine kilitlenir.\n  * **`k`** kullanıcının yazdığı ham süreleri korur; **`r`** zamanları tekrar girmeye döner.\n* Bitiş $\\le$ Başlangıç girilmesi engellenir; ilerleme yüzdesi (`%`) tüm film yerine yalnızca kesilecek parçanın süresine (`CLIP_DUR`) göre hesaplanır.\n\n### 3.5. Canlı İlerleme, Bellek/Depolama Hijyeni ve Akış Koruması\n* **Temiz İlerleme Satırı (`run_ff`):** `-nostdin -hide_banner -loglevel warning -nostats -progress pipe:1` ile FFmpeg\u0027in satır taşıran `elapsed\u003d` çıktısı yerine tek satırda `Sure: 24.6 / 61.4 sn (%40) | 1.34x | 4820kb` (tam sayı KB, noktalı MB\u0027ye dönmeden) gösterilir. Çıkış kodu `${PIPESTATUS[0]}` ile gerçek FFmpeg durumundan alınır.\n* **Akış Koruması:** Tüm video/ses işlemlerinde `-sn -dn` ile MP4 muxer\u0027ını bozan altyazı/veri akışları elenir; `-movflags +faststart` ile hızlı açılış ve TriMP4 uyumluluğu sağlanır.\n* **Sıfır Şişme (Çöp Temizliği):**\n  * Başlangıçta `$HOME/downloads/` içindeki eski yetim paylaşım kopyaları (mevcut `$INPUT` hariç) temizlenir.\n  * `trap cleanup EXIT INT TERM` ile normal çıkışta, `Ctrl+C` kesintisinde veya hata durumunda: `$PASSDIR` silinir, işlem başarısızsa yarıda kalmış bozuk `$OUTFILE` silinir, `$INPUT` yalnızca `$HOME/downloads/` içindeyse silinir (diskteki orijinal dosyalara asla dokunulmaz) ve `termux-wake-unlock` çağrılır.\n  * `export LC_ALL\u003dC` ile ondalık virgül/nokta uyumsuzlukları tamamen önlenir.\n\n### 3.6. Galeri ve \"Son Dosyalar\" Görünürlüğü (MediaStore)\nTermux Linux API üzerinden yazdığı için Android MediaStore veritabanını anında güncellemek amacıyla iki yöntem desteklenir:\n* **MacroDroid + Shizuku (%0 Ekstra Şarj):**\n  * *Tetikleyici:* `Bildirim -\u003e Bildirim Temizlendi` $\\rightarrow$ Uygulama: **Termux** $\\rightarrow$ Metin: **Herhangi Biri** *(**\"Devam eden/kalıcı bildirimleri yoksay\"** tiki **kaldırılmalı**)*.\n  * *Eylem:* `Kabuk Betiği` (**Shizuku** modu) $\\rightarrow$\n    ```sh\n    content call --method scan_volume --uri content://media --arg external_primary\n    ```\n* **Termux:API (Alternatif):** Ana Termux ile aynı kaynaktan `Termux:API` APK\u0027sı + `pkg install termux-api -y` kurulursa betik sonundaki `timeout 5 termux-media-scan \"$OUTFILE\"` satırı dosyayı otomatik tarar.\n\n---\n\n## 4. Betiğin En Son Çalışan Tam Kodu (`~/bin/termux-file-editor`)\n\nAşağıdaki bloğun tamamı Termux\u0027a tek seferde yapıştırılıp **Enter**\u0027a basıldığında betik kurulur, çalıştırılabilir yapılır ve `bash -n` ile sözdizimi doğrulanır:\n\n```bash\nmkdir -p ~/bin\ncat \u003c\u003c \u0027EOF\u0027 \u003e ~/bin/termux-file-editor\n#!/data/data/com.termux/files/usr/bin/bash\nexport LC_ALL\u003dC\n\nINPUT\u003d\"$1\"\nif [ -z \"$INPUT\" ] || [ ! -f \"$INPUT\" ]; then\n  echo \"Hata: Dosya bulunamadi!\"\n  read -p \"Cikmak icin Enter\u0027a basin...\"\n  exit 1\nfi\n\nPASSDIR\u003d\"\"\nOUTFILE\u003d\"\"\nSTATUS\u003d1\nfor old in \"$HOME/downloads/\"*; do\n  [ -e \"$old\" ] \u0026\u0026 [ \"$old\" !\u003d \"$INPUT\" ] \u0026\u0026 rm -rf \"$old\"\ndone\ncleanup() {\n  trap - EXIT INT TERM\n  [ -n \"$PASSDIR\" ] \u0026\u0026 [ -d \"$PASSDIR\" ] \u0026\u0026 rm -rf \"$PASSDIR\"\n  [ \"$STATUS\" -ne 0 ] \u0026\u0026 [ -n \"$OUTFILE\" ] \u0026\u0026 [ -f \"$OUTFILE\" ] \u0026\u0026 [ \"$OUTFILE\" !\u003d \"$INPUT\" ] \u0026\u0026 rm -f \"$OUTFILE\"\n  case \"$INPUT\" in\n    \"$HOME/downloads/\"*) rm -f \"$INPUT\" ;;\n  esac\n  command -v termux-wake-unlock \u003e/dev/null \u0026\u0026 termux-wake-unlock\n}\ncommand -v termux-wake-lock \u003e/dev/null \u0026\u0026 termux-wake-lock\ntrap cleanup EXIT INT TERM\n\nOUTDIR\u003d\"/sdcard/Movies/TermuxVideo\"\nmkdir -p \"$OUTDIR\"\n\nFILENAME\u003d\"$(basename -- \"$INPUT\")\"\nBASENAME\u003d\"${FILENAME%.*}\"\n\nBYTES\u003d$(wc -c \u003c \"$INPUT\" 2\u003e/dev/null || echo 0)\nSIZE_MB\u003d$(awk -v b\u003d\"$BYTES\" \u0027BEGIN { if (b+0 \u003e 0) printf \"%.1fmb\", b / 1048576; else print \"?\" }\u0027)\n\nDURATION\u003d$(ffprobe -v error -show_entries format\u003dduration -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nVCODEC\u003d$(ffprobe -v error -select_streams v:0 -show_entries stream\u003dcodec_name -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nWIDTH\u003d$(ffprobe -v error -select_streams v:0 -show_entries stream\u003dwidth -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nHEIGHT\u003d$(ffprobe -v error -select_streams v:0 -show_entries stream\u003dheight -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nPIX_FMT\u003d$(ffprobe -v error -select_streams v:0 -show_entries stream\u003dpix_fmt -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nACODEC\u003d$(ffprobe -v error -select_streams a:0 -show_entries stream\u003dcodec_name -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\n\nBIT_IN\u003d\"8bit\"\nBIT_SHORT\u003d\"\"\nif [[ \"$PIX_FMT\" \u003d\u003d *10* ]]; then\n  BIT_IN\u003d\"10bit\"; BIT_SHORT\u003d\" 10b\"\nelif [[ \"$PIX_FMT\" \u003d\u003d *12* ]]; then\n  BIT_IN\u003d\"12bit\"; BIT_SHORT\u003d\" 12b\"\nelif [ -n \"$PIX_FMT\" ]; then\n  BIT_IN\u003d\"8bit\"; BIT_SHORT\u003d\" 8b\"\nfi\n\nupdate_dur_vars() {\n  local d\u003d\"${1:-$DURATION}\"\n  DUR_SHOW\u003d$(awk -v d\u003d\"$d\" \u0027BEGIN { if (d+0 \u003e 0) printf \"%.1f\", d; else print \"?\" }\u0027)\n  DUR_TENTHS\u003d$(awk -v d\u003d\"$d\" \u0027BEGIN { t \u003d int(d * 10); if (t \u003c 0) t \u003d 0; print t }\u0027)\n}\nupdate_dur_vars \"$DURATION\"\n\nEVEN_VF\u003d\"\"\nif [[ \"$WIDTH\" \u003d~ ^[0-9]+$ ]] \u0026\u0026 [[ \"$HEIGHT\" \u003d~ ^[0-9]+$ ]]; then\n  if [ $((WIDTH % 2)) -ne 0 ] || [ $((HEIGHT % 2)) -ne 0 ]; then\n    EVEN_VF\u003d\"-vf scale\u003dtrunc(iw/2)*2:trunc(ih/2)*2\"\n  fi\nfi\n\nclear\necho \"\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\necho \"  Dosya : $FILENAME\"\necho \"  Video : ${VCODEC:-?}${BIT_SHORT} | ${WIDTH:-?}x${HEIGHT:-?} | ${DUR_SHOW} sn | ${SIZE_MB}\"\necho \"  Ses   : ${ACODEC:-Yok}\"\necho \"\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\necho \"  1) Discord (\u003c 20 MB | 2-Pass)\"\necho \"  2) WhatsApp (\u003c 100 MB | 2-Pass)\"\necho \"  3) Ozel Boyut (MB Gir | 2-Pass)\"\necho \"  4) Videoyu Kes (Zaman Sec)\"\necho \"  5) Sadece Format Degistir (-c copy)\"\necho \"  6) Sadece Ses Degistir (Goruntu copy|AAC)\"\necho \"  7) Sadece Goruntu Degistir (CRF16/20|Ses copy)\"\necho \"  8) Goruntu + Ses Degistir (CRF16/20 + AAC)\"\necho \"  9) Sesi Ayir (Orijinal / AAC / MP3)\"\necho \" 10) Ozel FFmpeg Komutu (Tam Komut)\"\necho \"\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\nread -p \"Seciminiz [1-10]: \" CHOICE\n\nrun_ff() {\n  local cur_t\u003d0 sec\u003d0 dec\u003d0 pct\u003d0 kb\u003d0 spd\u003d\"...\" sz\u003d\"\"\n  ffmpeg -nostdin -hide_banner -loglevel warning -nostats -progress pipe:1 \"$@\" | \\\n  while IFS\u003d\u0027\u003d\u0027 read -r k v; do\n    case \"$k\" in\n      out_time_us)\n        if [[ \"$v\" \u003d~ ^[0-9]+$ ]]; then\n          cur_t\u003d$((v / 100000))\n          sec\u003d$((cur_t / 10))\n          dec\u003d$((cur_t % 10))\n        fi\n        ;;\n      total_size)\n        if [[ \"$v\" \u003d~ ^[0-9]+$ ]]; then\n          kb\u003d$((v / 1024))\n        fi\n        ;;\n      speed)\n        spd\u003d\"${v// /}\"\n        ;;\n      progress)\n        if [ \"$kb\" -gt 0 ] 2\u003e/dev/null; then\n          sz\u003d\" | ${kb}kb\"\n        else\n          sz\u003d\"\"\n        fi\n        if [ \"$DUR_TENTHS\" -gt 0 ] 2\u003e/dev/null; then\n          pct\u003d$((cur_t * 100 / DUR_TENTHS))\n          [ \"$pct\" -gt 100 ] \u0026\u0026 pct\u003d100\n          printf \"\\r  Sure: %d.%d / %s sn (%%%d) | %s%s   \" \"$sec\" \"$dec\" \"$DUR_SHOW\" \"$pct\" \"$spd\" \"$sz\"\n        else\n          printf \"\\r  Sure: %d.%d sn | %s%s   \" \"$sec\" \"$dec\" \"$spd\" \"$sz\"\n        fi\n        ;;\n    esac\n  done\n  local rc\u003d\"${PIPESTATUS[0]}\"\n  echo \"\"\n  return \"$rc\"\n}\n\nask_vcodec() {\n  read -p \"Kodek [Enter\u003dH.264, 2\u003dH.265 (HEVC)]: \" C_OPT\n  case \"$C_OPT\" in\n    2|265|h265|H265|hevc|HEVC)\n      VCODEC_OUT\u003d\"libx265\"\n      CRF_VAL\u003d\"20\"\n      CODEC_TAG\u003d\"H265\"\n      ;;\n    *)\n      VCODEC_OUT\u003d\"libx264\"\n      CRF_VAL\u003d\"16\"\n      CODEC_TAG\u003d\"H264\"\n      ;;\n  esac\n\n  PIX_OUT\u003d\"yuv420p\"\n  BIT_TAG\u003d\"\"\n  if ffmpeg -hide_banner -h \"encoder\u003d${VCODEC_OUT}\" 2\u003e/dev/null | grep -q \"yuv420p10le\"; then\n    if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n      if [ \"$BIT_IN\" \u003d \"10bit\" ] || [ \"$BIT_IN\" \u003d \"12bit\" ]; then\n        read -p \"Renk Bit [Enter\u003d10bit (Koru), 8\u003d8bit]: \" B_OPT\n        case \"$B_OPT\" in\n          8|1) PIX_OUT\u003d\"yuv420p\" ;;\n          *) PIX_OUT\u003d\"yuv420p10le\"; BIT_TAG\u003d\"_10bit\" ;;\n        esac\n      else\n        read -p \"Renk Bit [Enter\u003d8bit, 10\u003d10bit]: \" B_OPT\n        case \"$B_OPT\" in\n          10|2) PIX_OUT\u003d\"yuv420p10le\"; BIT_TAG\u003d\"_10bit\" ;;\n          *) PIX_OUT\u003d\"yuv420p\" ;;\n        esac\n      fi\n    else\n      read -p \"H.264 Bit [Enter\u003d8bit (Uyumlu), 10\u003d10bit (Sadece VLC)]: \" B_OPT\n      case \"$B_OPT\" in\n        10|2) PIX_OUT\u003d\"yuv420p10le\"; BIT_TAG\u003d\"_10bit\" ;;\n        *) PIX_OUT\u003d\"yuv420p\" ;;\n      esac\n    fi\n  fi\n}\n\nask_fps_and_scale() {\n  local def_fps\u003d\"${1:-30}\"\n  if [ \"$def_fps\" \u003d \"orig\" ]; then\n    read -p \"FPS [Enter\u003dOrijinal FPS, 1\u003d30 FPS]: \" FPS_OPT\n    if [ \"$FPS_OPT\" \u003d \"1\" ] || [ \"$FPS_OPT\" \u003d \"30\" ]; then\n      FPS_ARG\u003d\"-r 30\"\n    else\n      FPS_ARG\u003d\"\"\n    fi\n  else\n    read -p \"FPS [Enter\u003d30 FPS, 2\u003dOrijinal FPS]: \" FPS_OPT\n    if [ \"$FPS_OPT\" \u003d \"2\" ]; then\n      FPS_ARG\u003d\"\"\n    else\n      FPS_ARG\u003d\"-r 30\"\n    fi\n  fi\n\n  echo \"  Cozunurluklar: 2160p | 1440p | 1080p | 720p | 480p\"\n  read -p \"Cozunurluk [Enter\u003dOrijinal]: \" RES_OPT\n  RES_OPT\u003d\"${RES_OPT// /}\"\n  RES_OPT\u003d\"${RES_OPT%p}\"\n  RES_OPT\u003d\"${RES_OPT%P}\"\n  VF_ARG\u003d\"$EVEN_VF\"\n  case \"$RES_OPT\" in\n    2160|1440|1080|720|480)\n      case \"$RES_OPT\" in\n        2160) L_MAX\u003d3840 ;;\n        1440) L_MAX\u003d2560 ;;\n        1080) L_MAX\u003d1920 ;;\n        720)  L_MAX\u003d1280 ;;\n        480)  L_MAX\u003d854 ;;\n      esac\n      if [[ \"$WIDTH\" \u003d~ ^[0-9]+$ ]] \u0026\u0026 [[ \"$HEIGHT\" \u003d~ ^[0-9]+$ ]]; then\n        if [ \"$HEIGHT\" -gt \"$WIDTH\" ]; then\n          VF_ARG\u003d\"-vf scale\u003d${RES_OPT}:-2\"\n        elif [ $((WIDTH * 9)) -gt $((HEIGHT * 16)) ]; then\n          VF_ARG\u003d\"-vf scale\u003d${L_MAX}:-2\"\n        else\n          VF_ARG\u003d\"-vf scale\u003d-2:${RES_OPT}\"\n        fi\n      else\n        VF_ARG\u003d\"-vf scale\u003d-2:${RES_OPT}\"\n      fi\n      ;;\n  esac\n}\n\nask_preset() {\n  DEF_P\u003d\"${1:-medium}\"\n  if [ \"$DEF_P\" \u003d \"fast\" ]; then\n    read -p \"Preset [Enter\u003dfast,2\u003dmed,3\u003dslow,4\u003dvslow]: \" P_OPT\n  else\n    read -p \"Preset [1\u003dfast,Enter\u003dmed,3\u003dslow,4\u003dvslow]: \" P_OPT\n  fi\n  case \"$P_OPT\" in\n    \"\") PRESET\u003d\"$DEF_P\" ;;\n    1|f|F|fast|FAST) PRESET\u003d\"fast\" ;;\n    2|m|M|medium|MEDIUM) PRESET\u003d\"medium\" ;;\n    3|s|S|slow|SLOW) PRESET\u003d\"slow\" ;;\n    slower|SLOWER) PRESET\u003d\"slower\" ;;\n    4|v|V|vs|vslow|veryslow|VERYSLOW) PRESET\u003d\"veryslow\" ;;\n    *) echo \"Gecersiz secim, varsayilan ($DEF_P) secildi.\"; PRESET\u003d\"$DEF_P\" ;;\n  esac\n}\n\nask_audio_bitrate() {\n  local def_ab\u003d\"${1:-256}\"\n  read -p \"Ses (Kayipli) [Enter\u003d${def_ab}k, 64..768]: \" AB_OPT\n  AB_OPT\u003d\"${AB_OPT//k/}\"\n  AB_OPT\u003d\"${AB_OPT//K/}\"\n  if [ -z \"$AB_OPT\" ]; then\n    AB_VAL\u003d\"$def_ab\"\n  elif [[ \"$AB_OPT\" \u003d~ ^[0-9]+$ ]] \u0026\u0026 [ \"$AB_OPT\" -ge 32 ] \u0026\u0026 [ \"$AB_OPT\" -le 768 ]; then\n    AB_VAL\u003d\"$AB_OPT\"\n  else\n    echo \"Gecersiz deger, varsayilan ${def_ab}k kullaniliyor.\"\n    AB_VAL\u003d\"$def_ab\"\n  fi\n}\n\nrun_two_pass() {\n  TARGET_MB\u003d\"$1\"\n  if [ -z \"$DURATION\" ] || [ \"$DURATION\" \u003d \"N/A\" ]; then\n    read -p \"Sure okunamadi, saniye olarak girin: \" DURATION\n  fi\n  DURATION\u003d\"${DURATION/,/.}\"\n  update_dur_vars \"$DURATION\"\n\n  ask_vcodec\n  ask_fps_and_scale 30\n  ask_preset medium\n\n  if [ -z \"$ACODEC\" ]; then\n    ABPS\u003d0\n    AUDIO_ARGS\u003d\"-an\"\n  else\n    if [ \"$(awk -v m\u003d\"$TARGET_MB\" \u0027BEGIN { print (m \u003c\u003d 3) }\u0027)\" \u003d \"1\" ]; then\n      ask_audio_bitrate 64\n    else\n      ask_audio_bitrate 128\n    fi\n    ABPS\u003d\"$AB_VAL\"\n    AUDIO_ARGS\u003d\"-c:a aac -b:a ${ABPS}k\"\n  fi\n\n  VKBPS\u003d$(awk -v mb\u003d\"$TARGET_MB\" -v dur\u003d\"$DURATION\" -v ab\u003d\"$ABPS\" \u0027BEGIN {\n    if (dur \u003c\u003d 0) dur \u003d 1;\n    total_kb \u003d mb * 8000 * 0.96;\n    v \u003d int((total_kb / dur) - ab);\n    if (v \u003c 80) v \u003d 80;\n    print v;\n  }\u0027)\n\n  PASSDIR\u003d$(mktemp -d)\n  PASSLOG\u003d\"$PASSDIR/ff2pass\"\n  OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_${TARGET_MB}MB.mp4\"\n\n  if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n    PASS1_ARGS\u003d(-x265-params \"log-level\u003dwarning:pass\u003d1:stats\u003d${PASSLOG}.log\")\n    PASS2_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning:pass\u003d2:stats\u003d${PASSLOG}.log\")\n  else\n    PASS1_ARGS\u003d(-pass 1 -passlogfile \"$PASSLOG\")\n    PASS2_ARGS\u003d(-pass 2 -passlogfile \"$PASSLOG\")\n  fi\n\n  echo \"\"\n  echo \"Hedef: \u003c ${TARGET_MB} MB | ${CODEC_TAG}${BIT_TAG} ${VKBPS}k | Ses: ${ABPS}k | ${PRESET}\"\n  if [ \"$VKBPS\" -le 120 ] 2\u003e/dev/null; then\n    echo \"Not: Hedef/ses oranina gore video bitrati cok dusuk, boyut asabilir.\"\n  fi\n  echo \"--- 1/2 Gecis (Analiz ediliyor)... ---\"\n  if run_ff -y -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -b:v \"${VKBPS}k\" -pix_fmt \"$PIX_OUT\" \"${PASS1_ARGS[@]}\" -an -f null /dev/null; then\n    echo \"--- 2/2 Gecis (Kodlaniyor)... ---\"\n    run_ff -y -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -b:v \"${VKBPS}k\" -pix_fmt \"$PIX_OUT\" \"${PASS2_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n  else\n    STATUS\u003d1\n  fi\n}\n\nshow_kf_at() {\n  local mode\u003d\"$1\" label\u003d\"$2\" raw_t\u003d\"$3\" kfile\u003d\"$4\"\n  local target_s seek_s\n  target_s\u003d$(awk -v v\u003d\"$raw_t\" \u0027BEGIN {\n    n \u003d split(v, a, \":\");\n    if (n \u003d\u003d 1) printf \"%.3f\", a[1] + 0;\n    else if (n \u003d\u003d 2) printf \"%.3f\", a[1]*60 + a[2];\n    else if (n \u003d\u003d 3) printf \"%.3f\", a[1]*3600 + a[2]*60 + a[3];\n    else print -1;\n  }\u0027)\n  if [ \"$(awk -v t\u003d\"$target_s\" \u0027BEGIN { print (t \u003e\u003d 0) }\u0027)\" !\u003d \"1\" ]; then\n    return\n  fi\n  seek_s\u003d$(awk -v t\u003d\"$target_s\" \u0027BEGIN { s \u003d int(t) - 15; if (s \u003c 0) s \u003d 0; print s }\u0027)\n  ffprobe -v error -select_streams v:0 -read_intervals \"${seek_s}%+28\" -show_packets -show_entries packet\u003dpts_time,dts_time,flags -of compact\u003dp\u003d0 \"$INPUT\" 2\u003e/dev/null | \\\n  awk -F\u0027|\u0027 -v tgt\u003d\"$target_s\" -v lbl\u003d\"$label\" -v raw\u003d\"$raw_t\" -v md\u003d\"$mode\" -v kf\u003d\"$kfile\" \u0027\n    function fmt(x,   t10, h, m, s10) {\n      if (x \u003c 0) return \"Yok\";\n      t10 \u003d int(x * 10 + 0.5);\n      h \u003d int(t10 / 36000);\n      m \u003d int((t10 % 36000) / 600);\n      s10 \u003d t10 % 600;\n      if (h \u003e 0) return sprintf(\"%d:%02d:%02d.%d\", h, m, int(s10 / 10), s10 % 10);\n      return sprintf(\"%02d:%02d.%d\", m, int(s10 / 10), s10 % 10);\n    }\n    BEGIN { prev_kf \u003d -1; next_kf \u003d -1; near \u003d \"\"; }\n    /flags\u003dK/ {\n      t\u003d\"\"; d\u003d\"\"\n      for (i\u003d1; i\u003c\u003dNF; i++) {\n        if ($i ~ /^pts_time\u003d/) { sub(/^pts_time\u003d/, \"\", $i); t\u003d$i }\n        else if ($i ~ /^dts_time\u003d/) { sub(/^dts_time\u003d/, \"\", $i); d\u003d$i }\n      }\n      if (t \u003d\u003d \"N/A\" || t \u003d\u003d \"\") t \u003d d\n      if (t !\u003d \"N/A\" \u0026\u0026 t !\u003d \"\") {\n        val \u003d t + 0;\n        if (val \u003c\u003d tgt + 0.05) prev_kf \u003d val;\n        if (next_kf \u003c 0 \u0026\u0026 val \u003e\u003d tgt - 0.05) next_kf \u003d val;\n        if (val \u003e\u003d tgt - 12 \u0026\u0026 val \u003c\u003d tgt + 10) {\n          f \u003d fmt(val);\n          if (f !\u003d last_f) {\n            near \u003d (near \u003d\u003d \"\" ? f : near \" | \" f);\n            last_f \u003d f;\n          }\n        }\n        if (val \u003e tgt + 12) exit;\n      }\n    }\n    END {\n      if (md \u003d\u003d \"start\") {\n        printf \"%s (%s): *Onceki %s | Sonraki %s\\n\", lbl, raw, fmt(prev_kf), fmt(next_kf);\n        if (prev_kf \u003e\u003d 0) printf \"KF_RAW\u003d%.3f\\nKF_FMT\u003d%s\\n\", prev_kf + 0.005, fmt(prev_kf) \u003e kf;\n      } else {\n        printf \"%s (%s): Onceki %s | *Sonraki %s\\n\", lbl, raw, fmt(prev_kf), fmt(next_kf);\n        if (next_kf \u003e\u003d 0) printf \"KF_RAW\u003d%.3f\\nKF_FMT\u003d%s\\n\", next_kf, fmt(next_kf) \u003e kf;\n      }\n      if (near !\u003d \"\") printf \"  Civar: %s\\n\", near;\n    }\u0027\n}\n\nrun_trim() {\n  local kf_tmp KF_START KF_END KF_S_DISP KF_E_DISP\n  while true; do\n    echo \"\"\n    read -p \"Baslangic [Orn 00:01:00 veya 01:30 | Enter\u003dBas]: \" START_T\n    read -p \"Bitis     [Orn 00:02:32 veya 02:32 | Enter\u003dSon]: \" END_T\n    START_T\u003d\"${START_T// /}\"\n    END_T\u003d\"${END_T// /}\"\n    if [ -z \"$START_T\" ] \u0026\u0026 [ -z \"$END_T\" ]; then\n      echo \"Baslangic veya bitis girmediniz!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    if [ -n \"$START_T\" ] \u0026\u0026 [ -n \"$END_T\" ]; then\n      TIME_OK\u003d$(awk -v s\u003d\"$START_T\" -v e\u003d\"$END_T\" \u0027\n      function ts(v,   n, a) {\n        n \u003d split(v, a, \":\");\n        if (n \u003d\u003d 1) return a[1] + 0;\n        if (n \u003d\u003d 2) return a[1]*60 + a[2];\n        if (n \u003d\u003d 3) return a[1]*3600 + a[2]*60 + a[3];\n        return -1;\n      }\n      BEGIN { ss \u003d ts(s); ee \u003d ts(e); print (ss \u003e\u003d 0 \u0026\u0026 ee \u003e ss) ? 1 : 0 }\u0027)\n      if [ \"$TIME_OK\" !\u003d \"1\" ]; then\n        echo \"Hata: Bitis zamani baslangictan buyuk olmali!\"\n        continue\n      fi\n    fi\n\n    KF_START\u003d\"\"; KF_END\u003d\"\"\n    KF_S_DISP\u003d\"${START_T:-00:00}\"; KF_E_DISP\u003d\"${END_T:-Son}\"\n    kf_tmp\u003d$(mktemp)\n    echo \"\"\n    echo \"Keyframe konumlari kontrol ediliyor...\"\n    if [ -n \"$START_T\" ] \u0026\u0026 [ -n \"$VCODEC\" ]; then\n      : \u003e \"$kf_tmp\"\n      show_kf_at \"start\" \"Baslangic\" \"$START_T\" \"$kf_tmp\"\n      KF_RAW\u003d\"\"; KF_FMT\u003d\"\"\n      source \"$kf_tmp\"\n      [ -n \"$KF_RAW\" ] \u0026\u0026 KF_START\u003d\"$KF_RAW\" \u0026\u0026 KF_S_DISP\u003d\"$KF_FMT\"\n    fi\n    if [ -n \"$END_T\" ] \u0026\u0026 [ -n \"$VCODEC\" ]; then\n      : \u003e \"$kf_tmp\"\n      show_kf_at \"end\" \"Bitis    \" \"$END_T\" \"$kf_tmp\"\n      KF_RAW\u003d\"\"; KF_FMT\u003d\"\"\n      source \"$kf_tmp\"\n      [ -n \"$KF_RAW\" ] \u0026\u0026 KF_END\u003d\"$KF_RAW\" \u0026\u0026 KF_E_DISP\u003d\"$KF_FMT\"\n    fi\n    rm -f \"$kf_tmp\"\n\n    echo \"\"\n    read -p \"Enter\u003d*KF\u0027lerden kes | k\u003dYazdigim | r\u003dDegistir: \" RE_OPT\n    case \"$RE_OPT\" in\n      r|R) continue ;;\n      k|K) break ;;\n      *)\n        [ -n \"$KF_START\" ] \u0026\u0026 START_T\u003d\"$KF_START\"\n        [ -n \"$KF_END\" ] \u0026\u0026 END_T\u003d\"$KF_END\"\n        echo \"  Secilen aralik: ${KF_S_DISP} -\u003e ${KF_E_DISP}\"\n        break\n        ;;\n    esac\n  done\n\n  CLIP_DUR\u003d$(awk -v s\u003d\"$START_T\" -v e\u003d\"$END_T\" -v tot\u003d\"$DURATION\" \u0027\n  function ts(v,   n, a) {\n    if (v \u003d\u003d \"\") return -1;\n    n \u003d split(v, a, \":\");\n    if (n \u003d\u003d 1) return a[1] + 0;\n    if (n \u003d\u003d 2) return a[1]*60 + a[2];\n    if (n \u003d\u003d 3) return a[1]*3600 + a[2]*60 + a[3];\n    return -1;\n  }\n  BEGIN {\n    ss \u003d (s \u003d\u003d \"\") ? 0 : ts(s);\n    ee \u003d (e \u003d\u003d \"\") ? (tot + 0) : ts(e);\n    if (ss \u003e\u003d 0 \u0026\u0026 ee \u003e ss) printf \"%.2f\", (ee - ss);\n    else print \"0\";\n  }\u0027)\n  if [ \"$(awk -v c\u003d\"$CLIP_DUR\" \u0027BEGIN { print (c \u003e 0) }\u0027)\" \u003d \"1\" ]; then\n    update_dur_vars \"$CLIP_DUR\"\n  else\n    DUR_TENTHS\u003d0\n  fi\n\n  echo \"\"\n  echo \"  1) Tam Kayipsiz (Goruntu + Ses copy)\"\n  echo \"  2) Goruntu Kayipsiz + Ses AAC\"\n  echo \"  3) Goruntu Degistir (CRF) + Ses copy\"\n  echo \"  4) Goruntu + Ses Degistir (CRF + AAC)\"\n  read -p \"Kesim modu [1-4]: \" TM_OPT\n\n  SEEK_COPY\u003d()\n  SEEK_REENC\u003d()\n  if [ -n \"$START_T\" ]; then\n    SEEK_COPY\u003d(-noaccurate_seek -ss \"$START_T\")\n    SEEK_REENC\u003d(-ss \"$START_T\")\n  fi\n  if [ -n \"$END_T\" ]; then\n    SEEK_COPY+\u003d(-to \"$END_T\")\n    SEEK_REENC+\u003d(-to \"$END_T\")\n  fi\n\n  case \"$TM_OPT\" in\n    1)\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit.mp4\"\n      echo \"\"\n      echo \"--- Kayipsiz kesiliyor (-noaccurate_seek)... ---\"\n      run_ff -y \"${SEEK_COPY[@]}\" -i \"$INPUT\" -sn -dn -c copy -avoid_negative_ts make_zero -movflags +faststart \"$OUTFILE\"\n      STATUS\u003d$?\n      if [ \"$STATUS\" -ne 0 ]; then\n        echo \"Ipucu: Ses MP4\u0027e uymuyorsa 2. modu (Ses AAC) secin.\"\n      fi\n      ;;\n    2)\n      if [ -z \"$ACODEC\" ]; then\n        AUDIO_ARGS\u003d\"-an\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_Sessiz.mp4\"\n      else\n        ask_audio_bitrate 192\n        AUDIO_ARGS\u003d\"-c:a aac -b:a ${AB_VAL}k\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_AAC_${AB_VAL}k.mp4\"\n      fi\n      echo \"\"\n      echo \"--- Goruntu kayipsiz + Ses AAC kesiliyor... ---\"\n      run_ff -y \"${SEEK_COPY[@]}\" -i \"$INPUT\" -sn -dn -c:v copy $AUDIO_ARGS -avoid_negative_ts make_zero -movflags +faststart \"$OUTFILE\"\n      STATUS\u003d$?\n      ;;\n    3)\n      ask_vcodec\n      ask_fps_and_scale orig\n      ask_preset fast\n      if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n        CRF_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning\")\n      else\n        CRF_ARGS\u003d()\n      fi\n      if [ -z \"$ACODEC\" ]; then\n        AUDIO_ARGS\u003d\"-an\"\n      else\n        AUDIO_ARGS\u003d\"-c:a copy\"\n      fi\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4\"\n      echo \"\"\n      echo \"--- Kesilip ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET} | ses copy) yapiliyor... ---\"\n      run_ff -y \"${SEEK_REENC[@]}\" -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n      STATUS\u003d$?\n      ;;\n    4)\n      ask_vcodec\n      ask_fps_and_scale orig\n      ask_preset fast\n      if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n        CRF_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning\")\n      else\n        CRF_ARGS\u003d()\n      fi\n      if [ -z \"$ACODEC\" ]; then\n        AUDIO_ARGS\u003d\"-an\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_Sessiz.mp4\"\n      else\n        ask_audio_bitrate 192\n        AUDIO_ARGS\u003d\"-c:a aac -b:a ${AB_VAL}k\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k.mp4\"\n      fi\n      echo \"\"\n      echo \"--- Kesilip ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET}) + AAC yapiliyor... ---\"\n      run_ff -y \"${SEEK_REENC[@]}\" -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n      STATUS\u003d$?\n      ;;\n    *)\n      echo \"Gecersiz secim!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n      ;;\n  esac\n}\n\ncase \"$CHOICE\" in\n  1)\n    run_two_pass 20\n    ;;\n  2)\n    run_two_pass 100\n    ;;\n  3)\n    read -p \"Kac MB olsun? (Orn: 1, 8, 25): \" CUSTOM_MB\n    CUSTOM_MB\u003d\"${CUSTOM_MB/,/.}\"\n    if ! [[ \"$CUSTOM_MB\" \u003d~ ^[0-9]+(\\.[0-9]+)?$ ]] || [ \"$(awk -v m\u003d\"$CUSTOM_MB\" \u0027BEGIN { print (m \u003e 0) }\u0027)\" !\u003d \"1\" ]; then\n      echo \"Gecersiz boyut girdiniz!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    run_two_pass \"$CUSTOM_MB\"\n    ;;\n  4)\n    run_trim\n    ;;\n  5)\n    OUTFILE\u003d\"$OUTDIR/${BASENAME}_Remux.mp4\"\n    echo \"\"\n    echo \"--- Sadece kutu / format yenileniyor (-c copy)... ---\"\n    run_ff -y -i \"$INPUT\" -sn -dn -c copy -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    ;;\n  6)\n    if [ -z \"$ACODEC\" ]; then\n      echo \"Bu videoda ses izi bulunamadi!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    ask_audio_bitrate 256\n    OUTFILE\u003d\"$OUTDIR/${BASENAME}_AAC_${AB_VAL}k.mp4\"\n    echo \"\"\n    echo \"--- Goruntu kopyalanip ses ${AB_VAL}k AAC yapiliyor... ---\"\n    run_ff -y -i \"$INPUT\" -sn -dn -c:v copy -c:a aac -b:a \"${AB_VAL}k\" -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    ;;\n  7)\n    ask_vcodec\n    ask_preset fast\n    OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4\"\n    if [ -z \"$ACODEC\" ]; then\n      AUDIO_ARGS\u003d\"-an\"\n    else\n      AUDIO_ARGS\u003d\"-c:a copy\"\n    fi\n    if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n      CRF_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning\")\n    else\n      CRF_ARGS\u003d()\n    fi\n    echo \"\"\n    echo \"--- Goruntu ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET} | ses copy)... ---\"\n    run_ff -y -i \"$INPUT\" $EVEN_VF -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    if [ \"$STATUS\" -ne 0 ]; then\n      echo \"Ipucu: Ses kodegi MP4 kutusuna uymuyorsa 8. secenegi kullanin.\"\n    fi\n    ;;\n  8)\n    ask_vcodec\n    ask_preset fast\n    if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n      CRF_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning\")\n    else\n      CRF_ARGS\u003d()\n    fi\n    if [ -z \"$ACODEC\" ]; then\n      AUDIO_ARGS\u003d\"-an\"\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_Sessiz.mp4\"\n      echo \"\"\n      echo \"--- Videoda ses yok, ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET})... ---\"\n    else\n      ask_audio_bitrate 256\n      AUDIO_ARGS\u003d\"-c:a aac -b:a ${AB_VAL}k\"\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k.mp4\"\n      echo \"\"\n      echo \"--- ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET}) + Ses ${AB_VAL}k AAC... ---\"\n    fi\n    run_ff -y -i \"$INPUT\" $EVEN_VF -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    ;;\n  9)\n    if [ -z \"$ACODEC\" ]; then\n      echo \"Bu videoda ses izi bulunamadi!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    [ \"$ACODEC\" \u003d \"aac\" ] \u0026\u0026 AAC_ST\u003d\"Kayipsiz\" || AAC_ST\u003d\"Kayipli\"\n    [ \"$ACODEC\" \u003d \"mp3\" ] \u0026\u0026 MP3_ST\u003d\"Kayipsiz\" || MP3_ST\u003d\"Kayipli\"\n    echo \"\"\n    echo \"  Enter) Orijinal ($ACODEC) - Kayipsiz\"\n    echo \"  2) AAC (.m4a) - $AAC_ST\"\n    echo \"  3) MP3 (.mp3) - $MP3_ST\"\n    read -p \"Secim: \" AF_OPT\n    case \"$AF_OPT\" in\n      2|aac|AAC|m4a|M4A)\n        if [ \"$ACODEC\" \u003d \"aac\" ]; then\n          OUTFILE\u003d\"$OUTDIR/${BASENAME}_Ses.m4a\"\n          echo \"\"\n          echo \"--- Ses zaten AAC! %100 kayipsiz kopyalaniyor... ---\"\n          run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a copy \"$OUTFILE\"\n        else\n          ask_audio_bitrate 256\n          OUTFILE\u003d\"$OUTDIR/${BASENAME}_Ses_${AB_VAL}k.m4a\"\n          echo \"\"\n          echo \"--- Ses ${AB_VAL}k AAC olarak cikariliyor... ---\"\n          run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a aac -b:a \"${AB_VAL}k\" \"$OUTFILE\"\n        fi\n        STATUS\u003d$?\n        ;;\n      3|mp3|MP3)\n        if [ \"$ACODEC\" \u003d \"mp3\" ]; then\n          OUTFILE\u003d\"$OUTDIR/${BASENAME}_Ses.mp3\"\n          echo \"\"\n          echo \"--- Ses zaten MP3! %100 kayipsiz kopyalaniyor... ---\"\n          run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a copy \"$OUTFILE\"\n        else\n          ask_audio_bitrate 256\n          OUTFILE\u003d\"$OUTDIR/${BASENAME}_Ses_${AB_VAL}k.mp3\"\n          echo \"\"\n          echo \"--- Ses ${AB_VAL}k MP3 olarak cikariliyor... ---\"\n          run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a libmp3lame -b:a \"${AB_VAL}k\" \"$OUTFILE\"\n        fi\n        STATUS\u003d$?\n        ;;\n      *)\n        case \"$ACODEC\" in\n          aac) EXT\u003d\"m4a\" ;;\n          opus) EXT\u003d\"opus\" ;;\n          mp3) EXT\u003d\"mp3\" ;;\n          vorbis) EXT\u003d\"ogg\" ;;\n          flac) EXT\u003d\"flac\" ;;\n          ac3) EXT\u003d\"ac3\" ;;\n          eac3) EXT\u003d\"eac3\" ;;\n          alac) EXT\u003d\"m4a\" ;;\n          pcm_*) EXT\u003d\"wav\" ;;\n          *) EXT\u003d\"mka\" ;;\n        esac\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Orijinal.${EXT}\"\n        echo \"\"\n        echo \"--- Orijinal ses (%100 kayipsiz: $ACODEC -\u003e .$EXT)... ---\"\n        run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a copy \"$OUTFILE\"\n        STATUS\u003d$?\n        ;;\n    esac\n    ;;\n  10)\n    PASSDIR\u003d$(mktemp -d)\n    ln -s \"$INPUT\" \"$PASSDIR/$FILENAME\"\n    EXT_IN\u003d\"${FILENAME##*.}\"\n    if [ \"$EXT_IN\" !\u003d \"$FILENAME\" ] \u0026\u0026 [ -n \"$EXT_IN\" ] \u0026\u0026 [ \"$FILENAME\" !\u003d \"input.${EXT_IN}\" ]; then\n      ln -s \"$INPUT\" \"$PASSDIR/input.${EXT_IN}\"\n    fi\n    IN\u003d\"$INPUT\"\n    echo \"\"\n    echo \"Tam FFmpeg komutunu tek satirda yapistirin.\"\n    echo \"Girdi kisayollari: \\\"\\$IN\\\" | \\\"$FILENAME\\\" | input.${EXT_IN}\"\n    echo \"(cikti.mp4 yazarsaniz Movies/TermuxVideo\u0027ya gider)\"\n    echo \"\"\n    read -r -p \"Komut: \" RAW_CMD\n    if [ -z \"$RAW_CMD\" ]; then\n      echo \"Komut girilmedi, iptal edildi.\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    echo \"\"\n    ( cd \"$PASSDIR\" \u0026\u0026 eval \"$RAW_CMD\" )\n    STATUS\u003d$?\n    if [ \"$STATUS\" -eq 0 ]; then\n      rm -f \"$PASSDIR\"/*.log \"$PASSDIR\"/*.log.temp \"$PASSDIR\"/*.cutree \"$PASSDIR\"/*.mbtree \"$PASSDIR\"/ffmpeg2pass* 2\u003e/dev/null\n      for f in \"$PASSDIR\"/*; do\n        if [ -f \"$f\" ] \u0026\u0026 [ ! -L \"$f\" ]; then\n          mv -f \"$f\" \"$OUTDIR/\" \u0026\u0026 OUTFILE\u003d\"$OUTDIR/$(basename -- \"$f\")\"\n        fi\n      done\n    fi\n    ;;\n  *)\n    echo \"Gecersiz secim!\"\n    read -p \"Cikmak icin Enter...\"\n    exit 1\n    ;;\nesac\n\necho \"\"\nif [ \"${STATUS:-1}\" -eq 0 ]; then\n  if [ -n \"$OUTFILE\" ] \u0026\u0026 [ -f \"$OUTFILE\" ]; then\n    SIZE_HR\u003d$(du -h \"$OUTFILE\" | cut -f1)\n    echo \"BASARILI! Cikti Boyutu: $SIZE_HR\"\n    echo \"Konum: $OUTFILE\"\n    command -v termux-media-scan \u003e/dev/null \u0026\u0026 timeout 5 termux-media-scan \"$OUTFILE\" \u003e/dev/null 2\u003e\u00261\n  else\n    echo \"BASARILI! Komut tamamlandi.\"\n  fi\n  case \"$INPUT\" in\n    \"$HOME/downloads/\"*) rm -f \"$INPUT\" ;;\n  esac\nelse\n  echo \"Hata olustu!\"\nfi\n\necho \"\"\nread -p \"Kapatmak icin Enter\u0027a basin...\"\nEOF\nchmod +x ~/bin/termux-file-editor \u0026\u0026 bash -n ~/bin/termux-file-editor \u0026\u0026 echo \"KURULUM TAMAM!\"\n```\n\n---\n\n## 5. Kullanım ve Bakım Özeti\n\n* **Standart Kullanım:** Galeri veya dosya yöneticisi $\\rightarrow$ **Paylaş $\\rightarrow$ Termux $\\rightarrow$ `Edit`**.\n* **5–15 GB Dev Filmlerde Sıfır Kopyalama ile Çalıştırma:** Paylaş menüsü dosyayı geçici olarak `~/downloads/`\u0027a kopyalar. Boş alan kısıtlıysa doğrudan Termux içinden diskteki dosya yoluyla çalıştırılabilir (orijinal dosyaya kesinlikle dokunulmaz):\n  ```bash\n  ~/bin/termux-file-editor \"/sdcard/Download/Film.mkv\"\n  ```\n* **İsteğe Bağlı Manuel Önbellek Temizliği:**\n  ```bash\n  du -sh ~/downloads \"$TMPDIR\" \u0026\u0026 rm -rf ~/downloads/* \"$TMPDIR\"/tmp.* \u0026\u0026 pkg clean\n  ```",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 13802,
+      "parts": [{
+        "text": "# Termux FFmpeg Medya İşleme Aracı (`termux-file-editor`) — Teknik"
+      }, {
+        "text": " Dokümantasyon\n\nAndroid üzerinde emülasyon katmanı olmadan doğrudan yerel **ARM64 (`aarch64`)"
+      }, {
+        "text": "** işlemci gücüyle çalışan; paylaşım menüsü (**Paylaş $\\rightarrow$ Termux $\\rightarrow$ Edit**) üzerinden tetiklenen"
+      }, {
+        "text": ", 10 modlu, kayıpsız kesim, akıllı keyframe tarama, gerçek 2-Pass sıkıştırma ve "
+      }, {
+        "text": "8-bit/10-bit H.264/H.265 dönüştürme betiğidir.\n\n---\n\n## "
+      }, {
+        "text": "1. Kurulum ve Ön Hazırlık\n\n1. **Termux Kurulumu:** Play Store yerine **Git"
+      }, {
+        "text": "Hub Releases (`termux/termux-app` — `arm64-v8a`)** veya **F-Droid** sür"
+      }, {
+        "text": "ümü kurulmalıdır.\n2. **Paketler ve Depolama İzni:**\n   ```bash\n   pkg update \u0026\u0026"
+      }, {
+        "text": " pkg upgrade -y \u0026\u0026 pkg install ffmpeg gawk -y\n   termux-setup-storage\n   ```\n"
+      }, {
+        "text": "3. **Pil Kısıtlaması:** Uzun 4K/2-Pass işlemlerde sistemin arka planda işlem"
+      }, {
+        "text": "ci hızını kısmaması veya süreci sonlandırmaması için **Ayarlar $\\rightarrow$ Uygulamalar $\\rightarrow$ Termux $\\rightarrow"
+      }, {
+        "text": "$ Pil Tasarrufu $\\rightarrow$ Kısıtlama yok** seçilmelidir.\n4. **Ç"
+      }, {
+        "text": "ıktı Klasörü:** İşlenen tüm medya dosyaları otomatik olarak `/sdcard/Movies/TermuxVideo` klasörüne"
+      }, {
+        "text": " kaydedilir.\n\n---\n\n## 2. Menü Seçenekleri (1–10)\n\n| No | Seçenek Ad"
+      }, {
+        "text": "ı | İşlev ve Teknik Davranış | Çıktı Dosya Adı |\n| :---: | :--- | :--- | :--- |\n"
+      }, {
+        "text": "| **1** | **Discord (`\u003c 20 MB \\| 2-Pass`)** | Dosyayı"
+      }, {
+        "text": " kesinlikle 20 MB sınırının altında kalacak şekilde gerçek **2-Pass ABR** ile sıkıştırır. | "
+      }, {
+        "text": "`*_H264_20MB.mp4` |\n| **2** | **WhatsApp (`\u003c 100 MB"
+      }, {
+        "text": " \\| 2-Pass`)** | WhatsApp\u0027ın 100 MB önizlemeli sohbet sınırının hemen altına gerçek"
+      }, {
+        "text": " **2-Pass ABR** ile sıkıştırır. | `*_H264_100MB."
+      }, {
+        "text": "mp4` |\n| **3** | **Ozel Boyut (`MB Gir \\| 2-Pass`)"
+      }, {
+        "text": "** | Kullanıcının girdiği herhangi bir MB hedefine (ör. `1`, `8`, `25`)"
+      }, {
+        "text": " 2-Pass ABR uygular. 3 MB ve altı hedeflerde varsayılan sesi otomatik `64k` öner"
+      }, {
+        "text": "ir. | `*_\u003cMB\u003eMB.mp4` |\n| **4** | **Videoyu Kes (`Zaman Sec`)"
+      }, {
+        "text": "** | Girilen başlangıç/bitiş civarındaki gerçek keyframe\u0027leri tarar; varsayılan olarak **`*"
+      }, {
+        "text": "Onceki` $\\rightarrow$ `*Sonraki`** keyframe aralığından 4 farklı modda kesim yapar. | `*_Kesit"
+      }, {
+        "text": "*.mp4` |\n| **5** | **Sadece Format Degistir (`-c copy`)** |"
+      }, {
+        "text": " Görüntü ve sese dokunmadan (%100 kayıpsız) MP4 kabını yeniler, başlığı ("
+      }, {
+        "text": "`moov`) dosya başına alır (`+faststart`). | `*_Remux.mp4` |\n| **6** |"
+      }, {
+        "text": " **Sadece Ses Degistir (`Goruntu copy\\|AAC`)** | Görüntüyü %100 kayıpsız k"
+      }, {
+        "text": "opyalar (`-c:v copy`), yalnızca uyumsuz sesi (Opus, DTS, EAC3 vb.) seçilen bitrate\u0027te"
+      }, {
+        "text": " **AAC**\u0027ye çevirir. | `*_AAC_\u003ck\u003ek.mp4` |\n| **7** | **Sadece"
+      }, {
+        "text": " Goruntu Degistir (`CRF16/20\\|Ses copy`)** | Görüntüyü `H"
+      }, {
+        "text": ".264 (CRF 16)` veya `H.265 (CRF 20)` olarak yüksek"
+      }, {
+        "text": " kalitede kodlar; ses izini %100 kayıpsız kopyalar (`-c:a copy"
+      }, {
+        "text": "`). | `*_H264_CRF16.mp4` |\n| **8** | **Goruntu + Ses Deg"
+      }, {
+        "text": "istir (`CRF16/20 + AAC`)** | Hem görüntüyü (`CRF 16/20`,"
+      }, {
+        "text": " 8/10-bit, Preset) hem sesi (seçilen bitrate\u0027te AAC) birlikte dönüştürür. | `*_CRF"
+      }, {
+        "text": "16_AAC_\u003ck\u003ek.mp4` |\n| **9** | **Sesi Ayir"
+      }, {
+        "text": " (`Orijinal / AAC / MP3`)** | Videodan yalnızca sesi ayırır. Kaynak kodeğe"
+      }, {
+        "text": " göre her seçeneğin yanında dinamik **`Kayipsiz`** / **`Kayipli`** durumunu gösterir; kaynak zaten AAC/"
+      }, {
+        "text": "MP3 ise yeniden kodlamadan kopyalar. | `*_Orijinal.\u003cext\u003e` / `*_Ses*."
+      }, {
+        "text": "m4a\\|mp3` |\n| **10** | **Ozel FFmpeg Komutu (`Tam Komut`)**"
+      }, {
+        "text": " | Girdi veya çıktıya müdahale etmeden doğrudan yapıştırılan tam `ffmpeg ...` komutlarını (çoklu"
+      }, {
+        "text": " `\u0026\u0026` komutları dahil) geçici dizinde çalıştırır, oluşan çıktıyı otomatik `Movies/TermuxVideo`\u0027"
+      }, {
+        "text": "ya taşır. | Komutta belirtilen ad |\n\n### 4. Seçenek (`Videoyu Kes`) Alt Modları\n1. **Tam"
+      }, {
+        "text": " Kayipsiz (`Goruntu + Ses copy`):** `-noaccurate_seek` + `-c copy` + `-avoid_negative_ts"
+      }, {
+        "text": " make_zero`.\n2. **Goruntu Kayipsiz + Ses AAC:** `-noaccurate_seek` + `-c:v copy` +"
+      }, {
+        "text": " `-c:a aac` (5.1/DTS/EAC3 filmleri TriMP4/mobil uy"
+      }, {
+        "text": "umlu kesmek için ideal).\n3. **Goruntu Degistir (`CRF`) + Ses copy:** Hassas kes"
+      }, {
+        "text": "im (`accurate seek`), kodek/bit/FPS/çözünürlük/preset seçimi, ses kayıpsız"
+      }, {
+        "text": ".\n4. **Goruntu + Ses Degistir (`CRF + AAC`):** Hassas kesim, tam video"
+      }, {
+        "text": " + ses yeniden kodlama.\n\n---\n\n## 3. Teknik İnce Ayarlar ve Mimari Detaylar\n\n### 3.1"
+      }, {
+        "text": ". Gerçek 2-Pass Hedef Boyut Hesabı\n* **Formül:**\n  $$\\text{"
+      }, {
+        "text": "Video Bitrate (kbps)} \u003d \\left\\lfloor \\frac{\\text{Hedef MB} \\times 80"
+      }, {
+        "text": "00 \\times 0.96}{\\text{Süre (sn)}} - \\text{Ses Bitrate"
+      }, {
+        "text": " (kbps)} \\right\\rfloor$$\n* `8000 * 0.96` katsay"
+      }, {
+        "text": "ısı, hem `1000`-tabanlı (Android/WhatsApp) hem `1024`-tab"
+      }, {
+        "text": "anlı (MiB/Discord) sınırların altında kalmak ve MP4 kapsayıcı başlık payını (*mux"
+      }, {
+        "text": "ing overhead*) karşılamak için tek seferlik %4 güvenlik payı uygular.\n* `libx264` için `-pass 1"
+      }, {
+        "text": " / -pass 2 -passlogfile` kullanılır; `libx265` ise `-pass` bayrağını destek"
+      }, {
+        "text": "lemediğinden `-x265-params \"log-level\u003dwarning:pass\u003d1|2:stats\u003d...\"` ile çalışt"
+      }, {
+        "text": "ırılır.\n* Tüm 2-pass log (`.log`, `.cutree`, `.mbtree`) dosyaları `mktemp"
+      }, {
+        "text": " -d` ile açılan geçici klasörde tutulur ve çıkışta silinir.\n\n### 3.2"
+      }, {
+        "text": ". Kodek, CRF Eşdeğerliği ve 8-Bit / 10-Bit Yönetimi\n* **Gör"
+      }, {
+        "text": "sel Kalite Eşleştirmesi:** `libx264` için **`CRF 16`**, `libx265"
+      }, {
+        "text": "` için buna denk arşiv kalitesi olan **`CRF 20`** kullanılır. Tüm `libx265` çıktıları Apple"
+      }, {
+        "text": "/Android/TriMP4 tam uyumluluğu için **`-tag:v hvc1`** ile etiketlenir.\n* **"
+      }, {
+        "text": "Dinamik 10-Bit Denetimi:** Betik, açılışta `ffprobe` ile girdi bit derinliğini ("
+      }, {
+        "text": "`8b`, `10b`, `12b`) üst bilgi satırında gösterir. Dönüştürme sırasında `ffmpeg -"
+      }, {
+        "text": "h encoder\u003d...` üzerinden `yuv420p10le` desteğini anlık kontrol eder:\n  "
+      }, {
+        "text": "* **H.265:** Kaynak `10bit`/`12bit` ise varsayılan olarak **`Enter \u003d 10"
+      }, {
+        "text": "bit (Koru)`**, kaynak `8bit` ise **`Enter \u003d 8bit`** önerir.\n  * **H.26"
+      }, {
+        "text": "4:** Mobil donanım çözücüler, TriMP4, WhatsApp ve Discord H.264 10-bit (`High"
+      }, {
+        "text": " 10`) açmadığı için varsayılan daima **`Enter \u003d 8bit (Uyumlu)`** tutul"
+      }, {
+        "text": "ur; `libx264` derlemesi destekliyorsa `10` seçeneği `(Sadece"
+      }, {
+        "text": " VLC)` uyarısıyla sunulur.\n* **Preset Seçenekleri:** `1\u003dfast`, `2\u003dmedium`,"
+      }, {
+        "text": " `3\u003dslow`, `4\u003dveryslow` (ek olarak elle yazılırsa `slower`). 2-"
+      }, {
+        "text": "Pass modlarında varsayılan `medium`, CRF modlarında `fast`\u0027tir.\n* **Ses Bitrate Ar"
+      }, {
+        "text": "alığı:** `32k` – `768k` desteklenir (5.1 surround filmler"
+      }, {
+        "text": " için `320k`/`384k`+ dahil). Kullanıcı `192k` veya `192` yaz"
+      }, {
+        "text": "sa da `k`/`K` otomatik normalize edilir.\n\n### 3.3. Akıllı Çözünürlük ve En-Boy Or"
+      }, {
+        "text": "anı Ölçekleme\n* Desteklenen hedefler: **`2160p`**, **`1440p"
+      }, {
+        "text": "`**, **`1080p`**, **`720p`**, **`480p`** (s"
+      }, {
+        "text": "ondaki `p`/`P` otomatik temizlenir; boş bırakılırsa `Enter \u003d Orijinal`).\n*"
+      }, {
+        "text": " **3 Yönlü Oran Koruması:**\n  1. **Dikey videolar (`HEIGHT \u003e WIDTH`, ör."
+      }, {
+        "text": " 9:16 Reels, 4:5 Instagram):** `scale\u003d\u003chedef\u003e:-2`\n  2. **Gen"
+      }, {
+        "text": "iş sinema filmleri (`WIDTH * 9 \u003e HEIGHT * 16`, ör. `3840x160"
+      }, {
+        "text": "0` 2.39:1):** Uzun kenarı `3840/2560/192"
+      }, {
+        "text": "0/1280/854` sınırına oturtarak `scale\u003d\u003cL_MAX\u003e:-2` (ör"
+      }, {
+        "text": ". `1920x800`, genişliğin `2592`\u0027ye taşmasını önler).\n  3"
+      }, {
+        "text": ". **Standart `16:9` / `4:3` / `1:1`:** "
+      }, {
+        "text": "`scale\u003d-2:\u003chedef\u003e`\n* **Tek Piksel Koruması (`EVEN_VF`):** Orijinal çözünür"
+      }, {
+        "text": "lük korunurken kaynak en/boyu tek sayıysa (`1079x1920` gibi ekran"
+      }, {
+        "text": " kayıtları) `yuv420p` / `yuv420p10le` çökmesini önlemek için otomatik `scale"
+      }, {
+        "text": "\u003dtrunc(iw/2)*2:trunc(ih/2)*2` devreye girer.\n\n### 3.4"
+      }, {
+        "text": ". Keyframe Tarayıcı ve Garantili Kayıpsız Kesim\n* `show_kf_at()`,"
+      }, {
+        "text": " videoyu çözmeden (`-show_packets`, `-read_intervals \"${seek_s}%+28\"`) yalnızca girilen zamanların"
+      }, {
+        "text": " ±12 sn çevresindeki paket başlıklarını milisaniyeler içinde tarar (`pts_time`,"
+      }, {
+        "text": " yoksa `dts_time`).\n* Başlangıçta **`*Onceki`**, bitişte **`*Sonraki`** keyframe"
+      }, {
+        "text": " işaretlenir.\n  * **`Enter`** basıldığında başlangıç **`prev_kf + 0.005`** ("
+      }, {
+        "text": "1 mikrosaniyelik yuvarlama sapmasıyla önceki GOP\u0027a sıçramayı engelleyen 5 ms tampon) ve bit"
+      }, {
+        "text": "iş **`next_kf`** ham PTS değerine kilitlenir.\n  * **`k`** kullanıcının yazdığı ham"
+      }, {
+        "text": " süreleri korur; **`r`** zamanları tekrar girmeye döner.\n* Bitiş $\\le$ Baş"
+      }, {
+        "text": "langıç girilmesi engellenir; ilerleme yüzdesi (`%`) tüm film yerine yalnızca kesilecek parçanın süresine (`CLIP_DUR`)"
+      }, {
+        "text": " göre hesaplanır.\n\n### 3.5. Canlı İlerleme, Bellek/Depolama Hijyeni ve Ak"
+      }, {
+        "text": "ış Koruması\n* **Temiz İlerleme Satırı (`run_ff`):** `-nostdin -hide_"
+      }, {
+        "text": "banner -loglevel warning -nostats -progress pipe:1` ile FFmpeg\u0027in satır taşıran `elapsed\u003d` çıktısı yerine"
+      }, {
+        "text": " tek satırda `Sure: 24.6 / 61.4 sn (%40) | 1."
+      }, {
+        "text": "34x | 4820kb` (tam sayı KB, noktalı MB\u0027ye dönmeden"
+      }, {
+        "text": ") gösterilir. Çıkış kodu `${PIPESTATUS[0]}` ile gerçek FFmpeg durumundan alınır.\n* **Akış K"
+      }, {
+        "text": "oruması:** Tüm video/ses işlemlerinde `-sn -dn` ile MP4 muxer\u0027ını bozan altyazı/"
+      }, {
+        "text": "veri akışları elenir; `-movflags +faststart` ile hızlı açılış ve TriMP4 uyumluluğu sağlanır"
+      }, {
+        "text": ".\n* **Sıfır Şişme (Çöp Temizliği):**\n  * Başlangıçta `$"
+      }, {
+        "text": "HOME/downloads/` içindeki eski yetim paylaşım kopyaları (mevcut `$INPUT` hariç)"
+      }, {
+        "text": " temizlenir.\n  * `trap cleanup EXIT INT TERM` ile normal çıkışta, `Ctrl+C` kes"
+      }, {
+        "text": "intisinde veya hata durumunda: `$PASSDIR` silinir, işlem başarısızsa yarıda kalmış bozuk `$"
+      }, {
+        "text": "OUTFILE` silinir, `$INPUT` yalnızca `$HOME/downloads/` içindeyse silinir (disk"
+      }, {
+        "text": "teki orijinal dosyalara asla dokunulmaz) ve `termux-wake-unlock` çağ"
+      }, {
+        "text": "rılır.\n  * `export LC_ALL\u003dC` ile ondalık virgül/nokta uyum"
+      }, {
+        "text": "suzlukları tamamen önlenir.\n\n### 3.6. Galeri ve \"Son Dosyalar\""
+      }, {
+        "text": " Görünürlüğü (MediaStore)\nTermux Linux API üzerinden yazdığı için Android MediaStore veritabanını anında güncellemek amacıyla iki"
+      }, {
+        "text": " yöntem desteklenir:\n* **MacroDroid + Shizuku (%0 Ekstra Şarj):**\n  * *"
+      }, {
+        "text": "Tetikleyici:* `Bildirim -\u003e Bildirim Temizlendi` $\\rightarrow$ Uygulama: **Termux** $\\rightarrow$ Metin"
+      }, {
+        "text": ": **Herhangi Biri** *(**\"Devam eden/kalıcı bildirimleri yoksay\"** tiki **"
+      }, {
+        "text": "kaldırılmalı**)*.\n  * *Eylem:* `Kabuk Betiği` (**Shizuku** modu) $\\rightarrow"
+      }, {
+        "text": "$\n    ```sh\n    content call --method scan_volume --uri content://media --arg external_primary\n    "
+      }, {
+        "text": "```\n* **Termux:API (Alternatif):** Ana Termux ile aynı kaynaktan `Termux:"
+      }, {
+        "text": "API` APK\u0027sı + `pkg install termux-api -y` kurulursa betik sonundaki `timeout 5 termux"
+      }, {
+        "text": "-media-scan \"$OUTFILE\"` satırı dosyayı otomatik tarar.\n\n---\n\n## 4. Betiğin En Son Çalış"
+      }, {
+        "text": "an Tam Kodu (`~/bin/termux-file-editor`)\n\nAşağıdaki bloğun tamamı Term"
+      }, {
+        "text": "ux\u0027a tek seferde yapıştırılıp **Enter**\u0027a basıldığında betik kurulur, çalıştırılabilir yapılır"
+      }, {
+        "text": " ve `bash -n` ile sözdizimi doğrulanır:\n\n```bash\nmkdir -p ~/bin\ncat \u003c\u003c \u0027"
+      }, {
+        "text": "EOF\u0027 \u003e ~/bin/termux-file-editor\n#!/data/data/com.termux/files"
+      }, {
+        "text": "/usr/bin/bash\nexport LC_ALL\u003dC\n\nINPUT\u003d\"$1\"\nif [ -z \"$"
+      }, {
+        "text": "INPUT\" ] || [ ! -f \"$INPUT\" ]; then\n  echo \"Hata: Dosya bulunam"
+      }, {
+        "text": "adi!\"\n  read -p \"Cikmak icin Enter\u0027a basin...\"\n  exit 1\nfi"
+      }, {
+        "text": "\n\nPASSDIR\u003d\"\"\nOUTFILE\u003d\"\"\nSTATUS\u003d1\nfor old in \"$HOME/downloads/\"*; do\n"
+      }, {
+        "text": "  [ -e \"$old\" ] \u0026\u0026 [ \"$old\" !\u003d \"$INPUT\" ] \u0026\u0026 rm -rf \"$old"
+      }, {
+        "text": "\"\ndone\ncleanup() {\n  trap - EXIT INT TERM\n  [ -n \"$PASSDIR\" ]"
+      }, {
+        "text": " \u0026\u0026 [ -d \"$PASSDIR\" ] \u0026\u0026 rm -rf \"$PASSDIR\"\n  [ \"$STATUS\" -"
+      }, {
+        "text": "ne 0 ] \u0026\u0026 [ -n \"$OUTFILE\" ] \u0026\u0026 [ -f \"$OUTFILE\" ] \u0026\u0026 ["
+      }, {
+        "text": " \"$OUTFILE\" !\u003d \"$INPUT\" ] \u0026\u0026 rm -f \"$OUTFILE\"\n  case \"$INPUT\" in"
+      }, {
+        "text": "\n    \"$HOME/downloads/\"*) rm -f \"$INPUT\" ;;\n  esac\n  command -v termux-wake-unlock \u003e/dev"
+      }, {
+        "text": "/null \u0026\u0026 termux-wake-unlock\n}\ncommand -v termux-wake-lock \u003e/dev/"
+      }, {
+        "text": "null \u0026\u0026 termux-wake-lock\ntrap cleanup EXIT INT TERM\n\nOUTDIR\u003d\"/sdcard/Movies/TermuxVideo\"\nmkdir -p \"$OUTDIR"
+      }, {
+        "text": "\"\n\nFILENAME\u003d\"$(basename -- \"$INPUT\")\"\nBASENAME\u003d\"${FILENAME%.*}\"\n\nBYTES\u003d$(wc -c \u003c"
+      }, {
+        "text": " \"$INPUT\" 2\u003e/dev/null || echo 0)\nSIZE_MB\u003d$(awk -v b\u003d\"$"
+      }, {
+        "text": "BYTES\" \u0027BEGIN { if (b+0 \u003e 0) printf \"%.1fmb\", b / 1"
+      }, {
+        "text": "048576; else print \"?\" }\u0027)\n\nDURATION\u003d$(ffprobe -v error -show_entries"
+      }, {
+        "text": " format\u003dduration -of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nVC"
+      }, {
+        "text": "ODEC\u003d$(ffprobe -v error -select_streams v:0 -show_entries stream\u003dcodec_name -of default\u003dn"
+      }, {
+        "text": "oprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nWIDTH\u003d$(ff"
+      }, {
+        "text": "probe -v error -select_streams v:0 -show_entries stream\u003dwidth -of default\u003dnoprint"
+      }, {
+        "text": "_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nHEIGHT\u003d$(ffprobe"
+      }, {
+        "text": " -v error -select_streams v:0 -show_entries stream\u003dheight -of default\u003dnoprint_"
+      }, {
+        "text": "wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nPIX_FMT\u003d$(ff"
+      }, {
+        "text": "probe -v error -select_streams v:0 -show_entries stream\u003dpix_fmt -of default\u003d"
+      }, {
+        "text": "noprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)\nACOD"
+      }, {
+        "text": "EC\u003d$(ffprobe -v error -select_streams a:0 -show_entries stream\u003dcodec_name -"
+      }, {
+        "text": "of default\u003dnoprint_wrappers\u003d1:nokey\u003d1 \"$INPUT\" | head -n 1)"
+      }, {
+        "text": "\n\nBIT_IN\u003d\"8bit\"\nBIT_SHORT\u003d\"\"\nif [[ \"$PIX_FMT\" \u003d\u003d *1"
+      }, {
+        "text": "0* ]]; then\n  BIT_IN\u003d\"10bit\"; BIT_SHORT\u003d\" 10b\"\n"
+      }, {
+        "text": "elif [[ \"$PIX_FMT\" \u003d\u003d *12* ]]; then\n  BIT_IN\u003d\"12bit\";"
+      }, {
+        "text": " BIT_SHORT\u003d\" 12b\"\nelif [ -n \"$PIX_FMT\" ]; then\n  BIT"
+      }, {
+        "text": "_IN\u003d\"8bit\"; BIT_SHORT\u003d\" 8b\"\nfi\n\nupdate_dur_vars() {"
+      }, {
+        "text": "\n  local d\u003d\"${1:-$DURATION}\"\n  DUR_SHOW\u003d$(awk -v d\u003d\"$d\" \u0027"
+      }, {
+        "text": "BEGIN { if (d+0 \u003e 0) printf \"%.1f\", d; else print \"?\" }\u0027)\n"
+      }, {
+        "text": "  DUR_TENTHS\u003d$(awk -v d\u003d\"$d\" \u0027BEGIN { t \u003d int(d * "
+      }, {
+        "text": "10); if (t \u003c 0) t \u003d 0; print t }\u0027)\n}\nupdate_"
+      }, {
+        "text": "dur_vars \"$DURATION\"\n\nEVEN_VF\u003d\"\"\nif [[ \"$WIDTH\" \u003d~ ^[0-9]+$"
+      }, {
+        "text": " ]] \u0026\u0026 [[ \"$HEIGHT\" \u003d~ ^[0-9]+$ ]]; then\n  if [ $((WIDTH % 2"
+      }, {
+        "text": ")) -ne 0 ] || [ $((HEIGHT % 2)) -ne 0 ]; then\n    EVEN_VF\u003d\"-vf scale\u003dtrunc("
+      }, {
+        "text": "iw/2)*2:trunc(ih/2)*2\"\n  fi\nfi\n\nclear\necho \""
+      }, {
+        "text": "\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\necho \"  Dosya : $FILENAME\"\necho \"  Video : ${VCODEC:-"
+      }, {
+        "text": "?}${BIT_SHORT} | ${WIDTH:-?}x${HEIGHT:-?} | ${DUR_SHOW} sn | ${SIZE_MB}\"\necho"
+      }, {
+        "text": " \"  Ses   : ${ACODEC:-Yok}\"\necho \"\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\necho \"  1)"
+      }, {
+        "text": " Discord (\u003c 20 MB | 2-Pass)\"\necho \"  2) WhatsApp (\u003c 100 MB | 2-Pass"
+      }, {
+        "text": ")\"\necho \"  3) Ozel Boyut (MB Gir | 2-Pass)\"\necho \"  "
+      }, {
+        "text": "4) Videoyu Kes (Zaman Sec)\"\necho \"  5) Sadece Format Degistir (-c"
+      }, {
+        "text": " copy)\"\necho \"  6) Sadece Ses Degistir (Goruntu copy|AAC)\"\necho \""
+      }, {
+        "text": "  7) Sadece Goruntu Degistir (CRF16/20|Ses copy)\"\necho \""
+      }, {
+        "text": "  8) Goruntu + Ses Degistir (CRF16/20 + AAC)\"\necho \"  "
+      }, {
+        "text": "9) Sesi Ayir (Orijinal / AAC / MP3)\"\necho \" 10) O"
+      }, {
+        "text": "zel FFmpeg Komutu (Tam Komut)\"\necho \"\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\u003d\"\nread -p \"Seciminiz"
+      }, {
+        "text": " [1-10]: \" CHOICE\n\nrun_ff() {\n  local cur_t\u003d0 sec\u003d"
+      }, {
+        "text": "0 dec\u003d0 pct\u003d0 kb\u003d0 spd\u003d\"...\" sz\u003d\"\"\n  ffmpeg -nostdin -hide_banner"
+      }, {
+        "text": " -loglevel warning -nostats -progress pipe:1 \"$@\" | \\\n  while IFS\u003d\u0027\u003d\u0027 read -r k v; do\n    case"
+      }, {
+        "text": " \"$k\" in\n      out_time_us)\n        if [[ \"$v\" \u003d~ ^[0-9]+$ ]]; then\n          cur"
+      }, {
+        "text": "_t\u003d$((v / 100000))\n          sec\u003d$((cur_t / 10"
+      }, {
+        "text": "))\n          dec\u003d$((cur_t % 10))\n        fi\n        ;;\n      total_size"
+      }, {
+        "text": ")\n        if [[ \"$v\" \u003d~ ^[0-9]+$ ]]; then\n          kb\u003d$((v / "
+      }, {
+        "text": "1024))\n        fi\n        ;;\n      speed)\n        spd\u003d\"${v// /}\"\n"
+      }, {
+        "text": "        ;;\n      progress)\n        if [ \"$kb\" -gt 0 ] 2\u003e/dev/null"
+      }, {
+        "text": "; then\n          sz\u003d\" | ${kb}kb\"\n        else\n          sz\u003d\"\"\n        fi\n        "
+      }, {
+        "text": "if [ \"$DUR_TENTHS\" -gt 0 ] 2\u003e/dev/null; then\n          "
+      }, {
+        "text": "pct\u003d$((cur_t * 100 / DUR_TENTHS))\n          [ \"$pct\" -"
+      }, {
+        "text": "gt 100 ] \u0026\u0026 pct\u003d100\n          printf \"\\r  Sure: %d.%d"
+      }, {
+        "text": " / %s sn (%%%d) | %s%s   \" \"$sec\" \"$dec\" \"$DUR_"
+      }, {
+        "text": "SHOW\" \"$pct\" \"$spd\" \"$sz\"\n        else\n          printf \"\\r  Sure: %d.%d sn | %s%"
+      }, {
+        "text": "s   \" \"$sec\" \"$dec\" \"$spd\" \"$sz\"\n        fi\n        ;;\n    esac"
+      }, {
+        "text": "\n  done\n  local rc\u003d\"${PIPESTATUS[0]}\"\n  echo \"\"\n  return \"$rc\"\n}\n\nask_v"
+      }, {
+        "text": "codec() {\n  read -p \"Kodek [Enter\u003dH.264, 2\u003dH"
+      }, {
+        "text": ".265 (HEVC)]: \" C_OPT\n  case \"$C_OPT\" in\n    2"
+      }, {
+        "text": "|265|h265|H265|hevc|HEVC)\n      VC"
+      }, {
+        "text": "ODEC_OUT\u003d\"libx265\"\n      CRF_VAL\u003d\"20\"\n      CODEC"
+      }, {
+        "text": "_TAG\u003d\"H265\"\n      ;;\n    *)\n      VCODEC_OUT\u003d\"libx"
+      }, {
+        "text": "264\"\n      CRF_VAL\u003d\"16\"\n      CODEC_TAG\u003d\"H264"
+      }, {
+        "text": "\"\n      ;;\n  esac\n\n  PIX_OUT\u003d\"yuv420p\"\n  BIT_TAG"
+      }, {
+        "text": "\u003d\"\"\n  if ffmpeg -hide_banner -h \"encoder\u003d${VCODEC_OUT}\" 2\u003e/dev"
+      }, {
+        "text": "/null | grep -q \"yuv420p10le\"; then\n    if [ \"$VCOD"
+      }, {
+        "text": "EC_OUT\" \u003d \"libx265\" ]; then\n      if [ \"$BIT_IN\" \u003d"
+      }, {
+        "text": " \"10bit\" ] || [ \"$BIT_IN\" \u003d \"12bit\" ]; then\n        read"
+      }, {
+        "text": " -p \"Renk Bit [Enter\u003d10bit (Koru), 8\u003d8bit]: \" B"
+      }, {
+        "text": "_OPT\n        case \"$B_OPT\" in\n          8|1) PIX_OUT\u003d\"yuv42"
+      }, {
+        "text": "0p\" ;;\n          *) PIX_OUT\u003d\"yuv420p10le\"; BIT_TAG\u003d\"_"
+      }, {
+        "text": "10bit\" ;;\n        esac\n      else\n        read -p \"Renk Bit [Enter\u003d8"
+      }, {
+        "text": "bit, 10\u003d10bit]: \" B_OPT\n        case \"$B_OPT\" in\n"
+      }, {
+        "text": "          10|2) PIX_OUT\u003d\"yuv420p10le\"; BIT_TAG\u003d\"_1"
+      }, {
+        "text": "0bit\" ;;\n          *) PIX_OUT\u003d\"yuv420p\" ;;\n        esac\n      fi"
+      }, {
+        "text": "\n    else\n      read -p \"H.264 Bit [Enter\u003d8bit (Uyumlu"
+      }, {
+        "text": "), 10\u003d10bit (Sadece VLC)]: \" B_OPT\n      case \"$B_OPT"
+      }, {
+        "text": "\" in\n        10|2) PIX_OUT\u003d\"yuv420p10le\"; BIT_"
+      }, {
+        "text": "TAG\u003d\"_10bit\" ;;\n        *) PIX_OUT\u003d\"yuv420p\" ;;\n      esac"
+      }, {
+        "text": "\n    fi\n  fi\n}\n\nask_fps_and_scale() {\n  local def_fps"
+      }, {
+        "text": "\u003d\"${1:-30}\"\n  if [ \"$def_fps\" \u003d \"orig\" ]; then\n    read"
+      }, {
+        "text": " -p \"FPS [Enter\u003dOrijinal FPS, 1\u003d30 FPS]: \" FPS_OPT\n"
+      }, {
+        "text": "    if [ \"$FPS_OPT\" \u003d \"1\" ] || [ \"$FPS_OPT\" \u003d \"30"
+      }, {
+        "text": "\" ]; then\n      FPS_ARG\u003d\"-r 30\"\n    else\n      FPS_ARG\u003d\"\"\n"
+      }, {
+        "text": "    fi\n  else\n    read -p \"FPS [Enter\u003d30 FPS, 2\u003dOrijinal FPS]: \" FPS_OPT"
+      }, {
+        "text": "\n    if [ \"$FPS_OPT\" \u003d \"2\" ]; then\n      FPS_ARG\u003d\"\"\n    else"
+      }, {
+        "text": "\n      FPS_ARG\u003d\"-r 30\"\n    fi\n  fi\n\n  echo \"  Coz"
+      }, {
+        "text": "unurluklar: 2160p | 1440p | 1080p | 7"
+      }, {
+        "text": "20p | 480p\"\n  read -p \"Cozunurluk [Enter\u003d"
+      }, {
+        "text": "Orijinal]: \" RES_OPT\n  RES_OPT\u003d\"${RES_OPT// /}\"\n  RES_"
+      }, {
+        "text": "OPT\u003d\"${RES_OPT%p}\"\n  RES_OPT\u003d\"${RES_OPT%P}\"\n  VF_ARG\u003d\"$EVEN_VF\""
+      }, {
+        "text": "\n  case \"$RES_OPT\" in\n    2160|1440|108"
+      }, {
+        "text": "0|720|480)\n      case \"$RES_OPT\" in\n        216"
+      }, {
+        "text": "0) L_MAX\u003d3840 ;;\n        1440) L_MAX\u003d25"
+      }, {
+        "text": "60 ;;\n        1080) L_MAX\u003d1920 ;;\n        720"
+      }, {
+        "text": ")  L_MAX\u003d1280 ;;\n        480)  L_MAX\u003d854 ;;\n      esac\n      "
+      }, {
+        "text": "if [[ \"$WIDTH\" \u003d~ ^[0-9]+$ ]] \u0026\u0026 [[ \"$HEIGHT\" \u003d~ ^[0-9]+"
+      }, {
+        "text": "$ ]]; then\n        if [ \"$HEIGHT\" -gt \"$WIDTH\" ]; then\n          VF_ARG\u003d\"-vf scale\u003d${RES_OPT}:"
+      }, {
+        "text": "-2\"\n        elif [ $((WIDTH * 9)) -gt $((HEIGHT * 16)) ]; then\n          VF_ARG"
+      }, {
+        "text": "\u003d\"-vf scale\u003d${L_MAX}:-2\"\n        else\n          VF_ARG\u003d\"-vf scale\u003d-2"
+      }, {
+        "text": ":${RES_OPT}\"\n        fi\n      else\n        VF_ARG\u003d\"-vf scale\u003d-2:${RES_"
+      }, {
+        "text": "OPT}\"\n      fi\n      ;;\n  esac\n}\n\nask_preset() {\n  DEF_P"
+      }, {
+        "text": "\u003d\"${1:-medium}\"\n  if [ \"$DEF_P\" \u003d \"fast\" ]; then\n    read -"
+      }, {
+        "text": "p \"Preset [Enter\u003dfast,2\u003dmed,3\u003dslow,4\u003dvslow]: \" P_OPT\n  else\n"
+      }, {
+        "text": "    read -p \"Preset [1\u003dfast,Enter\u003dmed,3\u003dslow,4\u003dvslow]:"
+      }, {
+        "text": " \" P_OPT\n  fi\n  case \"$P_OPT\" in\n    \"\") PRESET\u003d\"$DEF"
+      }, {
+        "text": "_P\" ;;\n    1|f|F|fast|FAST) PRESET\u003d\"fast\" ;;\n    2|m|M|medium"
+      }, {
+        "text": "|MEDIUM) PRESET\u003d\"medium\" ;;\n    3|s|S|slow|SLOW) PRESET\u003d\""
+      }, {
+        "text": "slow\" ;;\n    slower|SLOWER) PRESET\u003d\"slower\" ;;\n    4|v|"
+      }, {
+        "text": "V|vs|vslow|veryslow|VERYSLOW) PRESET\u003d\"veryslow\" ;;\n    "
+      }, {
+        "text": "*) echo \"Gecersiz secim, varsayilan ($DEF_P) secildi.\"; PRESET\u003d\"$DEF"
+      }, {
+        "text": "_P\" ;;\n  esac\n}\n\nask_audio_bitrate() {\n  local def_ab\u003d\"${"
+      }, {
+        "text": "1:-256}\"\n  read -p \"Ses (Kayipli) [Enter\u003d${def_ab"
+      }, {
+        "text": "}k, 64..768]: \" AB_OPT\n  AB_OPT\u003d\"${AB_OPT"
+      }, {
+        "text": "//k/}\"\n  AB_OPT\u003d\"${AB_OPT//K/}\"\n  if [ -z \"$AB_OPT\" ]; then"
+      }, {
+        "text": "\n    AB_VAL\u003d\"$def_ab\"\n  elif [[ \"$AB_OPT\" \u003d~ ^[0-9"
+      }, {
+        "text": "]+$ ]] \u0026\u0026 [ \"$AB_OPT\" -ge 32 ] \u0026\u0026 [ \"$AB_OPT\" -"
+      }, {
+        "text": "le 768 ]; then\n    AB_VAL\u003d\"$AB_OPT\"\n  else\n    echo \"Gecersiz deger, vars"
+      }, {
+        "text": "ayilan ${def_ab}k kullaniliyor.\"\n    AB_VAL\u003d\"$def_ab\"\n  fi"
+      }, {
+        "text": "\n}\n\nrun_two_pass() {\n  TARGET_MB\u003d\"$1\"\n  if [ -z"
+      }, {
+        "text": " \"$DURATION\" ] || [ \"$DURATION\" \u003d \"N/A\" ]; then\n    read -p \"Sure"
+      }, {
+        "text": " okunamadi, saniye olarak girin: \" DURATION\n  fi\n  DURATION\u003d\"${DURATION/,/.}\"\n  update_dur_"
+      }, {
+        "text": "vars \"$DURATION\"\n\n  ask_vcodec\n  ask_fps_and_scale 30\n  ask_preset medium\n\n  if"
+      }, {
+        "text": " [ -z \"$ACODEC\" ]; then\n    ABPS\u003d0\n    AUDIO_ARGS\u003d\"-an\""
+      }, {
+        "text": "\n  else\n    if [ \"$(awk -v m\u003d\"$TARGET_MB\" \u0027BEGIN { print (m \u003c\u003d 3) }\u0027)\""
+      }, {
+        "text": " \u003d \"1\" ]; then\n      ask_audio_bitrate 64\n    else\n      ask_audio"
+      }, {
+        "text": "_bitrate 128\n    fi\n    ABPS\u003d\"$AB_VAL\"\n    AUDIO_ARGS\u003d\"-"
+      }, {
+        "text": "c:a aac -b:a ${ABPS}k\"\n  fi\n\n  VKBPS\u003d$("
+      }, {
+        "text": "awk -v mb\u003d\"$TARGET_MB\" -v dur\u003d\"$DURATION\" -v ab\u003d\"$ABPS\" \u0027BEGIN"
+      }, {
+        "text": " {\n    if (dur \u003c\u003d 0) dur \u003d 1;\n    total_kb \u003d mb * "
+      }, {
+        "text": "8000 * 0.96;\n    v \u003d int((total_kb / dur) -"
+      }, {
+        "text": " ab);\n    if (v \u003c 80) v \u003d 80;\n    print v;\n"
+      }, {
+        "text": "  }\u0027)\n\n  PASSDIR\u003d$(mktemp -d)\n  PASSLOG\u003d\"$PASSDIR/ff2pass\""
+      }, {
+        "text": "\n  OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${BIT_TAG}_${TARGET_MB}MB"
+      }, {
+        "text": ".mp4\"\n\n  if [ \"$VCODEC_OUT\" \u003d \"libx265\" ];"
+      }, {
+        "text": " then\n    PASS1_ARGS\u003d(-x265-params \"log-level\u003dwarning:pass\u003d1"
+      }, {
+        "text": ":stats\u003d${PASSLOG}.log\")\n    PASS2_ARGS\u003d(-tag:v hvc1 -x2"
+      }, {
+        "text": "65-params \"log-level\u003dwarning:pass\u003d2:stats\u003d${PASSLOG}.log\")\n  "
+      }, {
+        "text": "else\n    PASS1_ARGS\u003d(-pass 1 -passlogfile \"$PASSLOG\")\n    PASS2_ARGS"
+      }, {
+        "text": "\u003d(-pass 2 -passlogfile \"$PASSLOG\")\n  fi\n\n  echo \"\"\n  echo \"Hedef"
+      }, {
+        "text": ": \u003c ${TARGET_MB} MB | ${CODEC_TAG}${BIT_TAG} ${VKBPS}"
+      }, {
+        "text": "k | Ses: ${ABPS}k | ${PRESET}\"\n  if [ \"$VKBPS\" -"
+      }, {
+        "text": "le 120 ] 2\u003e/dev/null; then\n    echo \"Not: Hedef/ses"
+      }, {
+        "text": " oranina gore video bitrati cok dusuk, boyut asabilir.\"\n  fi\n  echo \"--- 1/"
+      }, {
+        "text": "2 Gecis (Analiz ediliyor)... ---\"\n  if run_ff -y -i \"$INPUT"
+      }, {
+        "text": "\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\""
+      }, {
+        "text": " -b:v \"${VKBPS}k\" -pix_fmt \"$PIX_OUT\" \"${PASS1_"
+      }, {
+        "text": "ARGS[@]}\" -an -f null /dev/null; then\n    echo \"--- 2/2 Gecis (Kodlaniyor)... ---\""
+      }, {
+        "text": "\n    run_ff -y -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn"
+      }, {
+        "text": " -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -b:v \"${VKB"
+      }, {
+        "text": "PS}k\" -pix_fmt \"$PIX_OUT\" \"${PASS2_ARGS[@]}\" $AUDIO_ARGS -"
+      }, {
+        "text": "movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n  else\n    STATUS\u003d1\n  "
+      }, {
+        "text": "fi\n}\n\nshow_kf_at() {\n  local mode\u003d\"$1\" label\u003d\"$2\" raw_t\u003d\"$3\" kfile\u003d\"$"
+      }, {
+        "text": "4\"\n  local target_s seek_s\n  target_s\u003d$(awk -v v\u003d\"$raw_"
+      }, {
+        "text": "t\" \u0027BEGIN {\n    n \u003d split(v, a, \":\");\n    if (n \u003d\u003d 1) printf \"%.3f"
+      }, {
+        "text": "\", a[1] + 0;\n    else if (n \u003d\u003d 2) printf \"%.3f\","
+      }, {
+        "text": " a[1]*60 + a[2];\n    else if (n \u003d\u003d 3) printf \"%.3"
+      }, {
+        "text": "f\", a[1]*3600 + a[2]*60 + a[3];\n    "
+      }, {
+        "text": "else print -1;\n  }\u0027)\n  if [ \"$(awk -v t\u003d\"$target_s\" \u0027BEGIN"
+      }, {
+        "text": " { print (t \u003e\u003d 0) }\u0027)\" !\u003d \"1\" ]; then\n    return\n  fi\n  "
+      }, {
+        "text": "seek_s\u003d$(awk -v t\u003d\"$target_s\" \u0027BEGIN { s \u003d int(t) - "
+      }, {
+        "text": "15; if (s \u003c 0) s \u003d 0; print s }\u0027)\n  ffprobe -"
+      }, {
+        "text": "v error -select_streams v:0 -read_intervals \"${seek_s}%+28\" -show"
+      }, {
+        "text": "_packets -show_entries packet\u003dpts_time,dts_time,flags -of compact\u003dp\u003d0 \"$INPUT\" 2\u003e/"
+      }, {
+        "text": "dev/null | \\\n  awk -F\u0027|\u0027 -v tgt\u003d\"$target_s\" -v lbl\u003d\"$"
+      }, {
+        "text": "label\" -v raw\u003d\"$raw_t\" -v md\u003d\"$mode\" -v kf\u003d\"$kfile\" \u0027"
+      }, {
+        "text": "\n    function fmt(x,   t10, h, m, s10) {\n      if"
+      }, {
+        "text": " (x \u003c 0) return \"Yok\";\n      t10 \u003d int(x * 10 +"
+      }, {
+        "text": " 0.5);\n      h \u003d int(t10 / 36000);\n      "
+      }, {
+        "text": "m \u003d int((t10 % 36000) / 600);\n      s"
+      }, {
+        "text": "10 \u003d t10 % 600;\n      if (h \u003e 0) return sprintf(\"%"
+      }, {
+        "text": "d:%02d:%02d.%d\", h, m, int(s10 / 1"
+      }, {
+        "text": "0), s10 % 10);\n      return sprintf(\"%02d:%02d.%d"
+      }, {
+        "text": "\", m, int(s10 / 10), s10 % 10);\n    }"
+      }, {
+        "text": "\n    BEGIN { prev_kf \u003d -1; next_kf \u003d -1; near \u003d \"\"; }\n    "
+      }, {
+        "text": "/flags\u003dK/ {\n      t\u003d\"\"; d\u003d\"\"\n      for (i\u003d1; i\u003c\u003dNF;"
+      }, {
+        "text": " i++) {\n        if ($i ~ /^pts_time\u003d/) { sub(/^pts_time\u003d/, \"\","
+      }, {
+        "text": " $i); t\u003d$i }\n        else if ($i ~ /^dts_time\u003d/) { sub(/^dts"
+      }, {
+        "text": "_time\u003d/, \"\", $i); d\u003d$i }\n      }\n      if (t \u003d\u003d \"N/"
+      }, {
+        "text": "A\" || t \u003d\u003d \"\") t \u003d d\n      if (t !\u003d \"N/A\" \u0026\u0026 t !\u003d \"\")"
+      }, {
+        "text": " {\n        val \u003d t + 0;\n        if (val \u003c\u003d tgt + 0.05)"
+      }, {
+        "text": " prev_kf \u003d val;\n        if (next_kf \u003c 0 \u0026\u0026 val \u003e\u003d tgt - 0."
+      }, {
+        "text": "05) next_kf \u003d val;\n        if (val \u003e\u003d tgt - 12 \u0026\u0026 val \u003c\u003d tgt"
+      }, {
+        "text": " + 10) {\n          f \u003d fmt(val);\n          if (f !\u003d last_f)"
+      }, {
+        "text": " {\n            near \u003d (near \u003d\u003d \"\" ? f : near \" | \" f);\n            last_f \u003d"
+      }, {
+        "text": " f;\n          }\n        }\n        if (val \u003e tgt + 12) exit;\n      "
+      }, {
+        "text": "}\n    }\n    END {\n      if (md \u003d\u003d \"start\") {\n        printf \"%s (%"
+      }, {
+        "text": "s): *Onceki %s | Sonraki %s\\n\", lbl, raw, fmt(prev_"
+      }, {
+        "text": "kf), fmt(next_kf);\n        if (prev_kf \u003e\u003d 0) printf \"KF_RAW"
+      }, {
+        "text": "\u003d%.3f\\nKF_FMT\u003d%s\\n\", prev_kf + 0.005,"
+      }, {
+        "text": " fmt(prev_kf) \u003e kf;\n      } else {\n        printf \"%s (%s): Onceki %s | *Sonr"
+      }, {
+        "text": "aki %s\\n\", lbl, raw, fmt(prev_kf), fmt(next_kf);\n        if (next_kf \u003e\u003d"
+      }, {
+        "text": " 0) printf \"KF_RAW\u003d%.3f\\nKF_FMT\u003d%s\\n\", next_kf"
+      }, {
+        "text": ", fmt(next_kf) \u003e kf;\n      }\n      if (near !\u003d \"\") printf \"  Civar: %s\\n\","
+      }, {
+        "text": " near;\n    }\u0027\n}\n\nrun_trim() {\n  local kf_tmp KF_START KF_"
+      }, {
+        "text": "END KF_S_DISP KF_E_DISP\n  while true; do\n    echo \"\"\n    read"
+      }, {
+        "text": " -p \"Baslangic [Orn 00:01:00 veya 01:30"
+      }, {
+        "text": " | Enter\u003dBas]: \" START_T\n    read -p \"Bitis     [Orn 00:"
+      }, {
+        "text": "02:32 veya 02:32 | Enter\u003dSon]: \" END_T\n    START"
+      }, {
+        "text": "_T\u003d\"${START_T// /}\"\n    END_T\u003d\"${END_T// /}\"\n    if [ -z \"$START_T"
+      }, {
+        "text": "\" ] \u0026\u0026 [ -z \"$END_T\" ]; then\n      echo \"Baslangic veya bitis gir"
+      }, {
+        "text": "mediniz!\"\n      read -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n"
+      }, {
+        "text": "    if [ -n \"$START_T\" ] \u0026\u0026 [ -n \"$END_T\" ]; then\n      "
+      }, {
+        "text": "TIME_OK\u003d$(awk -v s\u003d\"$START_T\" -v e\u003d\"$END_T\" \u0027\n      "
+      }, {
+        "text": "function ts(v,   n, a) {\n        n \u003d split(v, a, \":\");\n"
+      }, {
+        "text": "        if (n \u003d\u003d 1) return a[1] + 0;\n        if (n \u003d\u003d "
+      }, {
+        "text": "2) return a[1]*60 + a[2];\n        if (n \u003d\u003d 3) return"
+      }, {
+        "text": " a[1]*3600 + a[2]*60 + a[3];\n        return -"
+      }, {
+        "text": "1;\n      }\n      BEGIN { ss \u003d ts(s); ee \u003d ts(e); print (ss \u003e\u003d 0 \u0026\u0026 ee \u003e ss"
+      }, {
+        "text": ") ? 1 : 0 }\u0027)\n      if [ \"$TIME_OK\" !\u003d \"1\" ]; then"
+      }, {
+        "text": "\n        echo \"Hata: Bitis zamani baslangictan buyuk olmali!\"\n        continue\n"
+      }, {
+        "text": "      fi\n    fi\n\n    KF_START\u003d\"\"; KF_END\u003d\"\"\n    KF_S_DISP\u003d\"${START_T:-00:0"
+      }, {
+        "text": "0}\"; KF_E_DISP\u003d\"${END_T:-Son}\"\n    kf_tmp\u003d$(mktemp)\n"
+      }, {
+        "text": "    echo \"\"\n    echo \"Keyframe konumlari kontrol ediliyor...\"\n    if [ -n \"$START_T\" ] \u0026\u0026 [ -n"
+      }, {
+        "text": " \"$VCODEC\" ]; then\n      : \u003e \"$kf_tmp\"\n      show_kf_at \""
+      }, {
+        "text": "start\" \"Baslangic\" \"$START_T\" \"$kf_tmp\"\n      KF_RAW\u003d\"\"; KF"
+      }, {
+        "text": "_FMT\u003d\"\"\n      source \"$kf_tmp\"\n      [ -n \"$KF_RAW\" ] \u0026\u0026 KF"
+      }, {
+        "text": "_START\u003d\"$KF_RAW\" \u0026\u0026 KF_S_DISP\u003d\"$KF_FMT\"\n    fi\n    if"
+      }, {
+        "text": " [ -n \"$END_T\" ] \u0026\u0026 [ -n \"$VCODEC\" ]; then\n      : \u003e"
+      }, {
+        "text": " \"$kf_tmp\"\n      show_kf_at \"end\" \"Bitis    \" \"$END_T"
+      }, {
+        "text": "\" \"$kf_tmp\"\n      KF_RAW\u003d\"\"; KF_FMT\u003d\"\"\n      source \"$kf_tmp\""
+      }, {
+        "text": "\n      [ -n \"$KF_RAW\" ] \u0026\u0026 KF_END\u003d\"$KF_RAW\" \u0026\u0026 KF_E"
+      }, {
+        "text": "_DISP\u003d\"$KF_FMT\"\n    fi\n    rm -f \"$kf_tmp\"\n\n    echo \"\""
+      }, {
+        "text": "\n    read -p \"Enter\u003d*KF\u0027lerden kes | k\u003dYazdigim | r\u003dDegistir"
+      }, {
+        "text": ": \" RE_OPT\n    case \"$RE_OPT\" in\n      r|R) continue ;;\n      "
+      }, {
+        "text": "k|K) break ;;\n      *)\n        [ -n \"$KF_START\" ] \u0026\u0026 START_T"
+      }, {
+        "text": "\u003d\"$KF_START\"\n        [ -n \"$KF_END\" ] \u0026\u0026 END_T\u003d\"$KF_END"
+      }, {
+        "text": "\"\n        echo \"  Secilen aralik: ${KF_S_DISP} -\u003e ${KF_E_"
+      }, {
+        "text": "DISP}\"\n        break\n        ;;\n    esac\n  done\n\n  CLIP_DUR\u003d$(awk -v s"
+      }, {
+        "text": "\u003d\"$START_T\" -v e\u003d\"$END_T\" -v tot\u003d\"$DURATION\" \u0027\n  function ts"
+      }, {
+        "text": "(v,   n, a) {\n    if (v \u003d\u003d \"\") return -1;\n    n \u003d"
+      }, {
+        "text": " split(v, a, \":\");\n    if (n \u003d\u003d 1) return a[1] + "
+      }, {
+        "text": "0;\n    if (n \u003d\u003d 2) return a[1]*60 + a[2];\n"
+      }, {
+        "text": "    if (n \u003d\u003d 3) return a[1]*3600 + a[2]*60"
+      }, {
+        "text": " + a[3];\n    return -1;\n  }\n  BEGIN {\n    ss \u003d (s"
+      }, {
+        "text": " \u003d\u003d \"\") ? 0 : ts(s);\n    ee \u003d (e \u003d\u003d \"\") ? (tot + 0"
+      }, {
+        "text": ") : ts(e);\n    if (ss \u003e\u003d 0 \u0026\u0026 ee \u003e ss) printf \"%.2f\","
+      }, {
+        "text": " (ee - ss);\n    else print \"0\";\n  }\u0027)\n  if [ \"$(awk -v c"
+      }, {
+        "text": "\u003d\"$CLIP_DUR\" \u0027BEGIN { print (c \u003e 0) }\u0027)\" \u003d \"1\" ]; then\n"
+      }, {
+        "text": "    update_dur_vars \"$CLIP_DUR\"\n  else\n    DUR_TENTHS\u003d0\n"
+      }, {
+        "text": "  fi\n\n  echo \"\"\n  echo \"  1) Tam Kayipsiz (Goruntu + Ses copy)\""
+      }, {
+        "text": "\n  echo \"  2) Goruntu Kayipsiz + Ses AAC\"\n  echo \"  3) Gor"
+      }, {
+        "text": "untu Degistir (CRF) + Ses copy\"\n  echo \"  4) Goruntu + Ses Degist"
+      }, {
+        "text": "ir (CRF + AAC)\"\n  read -p \"Kesim modu [1-4]: \" TM_OPT"
+      }, {
+        "text": "\n\n  SEEK_COPY\u003d()\n  SEEK_REENC\u003d()\n  if [ -n \"$START_T\""
+      }, {
+        "text": " ]; then\n    SEEK_COPY\u003d(-noaccurate_seek -ss \"$START_T\")\n    SEEK_RE"
+      }, {
+        "text": "ENC\u003d(-ss \"$START_T\")\n  fi\n  if [ -n \"$END_T\" ]; then"
+      }, {
+        "text": "\n    SEEK_COPY+\u003d(-to \"$END_T\")\n    SEEK_REENC+\u003d(-to \"$END"
+      }, {
+        "text": "_T\")\n  fi\n\n  case \"$TM_OPT\" in\n    1)\n      OUTFILE\u003d\"$"
+      }, {
+        "text": "OUTDIR/${BASENAME}_Kesit.mp4\"\n      echo \"\"\n      echo \"--- Kayipsiz kesiliyor"
+      }, {
+        "text": " (-noaccurate_seek)... ---\"\n      run_ff -y \"${SEEK_COPY[@]}\" -i \"$INPUT"
+      }, {
+        "text": "\" -sn -dn -c copy -avoid_negative_ts make_zero -movflags +faststart \"$"
+      }, {
+        "text": "OUTFILE\"\n      STATUS\u003d$?\n      if [ \"$STATUS\" -ne 0 ]; then\n        echo"
+      }, {
+        "text": " \"Ipucu: Ses MP4\u0027e uymuyorsa 2. modu (Ses AAC) secin.\""
+      }, {
+        "text": "\n      fi\n      ;;\n    2)\n      if [ -z \"$ACODEC\" ]; then\n"
+      }, {
+        "text": "        AUDIO_ARGS\u003d\"-an\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit_Sessiz.mp"
+      }, {
+        "text": "4\"\n      else\n        ask_audio_bitrate 192\n        AUDIO_ARGS\u003d\"-c:"
+      }, {
+        "text": "a aac -b:a ${AB_VAL}k\"\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_"
+      }, {
+        "text": "Kesit_AAC_${AB_VAL}k.mp4\"\n      fi\n      echo \"\"\n      echo \"--- Goruntu kayipsiz +"
+      }, {
+        "text": " Ses AAC kesiliyor... ---\"\n      run_ff -y \"${SEEK_COPY[@]}\" -i \"$INPUT\""
+      }, {
+        "text": " -sn -dn -c:v copy $AUDIO_ARGS -avoid_negative_ts make_zero -mov"
+      }, {
+        "text": "flags +faststart \"$OUTFILE\"\n      STATUS\u003d$?\n      ;;\n    3)\n      ask_"
+      }, {
+        "text": "vcodec\n      ask_fps_and_scale orig\n      ask_preset fast\n      if [ \"$VCODEC_OUT\" \u003d \""
+      }, {
+        "text": "libx265\" ]; then\n        CRF_ARGS\u003d(-tag:v hvc1 -x26"
+      }, {
+        "text": "5-params \"log-level\u003dwarning\")\n      else\n        CRF_ARGS\u003d()\n      fi\n      "
+      }, {
+        "text": "if [ -z \"$ACODEC\" ]; then\n        AUDIO_ARGS\u003d\"-an\"\n      else\n        "
+      }, {
+        "text": "AUDIO_ARGS\u003d\"-c:a copy\"\n      fi\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_Kesit"
+      }, {
+        "text": "_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4\"\n      echo \"\"\n"
+      }, {
+        "text": "      echo \"--- Kesilip ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET} | ses copy) yap"
+      }, {
+        "text": "iliyor... ---\"\n      run_ff -y \"${SEEK_REENC[@]}\" -i \"$INPUT\" $FPS"
+      }, {
+        "text": "_ARG $VF_ARG -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF"
+      }, {
+        "text": "_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE"
+      }, {
+        "text": "\"\n      STATUS\u003d$?\n      ;;\n    4)\n      ask_vcodec\n      ask_fps"
+      }, {
+        "text": "_and_scale orig\n      ask_preset fast\n      if [ \"$VCODEC_OUT\" \u003d \""
+      }, {
+        "text": "libx265\" ]; then\n        CRF_ARGS\u003d(-tag:v hvc1 -x26"
+      }, {
+        "text": "5-params \"log-level\u003dwarning\")\n      else\n        CRF_ARGS\u003d()\n      fi\n      "
+      }, {
+        "text": "if [ -z \"$ACODEC\" ]; then\n        AUDIO_ARGS\u003d\"-an\"\n        OUTFILE\u003d\"$"
+      }, {
+        "text": "OUTDIR/${BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_Sess"
+      }, {
+        "text": "iz.mp4\"\n      else\n        ask_audio_bitrate 192\n        AUDIO_ARGS"
+      }, {
+        "text": "\u003d\"-c:a aac -b:a ${AB_VAL}k\"\n        OUTFILE\u003d\"$OUTDIR/${"
+      }, {
+        "text": "BASENAME}_Kesit_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k.mp"
+      }, {
+        "text": "4\"\n      fi\n      echo \"\"\n      echo \"--- Kesilip ${CODEC_TAG}${BIT_"
+      }, {
+        "text": "TAG} CRF ${CRF_VAL} (${PRESET}) + AAC yapiliyor... ---\"\n      run_ff"
+      }, {
+        "text": " -y \"${SEEK_REENC[@]}\" -i \"$INPUT\" $FPS_ARG $VF_ARG -sn -dn -c:v \"$"
+      }, {
+        "text": "VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$"
+      }, {
+        "text": "PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n"
+      }, {
+        "text": "      STATUS\u003d$?\n      ;;\n    *)\n      echo \"Gecersiz secim!\"\n      read -"
+      }, {
+        "text": "p \"Cikmak icin Enter...\"\n      exit 1\n      ;;\n  esac\n}\n\ncase \"$"
+      }, {
+        "text": "CHOICE\" in\n  1)\n    run_two_pass 20\n    ;;\n  2)"
+      }, {
+        "text": "\n    run_two_pass 100\n    ;;\n  3)\n    read -p \""
+      }, {
+        "text": "Kac MB olsun? (Orn: 1, 8, 25): \" CUSTOM_MB\n    CUSTOM_MB\u003d\"${CUSTOM_MB"
+      }, {
+        "text": "/,/.}\"\n    if ! [[ \"$CUSTOM_MB\" \u003d~ ^[0-9]+(\\.[0-9"
+      }, {
+        "text": "]+)?$ ]] || [ \"$(awk -v m\u003d\"$CUSTOM_MB\" \u0027BEGIN { print (m \u003e "
+      }, {
+        "text": "0) }\u0027)\" !\u003d \"1\" ]; then\n      echo \"Gecersiz boyut girdiniz!\"\n      read"
+      }, {
+        "text": " -p \"Cikmak icin Enter...\"\n      exit 1\n    fi\n    run_two_pass"
+      }, {
+        "text": " \"$CUSTOM_MB\"\n    ;;\n  4)\n    run_trim\n    ;;\n  5)"
+      }, {
+        "text": "\n    OUTFILE\u003d\"$OUTDIR/${BASENAME}_Remux.mp4\"\n    echo \"\"\n    echo \"---"
+      }, {
+        "text": " Sadece kutu / format yenileniyor (-c copy)... ---\"\n    run_ff -y -i"
+      }, {
+        "text": " \"$INPUT\" -sn -dn -c copy -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$"
+      }, {
+        "text": "?\n    ;;\n  6)\n    if [ -z \"$ACODEC\" ]; then\n      echo"
+      }, {
+        "text": " \"Bu videoda ses izi bulunamadi!\"\n      read -p \"Cikmak icin Enter...\"\n"
+      }, {
+        "text": "      exit 1\n    fi\n    ask_audio_bitrate 256\n    OUTFILE\u003d\"$OUTDIR"
+      }, {
+        "text": "/${BASENAME}_AAC_${AB_VAL}k.mp4\"\n    echo \"\"\n    echo \"--- Gor"
+      }, {
+        "text": "untu kopyalanip ses ${AB_VAL}k AAC yapiliyor... ---\"\n    run_ff -"
+      }, {
+        "text": "y -i \"$INPUT\" -sn -dn -c:v copy -c:a aac -b:"
+      }, {
+        "text": "a \"${AB_VAL}k\" -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n"
+      }, {
+        "text": "    ;;\n  7)\n    ask_vcodec\n    ask_preset fast\n    OUTFILE\u003d\"$OUTDIR"
+      }, {
+        "text": "/${BASENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}.mp4\"\n    "
+      }, {
+        "text": "if [ -z \"$ACODEC\" ]; then\n      AUDIO_ARGS\u003d\"-an\"\n    else\n      "
+      }, {
+        "text": "AUDIO_ARGS\u003d\"-c:a copy\"\n    fi\n    if [ \"$VCODEC_OUT\" \u003d"
+      }, {
+        "text": " \"libx265\" ]; then\n      CRF_ARGS\u003d(-tag:v hvc1 -x2"
+      }, {
+        "text": "65-params \"log-level\u003dwarning\")\n    else\n      CRF_ARGS\u003d()\n    fi\n"
+      }, {
+        "text": "    echo \"\"\n    echo \"--- Goruntu ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL"
+      }, {
+        "text": "} (${PRESET} | ses copy)... ---\"\n    run_ff -y -i \"$INPUT\" $"
+      }, {
+        "text": "EVEN_VF -sn -dn -c:v \"$VCODEC_OUT\" -preset \"$PRESET\""
+      }, {
+        "text": " -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF_ARGS[@]}\" $AUDIO_"
+      }, {
+        "text": "ARGS -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    if [ \"$STATUS\" -"
+      }, {
+        "text": "ne 0 ]; then\n      echo \"Ipucu: Ses kodegi MP4 kutusuna uymuyorsa"
+      }, {
+        "text": " 8. secenegi kullanin.\"\n    fi\n    ;;\n  8)\n    ask_v"
+      }, {
+        "text": "codec\n    ask_preset fast\n    if [ \"$VCODEC_OUT\" \u003d \"libx265\" ]; then\n      "
+      }, {
+        "text": "CRF_ARGS\u003d(-tag:v hvc1 -x265-params \"log-level\u003dwarning\")"
+      }, {
+        "text": "\n    else\n      CRF_ARGS\u003d()\n    fi\n    if [ -z \"$ACODEC\" ];"
+      }, {
+        "text": " then\n      AUDIO_ARGS\u003d\"-an\"\n      OUTFILE\u003d\"$OUTDIR/${BASENAME}_${CODEC_TAG}${"
+      }, {
+        "text": "BIT_TAG}_CRF${CRF_VAL}_Sessiz.mp4\"\n      echo \"\"\n      echo \"---"
+      }, {
+        "text": " Videoda ses yok, ${CODEC_TAG}${BIT_TAG} CRF ${CRF_VAL} (${PRESET"
+      }, {
+        "text": "})... ---\"\n    else\n      ask_audio_bitrate 256\n      AUDIO_ARGS\u003d\"-"
+      }, {
+        "text": "c:a aac -b:a ${AB_VAL}k\"\n      OUTFILE\u003d\"$OUTDIR/${BAS"
+      }, {
+        "text": "ENAME}_${CODEC_TAG}${BIT_TAG}_CRF${CRF_VAL}_AAC_${AB_VAL}k"
+      }, {
+        "text": ".mp4\"\n      echo \"\"\n      echo \"--- ${CODEC_TAG}${BIT_TAG} CRF ${"
+      }, {
+        "text": "CRF_VAL} (${PRESET}) + Ses ${AB_VAL}k AAC... ---\"\n    fi\n"
+      }, {
+        "text": "    run_ff -y -i \"$INPUT\" $EVEN_VF -sn -dn -c:v \"$"
+      }, {
+        "text": "VCODEC_OUT\" -preset \"$PRESET\" -crf \"$CRF_VAL\" -pix_fmt \"$PIX_OUT\" \"${CRF"
+      }, {
+        "text": "_ARGS[@]}\" $AUDIO_ARGS -movflags +faststart \"$OUTFILE\"\n    STATUS\u003d$?\n    "
+      }, {
+        "text": ";;\n  9)\n    if [ -z \"$ACODEC\" ]; then\n      echo \"Bu vide"
+      }, {
+        "text": "oda ses izi bulunamadi!\"\n      read -p \"Cikmak icin Enter...\"\n      exit "
+      }, {
+        "text": "1\n    fi\n    [ \"$ACODEC\" \u003d \"aac\" ] \u0026\u0026 AAC_ST\u003d\"Kayipsiz\" || AAC_ST\u003d\""
+      }, {
+        "text": "Kayipli\"\n    [ \"$ACODEC\" \u003d \"mp3\" ] \u0026\u0026 MP3_ST\u003d\""
+      }, {
+        "text": "Kayipsiz\" || MP3_ST\u003d\"Kayipli\"\n    echo \"\"\n    echo \"  Enter"
+      }, {
+        "text": ") Orijinal ($ACODEC) - Kayipsiz\"\n    echo \"  2) AAC (.m"
+      }, {
+        "text": "4a) - $AAC_ST\"\n    echo \"  3) MP3 (.mp3) - $"
+      }, {
+        "text": "MP3_ST\"\n    read -p \"Secim: \" AF_OPT\n    case \"$AF_OPT\" in\n      2|"
+      }, {
+        "text": "aac|AAC|m4a|M4A)\n        if [ \"$ACODEC\" \u003d \"aac"
+      }, {
+        "text": "\" ]; then\n          OUTFILE\u003d\"$OUTDIR/${BASENAME}_Ses.m4a\"\n          echo \"\"\n"
+      }, {
+        "text": "          echo \"--- Ses zaten AAC! %100 kayipsiz kopyalaniyor... ---\"\n          "
+      }, {
+        "text": "run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a copy \"$OUTFILE"
+      }, {
+        "text": "\"\n        else\n          ask_audio_bitrate 256\n          OUTFILE\u003d\"$OUTDIR/${BASENAME"
+      }, {
+        "text": "}_Ses_${AB_VAL}k.m4a\"\n          echo \"\"\n          echo \"--- Ses ${AB"
+      }, {
+        "text": "_VAL}k AAC olarak cikariliyor... ---\"\n          run_ff -y -i \"$INPUT\""
+      }, {
+        "text": " -vn -sn -dn -c:a aac -b:a \"${AB_VAL}k\" \"$"
+      }, {
+        "text": "OUTFILE\"\n        fi\n        STATUS\u003d$?\n        ;;\n      3|mp3|MP3)"
+      }, {
+        "text": "\n        if [ \"$ACODEC\" \u003d \"mp3\" ]; then\n          OUTFILE\u003d\"$OUTDIR/${BAS"
+      }, {
+        "text": "ENAME}_Ses.mp3\"\n          echo \"\"\n          echo \"--- Ses zaten MP3! %100 kayipsiz kopyalani"
+      }, {
+        "text": "yor... ---\"\n          run_ff -y -i \"$INPUT\" -vn -sn -dn -c"
+      }, {
+        "text": ":a copy \"$OUTFILE\"\n        else\n          ask_audio_bitrate 256\n          OUT"
+      }, {
+        "text": "FILE\u003d\"$OUTDIR/${BASENAME}_Ses_${AB_VAL}k.mp3\"\n          echo \"\"\n          "
+      }, {
+        "text": "echo \"--- Ses ${AB_VAL}k MP3 olarak cikariliyor... ---\"\n          run_ff -"
+      }, {
+        "text": "y -i \"$INPUT\" -vn -sn -dn -c:a libmp3lame -b:a \"${AB_VAL}"
+      }, {
+        "text": "k\" \"$OUTFILE\"\n        fi\n        STATUS\u003d$?\n        ;;\n      *)\n        case \"$ACODEC\" in\n          "
+      }, {
+        "text": "aac) EXT\u003d\"m4a\" ;;\n          opus) EXT\u003d\"opus\" ;;\n          mp3) EXT"
+      }, {
+        "text": "\u003d\"mp3\" ;;\n          vorbis) EXT\u003d\"ogg\" ;;\n          flac) EXT\u003d\"flac\" ;;"
+      }, {
+        "text": "\n          ac3) EXT\u003d\"ac3\" ;;\n          eac3) EXT\u003d\"eac3\" ;;\n          "
+      }, {
+        "text": "alac) EXT\u003d\"m4a\" ;;\n          pcm_*) EXT\u003d\"wav\" ;;\n          *) EXT\u003d\"mka\" ;;\n"
+      }, {
+        "text": "        esac\n        OUTFILE\u003d\"$OUTDIR/${BASENAME}_Orijinal.${EXT}\"\n        echo \"\"\n        "
+      }, {
+        "text": "echo \"--- Orijinal ses (%100 kayipsiz: $ACODEC -\u003e .$EXT)... ---\"\n"
+      }, {
+        "text": "        run_ff -y -i \"$INPUT\" -vn -sn -dn -c:a copy \"$OUTFILE\"\n        STATUS\u003d$?"
+      }, {
+        "text": "\n        ;;\n    esac\n    ;;\n  10)\n    PASSDIR\u003d$(mktemp -d)"
+      }, {
+        "text": "\n    ln -s \"$INPUT\" \"$PASSDIR/$FILENAME\"\n    EXT_IN\u003d\"${FILENAME##*.}\"\n    if [ \"$"
+      }, {
+        "text": "EXT_IN\" !\u003d \"$FILENAME\" ] \u0026\u0026 [ -n \"$EXT_IN\" ] \u0026\u0026 [ \"$FILENAME\""
+      }, {
+        "text": " !\u003d \"input.${EXT_IN}\" ]; then\n      ln -s \"$INPUT\" \"$PASSDIR/input.${"
+      }, {
+        "text": "EXT_IN}\"\n    fi\n    IN\u003d\"$INPUT\"\n    echo \"\"\n    echo \"Tam FFmpeg"
+      }, {
+        "text": " komutunu tek satirda yapistirin.\"\n    echo \"Girdi kisayollari: \\\"\\$IN\\\" | \\\"$FILENAME\\\" | input"
+      }, {
+        "text": ".${EXT_IN}\"\n    echo \"(cikti.mp4 yazarsaniz Movies/TermuxVideo\u0027"
+      }, {
+        "text": "ya gider)\"\n    echo \"\"\n    read -r -p \"Komut: \" RAW_CMD\n    if [ -z \"$RAW_"
+      }, {
+        "text": "CMD\" ]; then\n      echo \"Komut girilmedi, iptal edildi.\"\n      read -p \""
+      }, {
+        "text": "Cikmak icin Enter...\"\n      exit 1\n    fi\n    echo \"\"\n    ( cd \"$PASS"
+      }, {
+        "text": "DIR\" \u0026\u0026 eval \"$RAW_CMD\" )\n    STATUS\u003d$?\n    if [ \"$STATUS\" -eq"
+      }, {
+        "text": " 0 ]; then\n      rm -f \"$PASSDIR\"/*.log \"$PASSDIR\"/*.log.temp \"$PASSDIR\"/*.cut"
+      }, {
+        "text": "ree \"$PASSDIR\"/*.mbtree \"$PASSDIR\"/ffmpeg2pass* 2\u003e/dev/null\n      for f in \"$PASSDIR\""
+      }, {
+        "text": "/*; do\n        if [ -f \"$f\" ] \u0026\u0026 [ ! -L \"$f\" ]; then\n"
+      }, {
+        "text": "          mv -f \"$f\" \"$OUTDIR/\" \u0026\u0026 OUTFILE\u003d\"$OUTDIR/$(basename -- \"$f\")\"\n        fi"
+      }, {
+        "text": "\n      done\n    fi\n    ;;\n  *)\n    echo \"Gecersiz secim!\"\n    read -p \"Cik"
+      }, {
+        "text": "mak icin Enter...\"\n    exit 1\n    ;;\nesac\n\necho \"\"\nif [ \"${STATUS:-1}\" -"
+      }, {
+        "text": "eq 0 ]; then\n  if [ -n \"$OUTFILE\" ] \u0026\u0026 [ -f \"$OUTFILE\""
+      }, {
+        "text": " ]; then\n    SIZE_HR\u003d$(du -h \"$OUTFILE\" | cut -f1)\n    echo"
+      }, {
+        "text": " \"BASARILI! Cikti Boyutu: $SIZE_HR\"\n    echo \"Konum: $OUT"
+      }, {
+        "text": "FILE\"\n    command -v termux-media-scan \u003e/dev/null \u0026\u0026 timeout 5 termux-"
+      }, {
+        "text": "media-scan \"$OUTFILE\" \u003e/dev/null 2\u003e\u00261\n  else\n    echo \"BASARILI! Komut tamamlandi.\""
+      }, {
+        "text": "\n  fi\n  case \"$INPUT\" in\n    \"$HOME/downloads/\"*) rm -f \"$INPUT\" ;;\n  esac\n"
+      }, {
+        "text": "else\n  echo \"Hata olustu!\"\nfi\n\necho \"\"\nread -p \"Kapatmak icin"
+      }, {
+        "text": " Enter\u0027a basin...\"\nEOF\nchmod +x ~/bin/termux-file-editor \u0026\u0026 bash -n"
+      }, {
+        "text": " ~/bin/termux-file-editor \u0026\u0026 echo \"KURULUM TAMAM!\"\n```\n\n---\n\n## 5. Kullanım ve Bakım"
+      }, {
+        "text": " Özeti\n\n* **Standart Kullanım:** Galeri veya dosya yöneticisi $\\rightarrow$ **Paylaş $\\rightarrow"
+      }, {
+        "text": "$ Termux $\\rightarrow$ `Edit`**.\n* **5–15 GB Dev Filmlerde Sıfır K"
+      }, {
+        "text": "opyalama ile Çalıştırma:** Paylaş menüsü dosyayı geçici olarak `~/downloads/`\u0027a kopyalar"
+      }, {
+        "text": ". Boş alan kısıtlıysa doğrudan Termux içinden diskteki dosya yoluyla çalıştırılabilir (orijinal dosy"
+      }, {
+        "text": "aya kesinlikle dokunulmaz):\n  ```bash\n  ~/bin/termux-file-editor \"/"
+      }, {
+        "text": "sdcard/Download/Film.mkv\"\n  ```\n* **İsteğe Bağlı Manuel Önbellek Temizliği:**\n  "
+      }, {
+        "text": "```bash\n  du -sh ~/downloads \"$TMPDIR\" \u0026\u0026 rm -rf ~/downloads/* \"$TMPDIR\"/tmp.* \u0026\u0026 pkg clean\n"
+      }, {
+        "text": "  ```"
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-11-23T02:32:26.894Z"
+    }],
+    "pendingInputs": [{
+      "text": "",
+      "role": "user"
+    }]
+  }
+}
