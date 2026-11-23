@@ -210,6 +210,7 @@ fun ModeConfigScreen(
             when (config.mode) {
                 ProcessingMode.DISCORD_20MB,
                 ProcessingMode.WHATSAPP_100MB,
+                ProcessingMode.GMAIL_25MB,
                 ProcessingMode.CUSTOM_SIZE -> {
                     item {
                         TwoPassTargetSummaryCard(
@@ -234,6 +235,7 @@ fun ModeConfigScreen(
                         val targetMb = when (config.mode) {
                             ProcessingMode.DISCORD_20MB -> 20.0
                             ProcessingMode.WHATSAPP_100MB -> 100.0
+                            ProcessingMode.GMAIL_25MB -> 25.0
                             else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
                         }
                         val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput)
@@ -252,14 +254,14 @@ fun ModeConfigScreen(
                             onSelectFps = viewModel::updateFps,
                             onSelectResolution = viewModel::updateResolution,
                             recommend30Fps720p = shouldRecommend,
-                            calculatedVideoBitrateKbps = vkbps,
-                            onApplyRecommended30Fps720p = viewModel::applyRecommended30Fps720p
+                            calculatedVideoBitrateKbps = vkbps
                         )
                     }
                     item {
                         PresetSection(
                             selectedPreset = config.preset,
                             recommendedPreset = PresetOption.MEDIUM,
+                            isTargetSizeMode = true,
                             onSelectPreset = viewModel::updatePreset
                         )
                     }
@@ -267,6 +269,7 @@ fun ModeConfigScreen(
                         val targetMb = when (config.mode) {
                             ProcessingMode.DISCORD_20MB -> 20.0
                             ProcessingMode.WHATSAPP_100MB -> 100.0
+                            ProcessingMode.GMAIL_25MB -> 25.0
                             else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
                         }
                         item {
@@ -328,6 +331,7 @@ fun ModeConfigScreen(
                             PresetSection(
                                 selectedPreset = config.preset,
                                 recommendedPreset = PresetOption.FAST,
+                                isTargetSizeMode = false,
                                 onSelectPreset = viewModel::updatePreset
                             )
                         }
@@ -407,6 +411,7 @@ fun ModeConfigScreen(
                         PresetSection(
                             selectedPreset = config.preset,
                             recommendedPreset = PresetOption.FAST,
+                            isTargetSizeMode = false,
                             onSelectPreset = viewModel::updatePreset
                         )
                     }
@@ -444,6 +449,7 @@ fun ModeConfigScreen(
                         PresetSection(
                             selectedPreset = config.preset,
                             recommendedPreset = PresetOption.FAST,
+                            isTargetSizeMode = false,
                             onSelectPreset = viewModel::updatePreset
                         )
                     }
@@ -514,6 +520,7 @@ private fun TwoPassTargetSummaryCard(
     val targetMb = when (config.mode) {
         ProcessingMode.DISCORD_20MB -> 20.0
         ProcessingMode.WHATSAPP_100MB -> 100.0
+        ProcessingMode.GMAIL_25MB -> 25.0
         else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
     }
     val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput)

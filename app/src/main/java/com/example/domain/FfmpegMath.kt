@@ -414,6 +414,7 @@ object FfmpegMath {
         return when (config.mode) {
             ProcessingMode.DISCORD_20MB -> "${base}_${codecTag}${bitTag}_20MB.mp4"
             ProcessingMode.WHATSAPP_100MB -> "${base}_${codecTag}${bitTag}_100MB.mp4"
+            ProcessingMode.GMAIL_25MB -> "${base}_${codecTag}${bitTag}_25MB.mp4"
             ProcessingMode.CUSTOM_SIZE -> {
                 val mb = parsePositiveDouble(config.targetMbInput) ?: 20.0
                 "${base}_${codecTag}${bitTag}_${formatMbTag(mb)}MB.mp4"
@@ -505,10 +506,12 @@ object FfmpegMath {
         return when (config.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
             ProcessingMode.CUSTOM_SIZE -> {
                 val targetMb = when (config.mode) {
                     ProcessingMode.DISCORD_20MB -> 20.0
                     ProcessingMode.WHATSAPP_100MB -> 100.0
+                    ProcessingMode.GMAIL_25MB -> 25.0
                     else -> parsePositiveDouble(config.targetMbInput) ?: 20.0
                 }
                 val dur = media.durationSec ?: parsePositiveDouble(config.manualDurationInput) ?: 1.0

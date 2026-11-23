@@ -67,7 +67,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -101,7 +100,7 @@ fun ProcessingScreen(
 
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    var showLogs by remember { mutableStateOf(state is EncodingState.Failed) }
+    var showLogs by remember(state is EncodingState.Failed) { mutableStateOf(state is EncodingState.Failed) }
 
     val topTitle = when (state) {
         is EncodingState.Running -> state.modeTitle

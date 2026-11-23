@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
@@ -61,6 +62,7 @@ import java.util.Locale
 private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
     ProcessingMode.DISCORD_20MB -> Icons.Rounded.Forum
     ProcessingMode.WHATSAPP_100MB -> Icons.Rounded.Chat
+    ProcessingMode.GMAIL_25MB -> Icons.Rounded.Email
     ProcessingMode.CUSTOM_SIZE -> Icons.Rounded.Compress
     ProcessingMode.TRIM_VIDEO -> Icons.Rounded.ContentCut
     ProcessingMode.REMUX_FORMAT -> Icons.Rounded.SwapHoriz
@@ -97,7 +99,7 @@ fun ModeCategoryHeader(
 }
 
 /**
- * Group 1: 3-column horizontal row for Hedef Boyut (Discord, WhatsApp, Özel Boyut).
+ * Group 1: Compact 2x2 grid for Hedef Boyut / Target Size (Discord, WhatsApp, Gmail, Özel Boyut).
  */
 @Composable
 fun TargetSizeModeRow(
@@ -107,65 +109,77 @@ fun TargetSizeModeRow(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
-    Row(
+    val rows = modes.chunked(2)
+    Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        modes.forEach { mode ->
-            val available = mediaInfo != null &&
-                (!mode.requiresAudio || mediaInfo.hasAudio) &&
-                (!mode.requiresVideo || mediaInfo.hasVideo)
-            val iconColor = MaterialTheme.colorScheme.primary
-
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .alpha(if (available) 1f else 0.84f)
-                    .clip(MaterialTheme.shapes.medium)
-                    .clickable { onSelectMode(mode) }
-                    .testTag("mode_card_${mode.number}"),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
-                tonalElevation = 0.dp
+        rows.forEach { rowModes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 9.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(
+                rowModes.forEach { mode ->
+                    val available = mediaInfo != null &&
+                        (!mode.requiresAudio || mediaInfo.hasAudio) &&
+                        (!mode.requiresVideo || mediaInfo.hasVideo)
+                    val iconColor = MaterialTheme.colorScheme.primary
+
+                    Surface(
                         modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
+                            .weight(1f)
+                            .alpha(if (available) 1f else 0.84f)
+                            .clip(MaterialTheme.shapes.medium)
+                            .clickable { onSelectMode(mode) }
+                            .testTag("mode_card_${mode.number}"),
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
+                        tonalElevation = 0.dp
                     ) {
-                        Icon(
-                            imageVector = modeIcon(mode),
-                            contentDescription = mode.localizedTitle(strings),
-                            tint = iconColor,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 54.dp)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = modeIcon(mode),
+                                    contentDescription = mode.localizedTitle(strings),
+                                    tint = iconColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(9.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = mode.localizedShortTitle(strings),
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = mode.localizedShortSubtitle(strings),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
-                    Spacer(Modifier.height(5.dp))
-                    Text(
-                        text = mode.localizedShortTitle(strings),
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = mode.localizedShortSubtitle(strings),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
+                }
+                if (rowModes.size == 1) {
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }

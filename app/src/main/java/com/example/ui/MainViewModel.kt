@@ -141,12 +141,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val defaultTargetMb = when (mode) {
             ProcessingMode.DISCORD_20MB -> "20"
             ProcessingMode.WHATSAPP_100MB -> "100"
+            ProcessingMode.GMAIL_25MB -> "25"
             ProcessingMode.CUSTOM_SIZE -> "8"
             else -> "20"
         }
         val defaultPreset = when (mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
             ProcessingMode.CUSTOM_SIZE -> PresetOption.MEDIUM
             else -> PresetOption.FAST
         }
@@ -154,6 +156,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val defaultAudioKbps = when (mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
             ProcessingMode.CUSTOM_SIZE -> "128"
             ProcessingMode.TRIM_VIDEO -> "192"
             else -> "256"
@@ -252,7 +255,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateBitDepth(bitDepth: BitDepthOption) {
-        updateConfig { it.copy(bitDepth = bitDepth) }
+        updateConfig { cfg ->
+            val safeBitDepth = if (cfg.codec == VideoCodecOption.H264) BitDepthOption.BIT_8 else bitDepth
+            cfg.copy(bitDepth = safeBitDepth)
+        }
     }
 
     fun updateFps(fps: FpsOption) {
@@ -271,27 +277,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cfg = state.activeConfig ?: return@update state
             state.copy(
                 activeConfig = cfg.copy(resolution = resolution),
-                resolutionTouched = true,
-                validationError = null
-            )
-        }
-    }
-
-    fun applyRecommended30Fps720p() {
-        _uiState.update { state ->
-            val cfg = state.activeConfig ?: return@update state
-            val media = state.mediaInfo
-            val shortEdge = if (media?.width != null && media.height != null) {
-                minOf(media.width, media.height)
-            } else null
-            val targetRes = if (shortEdge == null || shortEdge > 720) {
-                ResolutionOption.P720
-            } else {
-                cfg.resolution
-            }
-            state.copy(
-                activeConfig = cfg.copy(fps = FpsOption.FPS_30, resolution = targetRes),
-                fpsTouched = true,
                 resolutionTouched = true,
                 validationError = null
             )
@@ -522,6 +507,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (cfg.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
             ProcessingMode.CUSTOM_SIZE -> {
                 if (cfg.mode == ProcessingMode.CUSTOM_SIZE && FfmpegMath.parsePositiveDouble(cfg.targetMbInput) == null) {
                     _uiState.update { it.copy(validationError = s.errInvalidTargetMb) }

@@ -157,6 +157,7 @@ data class AppStrings(
     val modeCustomSizeSub: String,
     val modeDiscordSub: String,
     val modeWhatsappSub: String,
+    val modeGmailSub: String,
     val modeTrimTitle: String,
     val modeTrimSub: String,
     val modeTrimShortSub: String,
@@ -182,21 +183,21 @@ data class AppStrings(
     val colorBitDepthLabel: String,
     val bit8Compatible: String,
     val bit8Default: String,
-    val bit10VlcOnly: String,
     val bit10Preserve: String,
-    val h264TenBitWarning: String,
     val nonNativeTenBitWarning: (sourceBitDepth: String) -> String,
     val fpsResSectionTitle: String,
     val fpsResSectionSub: String,
     val recommend30Fps720pText: (vkbps: Int) -> String,
-    val apply30Fps720pButton: String,
     val fpsOriginalLabel: String,
     val fpsKeepSub: String,
     val targetResolutionLabel: String,
     val resOriginalLabel: String,
     val activeFilterPrefix: String,
     val presetSectionTitle: String,
-    val presetSectionSub: (recommended: String) -> String,
+    val presetCrfSub: (recommended: String) -> String,
+    val presetTargetSizeSub: (recommended: String) -> String,
+    val presetTargetSizeHighlight: String,
+    val presetVerySlowNote: String,
     val audioBitrateTitle: String,
     val audioBitrateExtractTitle: (format: String) -> String,
     val audioBitrateSub: (activeKbps: Int) -> String,
@@ -417,6 +418,7 @@ val TurkishStrings = AppStrings(
     modeCustomSizeSub = "İstediğin MB hedefi · 2-Pass",
     modeDiscordSub = "< 20 MB · Gerçek 2-Pass ABR",
     modeWhatsappSub = "< 100 MB · Gerçek 2-Pass ABR",
+    modeGmailSub = "< 25 MB · Gerçek 2-Pass ABR",
     modeTrimTitle = "Videoyu Kes",
     modeTrimSub = "Akıllı Keyframe tarama · Kayıpsız / Hassas",
     modeTrimShortSub = "Keyframe · Hassas",
@@ -441,21 +443,21 @@ val TurkishStrings = AppStrings(
     colorBitDepthLabel = "Renk Bit Derinliği",
     bit8Compatible = "8-bit (Uyumlu)",
     bit8Default = "8-bit (Varsayılan)",
-    bit10VlcOnly = "10-bit (Sadece VLC)",
     bit10Preserve = "10-bit (Koru)",
-    h264TenBitWarning = "H.264 10-bit (High 10) mobil donanım çözücülerde, WhatsApp ve Discord'da açılmaz (Sadece VLC).",
     nonNativeTenBitWarning = { src -> "Uyarı: Orijinal kaynak video $src (10-bit değil). 8-bit kaynaktan 10-bit kodlamak ekstra renk derinliği katmaz, kodlama süresini uzatır ve bazı cihazlarda uyumluluğu düşürebilir." },
     fpsResSectionTitle = "FPS & Akıllı Çözünürlük",
     fpsResSectionSub = "3 yönlü oran koruması: Dikey (9:16 / 4:5), Sinema (2.39:1) ve 16:9 otomatik algılanır",
     recommend30Fps720pText = { vkbps -> "Video uzunluğuna göre bitrate aşırı düşüyor (${vkbps}k). Daha net görüntü için 30 FPS ve 720p tavsiye edilir." },
-    apply30Fps720pButton = "30 FPS + 720p Uygula",
     fpsOriginalLabel = "Orijinal FPS",
     fpsKeepSub = "Koru",
     targetResolutionLabel = "Hedef Çözünürlük",
     resOriginalLabel = "Orijinal",
     activeFilterPrefix = "Aktif Filtre:",
     presetSectionTitle = "Kodlama Hızı (Preset)",
-    presetSectionSub = { rec -> "Önerilen: $rec · Daha yavaş preset aynı kalitede daha küçük boyut üretir" },
+    presetCrfSub = { rec -> "Önerilen: $rec · CRF dönüşümünde daha yavaş preset daha küçük dosya boyutu üretir, kalite değişmez." },
+    presetTargetSizeSub = { rec -> "Önerilen: $rec" },
+    presetTargetSizeHighlight = "Daha yavaş preset görüntü kalitesini artırır; daha küçük dosya boyutu üreteceği için sıkıştırma kalitesini artırır.",
+    presetVerySlowNote = "Not: slow ile veryslow arasındaki gerçek kalite/verimlilik farkı yalnızca ~%2–4 civarındadır; ancak kodlama süresi yaklaşık 2–3 kat uzar.",
     audioBitrateTitle = "Ses Bitrate (AAC · Kayıplı)",
     audioBitrateExtractTitle = { fmt -> "Çıktı Ses Bitrate ($fmt)" },
     audioBitrateSub = { kbps -> "32k – 768k aralığı desteklenir (5.1 surround için 320k/384k+ dahil) · Aktif: ${kbps}k" },
@@ -592,8 +594,8 @@ val TurkishStrings = AppStrings(
     bannerExtractAudio = { fmt -> "Ses Çıkarma · $fmt" },
     bannerCustomCmd = "Özel FFmpeg Komutu (Çıktılar otomatik taşınır)",
     hintTrimLosslessAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa (ör. Opus/DTS/EAC3) 2. kesim modunu (Görüntü Kayıpsız + Ses AAC Değiştir) seçin.",
-    hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 09 · Görüntü + Ses Değiştir seçeneğini kullanın.",
-    hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 07 · Sadece Ses Değiştir veya 09 · Görüntü + Ses Değiştir seçeneğini deneyin.",
+    hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 10 · Görüntü + Ses Değiştir seçeneğini kullanın.",
+    hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 08 · Sadece Ses Değiştir veya 10 · Görüntü + Ses Değiştir seçeneğini deneyin.",
     errSafReadFailed = "Dosya okuma erişimi alınamadı (SAF)",
     errUnknown = "Bilinmeyen hata",
     errMediaStoreInsertFailed = "MediaStore kaydı oluşturulamadı",
@@ -671,6 +673,7 @@ val EnglishStrings = AppStrings(
     modeCustomSizeSub = "Custom MB target · 2-Pass ABR",
     modeDiscordSub = "< 20 MB · True 2-Pass ABR",
     modeWhatsappSub = "< 100 MB · True 2-Pass ABR",
+    modeGmailSub = "< 25 MB · True 2-Pass ABR",
     modeTrimTitle = "Trim Video",
     modeTrimSub = "Smart keyframe scan · Lossless / Frame-accurate",
     modeTrimShortSub = "Keyframe · Exact",
@@ -695,21 +698,21 @@ val EnglishStrings = AppStrings(
     colorBitDepthLabel = "Color Bit Depth",
     bit8Compatible = "8-bit (Compatible)",
     bit8Default = "8-bit (Default)",
-    bit10VlcOnly = "10-bit (VLC Only)",
     bit10Preserve = "10-bit (Preserve)",
-    h264TenBitWarning = "H.264 10-bit (High 10) is unsupported by mobile hardware decoders, WhatsApp, and Discord (VLC only).",
     nonNativeTenBitWarning = { src -> "Warning: Source video is $src (not 10-bit). Encoding an 8-bit source as 10-bit adds no real color depth, slows down encoding, and may reduce device compatibility." },
     fpsResSectionTitle = "Frame Rate & Smart Scaling",
     fpsResSectionSub = "3-way aspect preservation: Portrait (9:16 / 4:5), CinemaScope (2.39:1), and 16:9 auto-detected",
     recommend30Fps720pText = { vkbps -> "Bitrate drops too low for this video length (${vkbps}k). 30 FPS and 720p are recommended for cleaner visual quality." },
-    apply30Fps720pButton = "Apply 30 FPS + 720p",
     fpsOriginalLabel = "Original FPS",
     fpsKeepSub = "Keep",
     targetResolutionLabel = "Target Resolution",
     resOriginalLabel = "Original",
     activeFilterPrefix = "Active Filter:",
     presetSectionTitle = "Encoding Speed (Preset)",
-    presetSectionSub = { rec -> "Recommended: $rec · Slower presets yield smaller files at the same quality" },
+    presetCrfSub = { rec -> "Recommended: $rec · In CRF encoding, slower presets produce smaller files while keeping the exact same visual quality." },
+    presetTargetSizeSub = { rec -> "Recommended: $rec" },
+    presetTargetSizeHighlight = "Slower presets improve visual quality; because they compress more efficiently into smaller sizes, they deliver higher compression quality at your target MB.",
+    presetVerySlowNote = "Note: The real-world quality/efficiency difference between slow and veryslow is only ~2–4%, while encoding takes roughly 2–3× longer.",
     audioBitrateTitle = "Audio Bitrate (AAC · Lossy)",
     audioBitrateExtractTitle = { fmt -> "Output Audio Bitrate ($fmt)" },
     audioBitrateSub = { kbps -> "Supports 32k – 768k (including 320k/384k+ for 5.1 surround) · Active: ${kbps}k" },
@@ -848,8 +851,8 @@ val EnglishStrings = AppStrings(
     bannerExtractAudio = { fmt -> "Extract Audio · $fmt" },
     bannerCustomCmd = "Custom FFmpeg Command (Outputs saved automatically)",
     hintTrimLosslessAudio = "Tip: If the audio codec isn't MP4-compatible (e.g., Opus/DTS/EAC3), select trim mode 2 (Lossless Video + Convert Audio to AAC).",
-    hintVideoOnlyAudio = "Tip: If the audio codec isn't MP4-compatible, use 09 · Re-encode Video + Audio instead.",
-    hintRemuxCompat = "Tip: If the video or audio codec is incompatible with MP4, try 07 · Re-encode Audio Only or 09 · Re-encode Video + Audio.",
+    hintVideoOnlyAudio = "Tip: If the audio codec isn't MP4-compatible, use 10 · Re-encode Video + Audio instead.",
+    hintRemuxCompat = "Tip: If the video or audio codec is incompatible with MP4, try 08 · Re-encode Audio Only or 10 · Re-encode Video + Audio.",
     errSafReadFailed = "Unable to open file for reading (SAF)",
     errUnknown = "Unknown error",
     errMediaStoreInsertFailed = "Could not create MediaStore entry",
@@ -890,6 +893,7 @@ fun ModeCategory.localizedTitle(s: AppStrings): String = when (this) {
 fun ProcessingMode.localizedTitle(s: AppStrings): String = when (this) {
     ProcessingMode.DISCORD_20MB -> "Discord"
     ProcessingMode.WHATSAPP_100MB -> "WhatsApp"
+    ProcessingMode.GMAIL_25MB -> "Gmail"
     ProcessingMode.CUSTOM_SIZE -> s.modeCustomSizeTitle
     ProcessingMode.TRIM_VIDEO -> s.modeTrimTitle
     ProcessingMode.REMUX_FORMAT -> s.modeRemuxTitle
@@ -903,6 +907,7 @@ fun ProcessingMode.localizedTitle(s: AppStrings): String = when (this) {
 fun ProcessingMode.localizedShortTitle(s: AppStrings): String = when (this) {
     ProcessingMode.DISCORD_20MB -> "Discord"
     ProcessingMode.WHATSAPP_100MB -> "WhatsApp"
+    ProcessingMode.GMAIL_25MB -> "Gmail"
     ProcessingMode.CUSTOM_SIZE -> s.modeCustomSizeTitle
     ProcessingMode.TRIM_VIDEO -> s.modeTrimTitle
     ProcessingMode.REMUX_FORMAT -> s.modeRemuxShortTitle
@@ -916,6 +921,7 @@ fun ProcessingMode.localizedShortTitle(s: AppStrings): String = when (this) {
 fun ProcessingMode.localizedSubtitle(s: AppStrings): String = when (this) {
     ProcessingMode.DISCORD_20MB -> s.modeDiscordSub
     ProcessingMode.WHATSAPP_100MB -> s.modeWhatsappSub
+    ProcessingMode.GMAIL_25MB -> s.modeGmailSub
     ProcessingMode.CUSTOM_SIZE -> s.modeCustomSizeSub
     ProcessingMode.TRIM_VIDEO -> s.modeTrimSub
     ProcessingMode.REMUX_FORMAT -> s.modeRemuxSub
@@ -929,6 +935,7 @@ fun ProcessingMode.localizedSubtitle(s: AppStrings): String = when (this) {
 fun ProcessingMode.localizedShortSubtitle(s: AppStrings): String = when (this) {
     ProcessingMode.DISCORD_20MB -> "< 20 MB"
     ProcessingMode.WHATSAPP_100MB -> "< 100 MB"
+    ProcessingMode.GMAIL_25MB -> "< 25 MB"
     ProcessingMode.CUSTOM_SIZE -> s.modeCustomSizeShortSub
     ProcessingMode.TRIM_VIDEO -> s.modeTrimShortSub
     ProcessingMode.REMUX_FORMAT -> s.badgeLossless
@@ -942,6 +949,7 @@ fun ProcessingMode.localizedShortSubtitle(s: AppStrings): String = when (this) {
 fun ProcessingMode.localizedQualityTag(s: AppStrings): String = when (this) {
     ProcessingMode.DISCORD_20MB,
     ProcessingMode.WHATSAPP_100MB,
+    ProcessingMode.GMAIL_25MB,
     ProcessingMode.CUSTOM_SIZE -> "2-Pass"
     ProcessingMode.TRIM_VIDEO,
     ProcessingMode.REMUX_FORMAT,

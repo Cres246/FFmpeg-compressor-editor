@@ -135,7 +135,7 @@ object FfmpegEngine {
      */
     suspend fun probeMedia(context: Context, uri: Uri): MediaInfo = withContext(Dispatchers.IO) {
         val (displayName, sizeFromCursor) = queryFileNameAndSize(context, uri)
-        val safeFileName = displayName.ifBlank { "medya.mp4" }
+        val safeFileName = displayName.ifBlank { "media.mp4" }
         val dotIndex = safeFileName.lastIndexOf('.')
         val baseName = if (dotIndex > 0) safeFileName.substring(0, dotIndex) else safeFileName
         val ext = if (dotIndex > 0 && dotIndex < safeFileName.lastIndex) {

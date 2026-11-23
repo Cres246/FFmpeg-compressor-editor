@@ -179,8 +179,10 @@ class FfmpegMathTest {
     @Test
     fun processingModesHaveSequentialNumbers() {
         val numbers = ProcessingMode.entries.map { it.number }
-        assertEquals((1..10).toList(), numbers)
+        assertEquals((1..11).toList(), numbers)
+        assertEquals("Gmail", ProcessingMode.GMAIL_25MB.title)
+        assertEquals(3, ProcessingMode.GMAIL_25MB.number)
         assertEquals("Sesi Çıkart", ProcessingMode.EXTRACT_AUDIO.title)
-        assertEquals(6, ProcessingMode.EXTRACT_AUDIO.number)
+        assertEquals(7, ProcessingMode.EXTRACT_AUDIO.number)
     }
 }

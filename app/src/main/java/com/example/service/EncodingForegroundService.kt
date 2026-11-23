@@ -175,6 +175,7 @@ class EncodingForegroundService : Service() {
                 val initialPasses = when (jobData.config.mode) {
                     ProcessingMode.DISCORD_20MB,
                     ProcessingMode.WHATSAPP_100MB,
+                    ProcessingMode.GMAIL_25MB,
                     ProcessingMode.CUSTOM_SIZE -> 2
                     else -> 1
                 }
@@ -624,10 +625,12 @@ class EncodingForegroundService : Service() {
         return when (config.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
             ProcessingMode.CUSTOM_SIZE -> {
                 val mb = when (config.mode) {
                     ProcessingMode.DISCORD_20MB -> 20.0
                     ProcessingMode.WHATSAPP_100MB -> 100.0
+                    ProcessingMode.GMAIL_25MB -> 25.0
                     else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
                 }
                 val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput) ?: 1.0

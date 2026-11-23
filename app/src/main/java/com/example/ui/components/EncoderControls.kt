@@ -19,16 +19,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,10 +100,7 @@ fun CodecAndBitDepthSection(
     onSelectBitDepth: (BitDepthOption) -> Unit
 ) {
     val strings = LocalAppStrings.current
-    val supports10Bit = when (selectedCodec) {
-        VideoCodecOption.H264 -> capabilities.x264Supports10Bit
-        VideoCodecOption.H265 -> capabilities.x265Supports10Bit
-    }
+    val supports10Bit = selectedCodec == VideoCodecOption.H265 && capabilities.x265Supports10Bit
     val inputHighBit = media.bitDepthIn == "10bit" || media.bitDepthIn == "12bit"
 
     ConfigSectionCard(
@@ -142,16 +138,8 @@ fun CodecAndBitDepthSection(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                val label8 = when {
-                    selectedCodec == VideoCodecOption.H264 -> strings.bit8Compatible
-                    !inputHighBit -> strings.bit8Default
-                    else -> "8-bit"
-                }
-                val label10 = when {
-                    selectedCodec == VideoCodecOption.H264 -> strings.bit10VlcOnly
-                    inputHighBit -> strings.bit10Preserve
-                    else -> "10-bit"
-                }
+                val label8 = if (!inputHighBit) strings.bit8Default else "8-bit"
+                val label10 = if (inputHighBit) strings.bit10Preserve else "10-bit"
                 SelectableOptionTile(
                     title = label8,
                     subtitle = "yuv420p",
@@ -172,10 +160,7 @@ fun CodecAndBitDepthSection(
                 )
             }
 
-            val showNonNative10BitWarn = !inputHighBit && selectedBitDepth == BitDepthOption.BIT_10
-            val showH26410BitWarn = selectedCodec == VideoCodecOption.H264 && selectedBitDepth == BitDepthOption.BIT_10
-
-            if (showNonNative10BitWarn || showH26410BitWarn) {
+            if (!inputHighBit && selectedBitDepth == BitDepthOption.BIT_10) {
                 Spacer(Modifier.height(10.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -183,51 +168,25 @@ fun CodecAndBitDepthSection(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.32f))
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        if (showNonNative10BitWarn) {
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(7.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.WarningAmber,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier
-                                        .padding(top = 1.dp)
-                                        .size(16.dp)
-                                )
-                                Text(
-                                    text = strings.nonNativeTenBitWarning(media.bitDepthIn),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.testTag("non_native_10bit_warning")
-                                )
-                            }
-                        }
-                        if (showH26410BitWarn) {
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(7.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.WarningAmber,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier
-                                        .padding(top = 1.dp)
-                                        .size(16.dp)
-                                )
-                                Text(
-                                    text = strings.h264TenBitWarning,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Rounded.WarningAmber,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .size(16.dp)
+                        )
+                        Text(
+                            text = strings.nonNativeTenBitWarning(media.bitDepthIn),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.testTag("non_native_10bit_warning")
+                        )
                     }
                 }
             }
@@ -244,11 +203,9 @@ fun FpsAndResolutionSection(
     onSelectFps: (FpsOption) -> Unit,
     onSelectResolution: (ResolutionOption) -> Unit,
     recommend30Fps720p: Boolean = false,
-    calculatedVideoBitrateKbps: Int? = null,
-    onApplyRecommended30Fps720p: (() -> Unit)? = null
+    calculatedVideoBitrateKbps: Int? = null
 ) {
     val strings = LocalAppStrings.current
-    val extColors = LocalExtendedColors.current
     val computedScale = FfmpegMath.buildScaleFilter(
         width = media.width,
         height = media.height,
@@ -270,46 +227,27 @@ fun FpsAndResolutionSection(
                     .padding(bottom = 12.dp)
                     .testTag("recommend_30fps_720p_banner"),
                 shape = MaterialTheme.shapes.small,
-                color = extColors.keyframeContainer.copy(alpha = 0.78f),
-                border = BorderStroke(1.dp, extColors.keyframe.copy(alpha = 0.38f))
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.72f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.42f))
             ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.WarningAmber,
-                            contentDescription = null,
-                            tint = extColors.keyframe,
-                            modifier = Modifier
-                                .padding(top = 1.dp)
-                                .size(16.dp)
-                        )
-                        Text(
-                            text = strings.recommend30Fps720pText(calculatedVideoBitrateKbps),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = extColors.onKeyframeContainer
-                        )
-                    }
-                    if (onApplyRecommended30Fps720p != null) {
-                        FilledTonalButton(
-                            onClick = onApplyRecommended30Fps720p,
-                            modifier = Modifier
-                                .height(36.dp)
-                                .testTag("apply_30fps_720p_button"),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Text(
-                                text = strings.apply30Fps720pButton,
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                        }
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(16.dp)
+                    )
+                    Text(
+                        text = strings.recommend30Fps720pText(calculatedVideoBitrateKbps),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
         }
@@ -373,13 +311,37 @@ fun FpsAndResolutionSection(
 fun PresetSection(
     selectedPreset: PresetOption,
     recommendedPreset: PresetOption,
+    isTargetSizeMode: Boolean,
     onSelectPreset: (PresetOption) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
     ConfigSectionCard(
         title = strings.presetSectionTitle,
-        subtitle = strings.presetSectionSub(recommendedPreset.value)
+        subtitle = if (isTargetSizeMode) {
+            strings.presetTargetSizeSub(recommendedPreset.value)
+        } else {
+            strings.presetCrfSub(recommendedPreset.value)
+        }
     ) {
+        if (isTargetSizeMode) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+                shape = MaterialTheme.shapes.small,
+                color = extColors.losslessContainer.copy(alpha = 0.72f),
+                border = BorderStroke(1.dp, extColors.lossless.copy(alpha = 0.35f))
+            ) {
+                Text(
+                    text = strings.presetTargetSizeHighlight,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = extColors.lossless,
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp)
+                )
+            }
+        }
+
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -401,6 +363,38 @@ fun PresetSection(
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 )
+            }
+        }
+
+        if (selectedPreset == PresetOption.VERYSLOW) {
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("veryslow_quality_note"),
+                shape = MaterialTheme.shapes.small,
+                color = extColors.keyframeContainer.copy(alpha = 0.72f),
+                border = BorderStroke(1.dp, extColors.keyframe.copy(alpha = 0.32f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Info,
+                        contentDescription = null,
+                        tint = extColors.keyframe,
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(16.dp)
+                    )
+                    Text(
+                        text = strings.presetVerySlowNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = extColors.onKeyframeContainer
+                    )
+                }
             }
         }
     }

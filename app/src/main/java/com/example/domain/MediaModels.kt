@@ -97,8 +97,20 @@ enum class ProcessingMode(
         category = ModeCategory.TARGET_SIZE,
         requiresVideo = true
     ),
-    CUSTOM_SIZE(
+    GMAIL_25MB(
         number = 3,
+        title = "Gmail",
+        shortTitle = "Gmail",
+        subtitle = "< 25 MB · Gerçek 2-Pass ABR",
+        shortSubtitle = "< 25 MB",
+        badge = "2-PASS",
+        qualityTag = "2-Pass",
+        qualityTone = QualityBadgeTone.NEUTRAL,
+        category = ModeCategory.TARGET_SIZE,
+        requiresVideo = true
+    ),
+    CUSTOM_SIZE(
+        number = 4,
         title = "Özel Boyut",
         shortTitle = "Özel Boyut",
         subtitle = "İstediğin MB hedefi · 2-Pass",
@@ -110,7 +122,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     TRIM_VIDEO(
-        number = 4,
+        number = 5,
         title = "Videoyu Kes",
         shortTitle = "Videoyu Kes",
         subtitle = "Akıllı Keyframe tarama · Kayıpsız / Hassas",
@@ -122,7 +134,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     REMUX_FORMAT(
-        number = 5,
+        number = 6,
         title = "Sadece Format Değiştir",
         shortTitle = "Format Değiştir",
         subtitle = "%100 kayıpsız MP4 kutu yenileme (-c copy)",
@@ -134,7 +146,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     EXTRACT_AUDIO(
-        number = 6,
+        number = 7,
         title = "Sesi Çıkart",
         shortTitle = "Sesi Çıkart",
         subtitle = "Orijinal (Kayıpsız) / AAC / MP3",
@@ -146,7 +158,7 @@ enum class ProcessingMode(
         requiresAudio = true
     ),
     AUDIO_ONLY_AAC(
-        number = 7,
+        number = 8,
         title = "Sadece Ses Değiştir",
         shortTitle = "Sadece Ses Değiştir",
         subtitle = "Görüntü %100 copy · Ses AAC",
@@ -159,7 +171,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     VIDEO_ONLY_CRF(
-        number = 8,
+        number = 9,
         title = "Sadece Görüntü Değiştir",
         shortTitle = "Sadece Görüntü Değiştir",
         subtitle = "CRF 16/20 · Ses %100 copy",
@@ -171,7 +183,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     VIDEO_AND_AUDIO_CRF(
-        number = 9,
+        number = 10,
         title = "Görüntü + Ses Değiştir",
         shortTitle = "Görüntü + Ses Değiştir",
         subtitle = "CRF 16/20 · 8/10-bit · AAC",
@@ -183,7 +195,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     CUSTOM_COMMAND(
-        number = 10,
+        number = 11,
         title = "Özel FFmpeg Komutu",
         shortTitle = "Özel FFmpeg Komutu",
         subtitle = "Tam komut yapıştır (&& zinciri dahil)",
@@ -238,7 +250,6 @@ enum class PresetOption(val value: String, val label: String) {
     FAST("fast", "fast"),
     MEDIUM("medium", "medium"),
     SLOW("slow", "slow"),
-    SLOWER("slower", "slower"),
     VERYSLOW("veryslow", "veryslow")
 }
 
@@ -292,7 +303,7 @@ data class ModeConfigState(
     val manualDurationInput: String = "",
     val codec: VideoCodecOption = VideoCodecOption.H264,
     val bitDepth: BitDepthOption = BitDepthOption.BIT_8,
-    val fps: FpsOption = FpsOption.FPS_30,
+    val fps: FpsOption = FpsOption.ORIGINAL,
     val resolution: ResolutionOption = ResolutionOption.ORIGINAL,
     val preset: PresetOption = PresetOption.MEDIUM,
     val audioBitrateInput: String = "128",
