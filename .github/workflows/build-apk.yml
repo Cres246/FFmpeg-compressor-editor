@@ -22,6 +22,24 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Debug Keystore Olustur
+        run: |
+          if [ ! -f debug.keystore ]; then
+            if [ -f debug.keystore.base64 ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -storepass android \
+                -keypass android \
+                -alias androiddebugkey \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+
       - name: Gradle Surumunu Tespit Et
         id: gradle-ver
         run: |
