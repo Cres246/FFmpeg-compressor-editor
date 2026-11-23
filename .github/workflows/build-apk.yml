@@ -1,5 +1,11 @@
 name: Android APK Build & Release
 
+# Sadece aşağıdaki 3 satırı istediğiniz gibi değiştirebilirsiniz
+env:
+  APK_ADI: "FFmpeg-Compressor-Editor.apk"
+  SURUM_ETIKETI: "v1.0"
+  SURUM_BASLIGI: "FFmpeg Compressor-Editor v1.0"
+
 on:
   push:
     branches: [ "main" ]
@@ -65,18 +71,24 @@ jobs:
             gradle assembleDebug --stacktrace
           fi
 
+      - name: APK Dosyasini Yeniden Adlandir
+        run: |
+          mkdir -p dist
+          APK_SRC=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          cp "$APK_SRC" "dist/${{ env.APK_ADI }}"
+
       - name: APK Dosyasini Actions'a Yukle
         uses: actions/upload-artifact@v7
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: android-apk
+          path: dist/${{ env.APK_ADI }}
 
       - name: Indirme Linki Olustur (GitHub Release)
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v1.0.${{ github.run_number }}
+          tag_name: ${{ env.SURUM_ETIKETI }}
           target_commitish: ${{ github.sha }}
-          name: Surum v1.0.${{ github.run_number }}
+          name: ${{ env.SURUM_BASLIGI }}
           make_latest: "true"
           fail_on_unmatched_files: true
-          files: app/build/outputs/apk/debug/*.apk
+          files: dist/${{ env.APK_ADI }}
