@@ -573,8 +573,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         EncodingForegroundService.startEncoding(appContext, media, cfg)
     }
 
+    fun switchCurrentJobToTurbo() {
+        val snapshot = EncodingJobController.activeJobSnapshot
+        val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
+        val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
+        EncodingForegroundService.startTurboEncoding(appContext, media, cfg)
+    }
+
+    fun tryRemuxThenRetryTurbo() {
+        val snapshot = EncodingJobController.activeJobSnapshot
+        val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
+        val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
+        EncodingForegroundService.startRemuxThenTurbo(appContext, media, cfg)
+    }
+
+    fun fallbackFromTurboToFfmpeg(useFastPreset: Boolean = false) {
+        val snapshot = EncodingJobController.activeJobSnapshot
+        val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
+        val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
+        val targetCfg = if (useFastPreset) cfg.copy(preset = PresetOption.FAST) else cfg
+        EncodingForegroundService.startEncoding(appContext, media, targetCfg)
+    }
+
     fun cancelEncoding() {
-        // Immediately invalidate active run ID, cancel native FFmpeg, and reset state to Idle
+        // Immediately invalidate active run ID, cancel native FFmpeg / Media3, and reset state to Idle
         EncodingJobController.cancelActiveRun()
         // Return cleanly to the Home screen (Ana Menü) right away
         _uiState.update { it.copy(activeConfig = null, validationError = null) }

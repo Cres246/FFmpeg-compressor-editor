@@ -41,7 +41,9 @@ import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +55,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -88,6 +91,7 @@ fun ProcessingScreen(
     state: EncodingState,
     isActiveStage: Boolean = true,
     onCancel: () -> Unit,
+    onSwitchToTurbo: () -> Unit = {},
     onOpenOutput: (CompletedOutput) -> Unit,
     onShareOutput: (CompletedOutput) -> Unit,
     onDoneReturnHome: () -> Unit,
@@ -103,6 +107,7 @@ fun ProcessingScreen(
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     var showLogs by remember(state is EncodingState.Failed) { mutableStateOf(state is EncodingState.Failed) }
+    var showTurboConfirmDialog by remember { mutableStateOf(false) }
 
     val topTitle = when (state) {
         is EncodingState.Running -> state.modeTitle
@@ -137,21 +142,64 @@ fun ProcessingScreen(
                 ) {
                     when (state) {
                         is EncodingState.Running -> {
-                            OutlinedButton(
-                                onClick = onCancel,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                                    .testTag("cancel_encoding_button"),
-                                shape = MaterialTheme.shapes.small,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.error
-                                )
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(strings.actionCancel)
+                                if (state.canSwitchToTurbo) {
+                                    FilledTonalButton(
+                                        onClick = { showTurboConfirmDialog = true },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(50.dp)
+                                            .testTag("in_a_hurry_turbo_button"),
+                                        shape = MaterialTheme.shapes.small,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)),
+                                        colors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Speed,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = strings.actionInAHurry,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                text = strings.turboButtonSubBadge,
+                                                style = MonoLabelStyle.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = onCancel,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp)
+                                        .testTag("cancel_encoding_button"),
+                                    shape = MaterialTheme.shapes.small,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    )
+                                ) {
+                                    Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(strings.actionCancel)
+                                }
                             }
                         }
 
@@ -264,6 +312,60 @@ fun ProcessingScreen(
                 EncodingState.Idle -> Unit
             }
         }
+    }
+
+    if (showTurboConfirmDialog && state is EncodingState.Running && state.canSwitchToTurbo) {
+        AlertDialog(
+            onDismissRequest = { showTurboConfirmDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Speed,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.turboConfirmTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = strings.turboConfirmBody,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = strings.turboConfirmQuestion,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showTurboConfirmDialog = false
+                        onSwitchToTurbo()
+                    },
+                    modifier = Modifier.testTag("turbo_confirm_yes_button")
+                ) {
+                    Text(strings.turboConfirmYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showTurboConfirmDialog = false },
+                    modifier = Modifier.testTag("turbo_confirm_no_button")
+                ) {
+                    Text(strings.turboConfirmNo)
+                }
+            }
+        )
     }
 }
 

@@ -358,14 +358,20 @@ sealed interface EncodingState {
         val logs: List<String>,
         val summaryBanner: String,
         val videoSpecsSummary: String? = null,
-        val presetLabel: String? = null
+        val presetLabel: String? = null,
+        val isHardwareTurbo: Boolean = false,
+        val canSwitchToTurbo: Boolean = false,
+        val isTurboPreRemux: Boolean = false,
+        val elapsedSec: Double = 0.0
     ) : EncodingState
 
     data class Success(
         val outputs: List<CompletedOutput>,
         val modeTitle: String,
         val summaryMessage: String,
-        val logs: List<String>
+        val logs: List<String>,
+        val isHardwareTurbo: Boolean = false,
+        val elapsedSec: Double = 0.0
     ) : EncodingState
 
     data class Failed(
@@ -373,6 +379,32 @@ sealed interface EncodingState {
         val errorMessage: String,
         val hint: String?,
         val logs: List<String>,
-        val wasCancelled: Boolean = false
+        val wasCancelled: Boolean = false,
+        val isHardwareTurbo: Boolean = false,
+        val isUnsupportedFormat: Boolean = false,
+        val hasTriedRemux: Boolean = false
     ) : EncodingState
+}
+
+fun EncodingState.isHardwareTurboState(): Boolean = when (this) {
+    is EncodingState.Running -> isHardwareTurbo
+    is EncodingState.Success -> isHardwareTurbo
+    is EncodingState.Failed -> isHardwareTurbo
+    EncodingState.Idle -> false
+}
+
+fun supportsMedia3HardwareTurbo(media: MediaInfo, config: ModeConfigState): Boolean {
+    if (!media.hasVideo) return false
+    return when (config.mode) {
+        ProcessingMode.DISCORD_20MB,
+        ProcessingMode.WHATSAPP_100MB,
+        ProcessingMode.GMAIL_25MB,
+        ProcessingMode.CUSTOM_SIZE,
+        ProcessingMode.VIDEO_ONLY_CRF,
+        ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
+        ProcessingMode.TRIM_VIDEO ->
+            config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
+                config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
+        else -> false
+    }
 }

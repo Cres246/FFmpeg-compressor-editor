@@ -91,6 +91,7 @@ import com.example.domain.LocalAppStrings
 import com.example.domain.ModeCategory
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
+import com.example.domain.isHardwareTurboState
 import com.example.domain.stringsFor
 import com.example.ui.MainViewModel
 import com.example.ui.components.MediaHeroCard
@@ -101,6 +102,7 @@ import com.example.ui.components.TrimFeatureCard
 import com.example.ui.screens.HistorySheet
 import com.example.ui.screens.ModeConfigScreen
 import com.example.ui.screens.ProcessingScreen
+import com.example.ui.screens.TurboProcessingScreen
 import com.example.ui.theme.FFLabTheme
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
@@ -110,7 +112,8 @@ import com.example.ui.theme.SpaceGroteskFontFamily
 private enum class AppScreenStage(val depth: Int) {
     HOME(0),
     CONFIG(1),
-    PROCESSING(2)
+    PROCESSING(2),
+    TURBO_PROCESSING(3)
 }
 
 class MainActivity : ComponentActivity() {
@@ -348,19 +351,24 @@ private fun FFLabAppRoot(
     val otherModes = ProcessingMode.entries.filter { it.category == ModeCategory.OTHER }
 
     val currentStage = when {
+        encodingState.isHardwareTurboState() -> AppScreenStage.TURBO_PROCESSING
         encodingState !is EncodingState.Idle -> AppScreenStage.PROCESSING
         uiState.activeConfig != null && uiState.mediaInfo != null -> AppScreenStage.CONFIG
         else -> AppScreenStage.HOME
     }
 
-    // Keep the last rendered screen payload alive while exiting so zoom-out never collapses or wipes
+    // Keep the last rendered screen payload alive while exiting so vertical slide transitions never collapse or flash
     var cachedConfig by remember { mutableStateOf<ModeConfigState?>(null) }
     if (uiState.activeConfig != null) {
         cachedConfig = uiState.activeConfig
     }
-    var cachedEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
-    if (encodingState !is EncodingState.Idle) {
-        cachedEncoding = encodingState
+    var cachedStandardEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
+    if (encodingState !is EncodingState.Idle && !encodingState.isHardwareTurboState()) {
+        cachedStandardEncoding = encodingState
+    }
+    var cachedTurboEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
+    if (encodingState.isHardwareTurboState()) {
+        cachedTurboEncoding = encodingState
     }
 
     CompositionLocalProvider(LocalAppStrings provides strings) {
@@ -422,12 +430,32 @@ private fun FFLabAppRoot(
                 label = "fflab_screen_vertical_push"
             ) { stage ->
                 when (stage) {
+                    AppScreenStage.TURBO_PROCESSING -> {
+                        val renderTurbo = if (encodingState.isHardwareTurboState()) encodingState else cachedTurboEncoding
+                        TurboProcessingScreen(
+                            state = renderTurbo,
+                            isActiveStage = currentStage == AppScreenStage.TURBO_PROCESSING,
+                            onCancel = viewModel::cancelEncoding,
+                            onOpenOutput = onOpenOutput,
+                            onShareOutput = onShareOutput,
+                            onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },
+                            onTryRemuxAndRetry = viewModel::tryRemuxThenRetryTurbo,
+                            onFallbackToFfmpeg = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = false) },
+                            onFallbackToFfmpegFast = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = true) }
+                        )
+                    }
+
                     AppScreenStage.PROCESSING -> {
-                        val renderEncoding = if (encodingState !is EncodingState.Idle) encodingState else cachedEncoding
+                        val renderEncoding = if (encodingState !is EncodingState.Idle && !encodingState.isHardwareTurboState()) {
+                            encodingState
+                        } else {
+                            cachedStandardEncoding
+                        }
                         ProcessingScreen(
                             state = renderEncoding,
                             isActiveStage = currentStage == AppScreenStage.PROCESSING,
                             onCancel = viewModel::cancelEncoding,
+                            onSwitchToTurbo = viewModel::switchCurrentJobToTurbo,
                             onOpenOutput = onOpenOutput,
                             onShareOutput = onShareOutput,
                             onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },

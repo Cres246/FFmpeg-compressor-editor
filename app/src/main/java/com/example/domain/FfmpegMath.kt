@@ -331,6 +331,23 @@ object FfmpegMath {
         return String.format(Locale.US, "%.1f %s", durationSec, strings.secondsUnitShort)
     }
 
+    fun formatElapsedTime(
+        elapsedSec: Double,
+        strings: AppStrings = AppLanguageController.currentStrings()
+    ): String {
+        val safe = elapsedSec.coerceAtLeast(0.0)
+        return if (safe < 60.0) {
+            String.format(Locale.US, "%.1f %s", safe, strings.secondsUnitShort)
+        } else {
+            val totalSec = safe.toLong()
+            val h = totalSec / 3600
+            val m = (totalSec % 3600) / 60
+            val s = totalSec % 60
+            if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+            else String.format(Locale.US, "%02d:%02d", m, s)
+        }
+    }
+
     /**
      * Exact live telemetry status line matching script's run_ff():
      * TR: Süre: 24.6 / 61.4 sn (%40) | 1.34x | 4820kb

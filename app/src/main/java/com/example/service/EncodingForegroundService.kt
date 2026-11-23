@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -16,6 +17,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.example.MainActivity
 import com.example.R
 import com.example.data.FfmpegEngine
+import com.example.data.Media3TurboEngine
 import com.example.data.MediaStoreSaver
 import com.example.data.PreferencesRepository
 import com.example.domain.AppLanguageController
@@ -29,6 +31,7 @@ import com.example.domain.ProcessingMode
 import com.example.domain.TrimSubMode
 import com.example.domain.localizedLabel
 import com.example.domain.localizedTitle
+import com.example.domain.supportsMedia3HardwareTurbo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +44,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class PendingEncodingJob(
@@ -61,6 +65,7 @@ object EncodingJobController {
     val cancelGeneration: StateFlow<Long> = _cancelGeneration.asStateFlow()
 
     private val runCounter = AtomicLong(0L)
+    private val hasActiveTurboEngine = AtomicBoolean(false)
 
     @Volatile
     private var activeRunId: Long = 0L
@@ -71,11 +76,16 @@ object EncodingJobController {
     @Volatile
     var pendingJob: PendingEncodingJob? = null
 
+    @Volatile
+    var activeJobSnapshot: PendingEncodingJob? = null
+
     fun beginNewRun(): Long {
         val nextId = runCounter.incrementAndGet()
         activeRunId = nextId
         return nextId
     }
+
+    fun currentActiveRunId(): Long = activeRunId
 
     fun isRunActive(runId: Long): Boolean {
         return runId > 0L && activeRunId == runId && cancelledRunId != runId
@@ -87,9 +97,60 @@ object EncodingJobController {
         }
     }
 
+    fun markTurboEngineActive(active: Boolean) {
+        hasActiveTurboEngine.set(active)
+    }
+
     /**
-     * Atomically invalidates the active run so no late FFmpegKit progress/log/error callback can
-     * ever reopen ProcessingScreen or trap the user, cancels native FFmpeg, and returns to Idle.
+     * Atomically cancels an active FFmpeg job and hands off immediately to Media3 Hardware Turbo
+     * without ever emitting EncodingState.Idle, enabling a seamless vertical slide transition.
+     */
+    fun switchActiveRunToTurbo(
+        media: MediaInfo,
+        config: ModeConfigState,
+        initialTurboState: EncodingState.Running
+    ): Long {
+        val prev = activeRunId
+        if (prev > 0L) {
+            cancelledRunId = prev
+        }
+        val nextId = runCounter.incrementAndGet()
+        activeRunId = nextId
+        val nextJob = PendingEncodingJob(nextId, media, config)
+        pendingJob = nextJob
+        activeJobSnapshot = nextJob
+        hasActiveTurboEngine.set(true)
+        _state.value = initialTurboState
+        runCatching { FFmpegKit.cancel() }
+        return nextId
+    }
+
+    /**
+     * Atomically hands off from a failed Turbo run to a one-time lossless FFmpeg MP4 remux
+     * without ever emitting Idle, enabling Slide 1 (Turbo -> FFmpeg Processing).
+     */
+    fun switchActiveRunToRemuxThenTurbo(
+        media: MediaInfo,
+        config: ModeConfigState,
+        initialRemuxState: EncodingState.Running
+    ): Long {
+        val prev = activeRunId
+        if (prev > 0L) {
+            cancelledRunId = prev
+        }
+        val nextId = runCounter.incrementAndGet()
+        activeRunId = nextId
+        val nextJob = PendingEncodingJob(nextId, media, config)
+        pendingJob = nextJob
+        activeJobSnapshot = nextJob
+        _state.value = initialRemuxState
+        return nextId
+    }
+
+    /**
+     * Atomically invalidates the active run so no late FFmpegKit or Media3 progress/log/error
+     * callback can ever reopen ProcessingScreen or trap the user, cancels native engines,
+     * and returns to Idle. Never loads Media3 classes if Turbo was never used.
      */
     fun cancelActiveRun() {
         val current = activeRunId
@@ -98,12 +159,18 @@ object EncodingJobController {
         }
         activeRunId = 0L
         pendingJob = null
+        activeJobSnapshot = null
         _state.value = EncodingState.Idle
         _cancelGeneration.value = _cancelGeneration.value + 1L
         runCatching { FFmpegKit.cancel() }
+        if (hasActiveTurboEngine.getAndSet(false)) {
+            runCatching { Media3TurboEngine.cancelActive() }
+        }
     }
 
     fun forceResetToIdle() {
+        activeJobSnapshot = null
+        hasActiveTurboEngine.set(false)
         _state.value = EncodingState.Idle
     }
 }
@@ -114,13 +181,85 @@ class EncodingForegroundService : Service() {
         private const val CHANNEL_ID = "fflab_live_encoding_channel"
         private const val NOTIFICATION_ID = 4102
         const val ACTION_START = "com.example.fflab.ACTION_START_ENCODING"
+        const val ACTION_START_TURBO = "com.example.fflab.ACTION_START_TURBO_ENCODING"
+        const val ACTION_REMUX_THEN_TURBO = "com.example.fflab.ACTION_REMUX_THEN_TURBO"
         const val ACTION_CANCEL = "com.example.fflab.ACTION_CANCEL_ENCODING"
 
         fun startEncoding(context: Context, media: MediaInfo, config: ModeConfigState) {
             val runId = EncodingJobController.beginNewRun()
-            EncodingJobController.pendingJob = PendingEncodingJob(runId, media, config)
+            val job = PendingEncodingJob(runId, media, config)
+            EncodingJobController.pendingJob = job
+            EncodingJobController.activeJobSnapshot = job
             val intent = Intent(context, EncodingForegroundService::class.java).apply {
                 action = ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun startTurboEncoding(context: Context, media: MediaInfo, config: ModeConfigState) {
+            val s = AppLanguageController.currentStrings()
+            val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(s)}"
+            val baseOut = FfmpegMath.computeOutputFileName(media, config, s)
+            val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
+            val specs = buildTurboSpecsSummary(media, config)
+            val initialRunning = EncodingState.Running(
+                modeTitle = modeTitle,
+                outputFileName = turboOut,
+                passIndex = 1,
+                totalPasses = 1,
+                statusMessage = s.turboStatusPreparing,
+                currentTimeSec = 0.0,
+                totalDurationSec = media.durationSec,
+                percent = 0,
+                speed = "HW",
+                sizeKb = 0L,
+                logs = emptyList(),
+                summaryBanner = buildTurboSummaryBanner(media, config, s),
+                videoSpecsSummary = specs,
+                presetLabel = "MediaCodec",
+                isHardwareTurbo = true,
+                canSwitchToTurbo = false,
+                elapsedSec = 0.0
+            )
+            EncodingJobController.switchActiveRunToTurbo(media, config, initialRunning)
+            val intent = Intent(context, EncodingForegroundService::class.java).apply {
+                action = ACTION_START_TURBO
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun startRemuxThenTurbo(context: Context, media: MediaInfo, config: ModeConfigState) {
+            val s = AppLanguageController.currentStrings()
+            val initialRemux = EncodingState.Running(
+                modeTitle = s.turboRemuxModeTitle,
+                outputFileName = "turbo_remux.mp4",
+                passIndex = 1,
+                totalPasses = 1,
+                statusMessage = s.turboRemuxStepStatus,
+                currentTimeSec = 0.0,
+                totalDurationSec = media.durationSec,
+                percent = if (media.durationSec != null) 0 else null,
+                speed = "...",
+                sizeKb = 0L,
+                logs = emptyList(),
+                summaryBanner = s.bannerRemux,
+                videoSpecsSummary = buildTurboSpecsSummary(media, config),
+                presetLabel = null,
+                isHardwareTurbo = false,
+                canSwitchToTurbo = false,
+                isTurboPreRemux = true
+            )
+            EncodingJobController.switchActiveRunToRemuxThenTurbo(media, config, initialRemux)
+            val intent = Intent(context, EncodingForegroundService::class.java).apply {
+                action = ACTION_REMUX_THEN_TURBO
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -135,6 +274,49 @@ class EncodingForegroundService : Service() {
                 action = ACTION_CANCEL
             }
             runCatching { context.startService(intent) }
+        }
+
+        internal fun buildTurboSpecsSummary(media: MediaInfo, config: ModeConfigState): String {
+            val (outW, outH) = Media3TurboEngine.resolveTargetDimensions(media, config)
+            val resPart = "${outW}×${outH}"
+            val supportsFps = config.mode == ProcessingMode.DISCORD_20MB ||
+                config.mode == ProcessingMode.WHATSAPP_100MB ||
+                config.mode == ProcessingMode.GMAIL_25MB ||
+                config.mode == ProcessingMode.CUSTOM_SIZE ||
+                (config.mode == ProcessingMode.TRIM_VIDEO &&
+                    (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY || config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC))
+            val fpsPart = when {
+                supportsFps && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
+                media.fps != null -> {
+                    val rounded = kotlin.math.round(media.fps)
+                    if (kotlin.math.abs(media.fps - rounded) < 0.08) "${rounded.toInt()} FPS"
+                    else "${String.format(java.util.Locale.US, "%.2f", media.fps).trimEnd('0').trimEnd('.')} FPS"
+                }
+                else -> null
+            }
+            val codecPart = config.codec.tag
+            val bitPart = config.bitDepth.label
+            return listOfNotNull(codecPart, resPart, fpsPart, bitPart).joinToString(" · ")
+        }
+
+        internal fun buildTurboSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
+            val bps = Media3TurboEngine.resolveTargetVideoBitrateBps(media, config)
+            val kbps = (bps / 1000).coerceAtLeast(100)
+            val audioPart = if (!media.hasAudio) s.bannerSilentAudio else "AAC"
+            return when (config.mode) {
+                ProcessingMode.DISCORD_20MB -> "< 20 MB · ${config.codec.tag} ${kbps}k · $audioPart"
+                ProcessingMode.WHATSAPP_100MB -> "< 100 MB · ${config.codec.tag} ${kbps}k · $audioPart"
+                ProcessingMode.GMAIL_25MB -> "< 25 MB · ${config.codec.tag} ${kbps}k · $audioPart"
+                ProcessingMode.CUSTOM_SIZE -> {
+                    val mb = FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
+                    "< ${FfmpegMath.formatMbTag(mb)} MB · ${config.codec.tag} ${kbps}k · $audioPart"
+                }
+                ProcessingMode.TRIM_VIDEO -> {
+                    val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
+                    "${startStr ?: "00:00"} → ${endStr ?: s.trimEndPlaceholder} · ${config.codec.tag} ${kbps}k"
+                }
+                else -> "${config.codec.tag} ${kbps}k · $audioPart"
+            }
         }
     }
 
@@ -194,6 +376,60 @@ class EncodingForegroundService : Service() {
                     runEncodingPipeline(jobData.runId, jobData.media, jobData.config)
                 }
             }
+            ACTION_START_TURBO -> {
+                val jobData = EncodingJobController.pendingJob
+                if (jobData == null || !EncodingJobController.isRunActive(jobData.runId)) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                val s = AppLanguageController.currentStrings()
+                startForegroundCompat(
+                    buildNotification(
+                        title = "${s.turboNotifTitle} · ${jobData.config.mode.localizedTitle(s)}",
+                        text = s.turboStatusPreparing,
+                        percent = 0,
+                        passIndex = 1,
+                        totalPasses = 1
+                    )
+                )
+                acquireWakeLock()
+                cpuBooster.stop()
+                activeJob?.cancel()
+                activeJob = serviceScope.launch {
+                    runTurboPipeline(
+                        runId = jobData.runId,
+                        media = jobData.media,
+                        config = jobData.config,
+                        inputUriOverride = null,
+                        hasTriedRemux = false,
+                        extraDirToCleanup = null
+                    )
+                }
+            }
+            ACTION_REMUX_THEN_TURBO -> {
+                val jobData = EncodingJobController.pendingJob
+                if (jobData == null || !EncodingJobController.isRunActive(jobData.runId)) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                val s = AppLanguageController.currentStrings()
+                startForegroundCompat(
+                    buildNotification(
+                        title = "FFmpeg · ${s.turboRemuxModeTitle}",
+                        text = s.turboRemuxStepStatus,
+                        percent = 0,
+                        passIndex = 1,
+                        totalPasses = 1
+                    )
+                )
+                acquireWakeLock()
+                activeJob?.cancel()
+                activeJob = serviceScope.launch {
+                    runRemuxThenTurboPipeline(jobData.runId, jobData.media, jobData.config)
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -209,6 +445,7 @@ class EncodingForegroundService : Service() {
         val summaryBanner = buildSummaryBanner(media, config, s)
         val videoSpecsSummary = buildVideoSpecsSummary(media, config)
         val presetLabel = resolvePresetDisplayLabel(config)
+        val canSwitchToTurbo = supportsMedia3HardwareTurbo(media, config)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -262,7 +499,8 @@ class EncodingForegroundService : Service() {
                         logs = synchronized(collectedLogs) { collectedLogs.toList() },
                         summaryBanner = summaryBanner,
                         videoSpecsSummary = videoSpecsSummary,
-                        presetLabel = presetLabel
+                        presetLabel = presetLabel,
+                        canSwitchToTurbo = canSwitchToTurbo
                     )
                 )
                 updateNotificationThrottled(
@@ -306,7 +544,8 @@ class EncodingForegroundService : Service() {
                                 logs = synchronized(collectedLogs) { collectedLogs.toList() },
                                 summaryBanner = summaryBanner,
                                 videoSpecsSummary = videoSpecsSummary,
-                                presetLabel = presetLabel
+                                presetLabel = presetLabel,
+                                canSwitchToTurbo = canSwitchToTurbo
                             )
                         )
                         val notifText = FfmpegMath.formatTelemetryLine(
@@ -431,9 +670,412 @@ class EncodingForegroundService : Service() {
             // Zero-bloat guarantee: always wipe temp workDir (.log, .cutree, .mbtree, partial outputs)
             runCatching { workDir.deleteRecursively() }
             cpuBooster.stop()
-            releaseWakeLock()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            // Only tear down ForegroundService & WakeLock if another run (e.g. Media3 Turbo) hasn't taken over
+            if (EncodingJobController.isRunActive(runId) || EncodingJobController.currentActiveRunId() == 0L) {
+                releaseWakeLock()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
+    }
+
+    /**
+     * One-time automatic lossless MP4 remux via FFmpeg (-c copy) followed immediately (without
+     * asking the user again) by sliding back to the Media3 car speedometer screen to retry.
+     */
+    private suspend fun runRemuxThenTurboPipeline(
+        runId: Long,
+        media: MediaInfo,
+        config: ModeConfigState
+    ) {
+        cpuBooster.start()
+        val s = AppLanguageController.currentStrings()
+        val remuxWorkDir = FfmpegEngine.createWorkDir(applicationContext)
+        val remuxFile = File(remuxWorkDir, "turbo_remux.mp4")
+        val collectedLogs = mutableListOf<String>()
+        val modeLocalizedTitle = config.mode.localizedTitle(s)
+        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val specsSummary = buildTurboSpecsSummary(media, config)
+
+        fun appendLog(line: String) {
+            synchronized(collectedLogs) {
+                if (collectedLogs.lastOrNull() == line) return
+                if (collectedLogs.size >= 80) collectedLogs.removeAt(0)
+                collectedLogs.add(line)
+            }
+        }
+
+        appendLog("${s.logTagStarted} ${s.turboRemuxModeTitle} — ${s.bannerRemux}")
+        var handedOffToTurbo = false
+
+        try {
+            val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+            val remuxArgs = listOf(
+                "-y",
+                "-i", inputPath,
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-c", "copy",
+                "-sn", "-dn",
+                "-movflags", "+faststart",
+                remuxFile.absolutePath
+            )
+
+            val stepResult = FfmpegEngine.executeStep(
+                args = remuxArgs,
+                expectedDurationSec = media.durationSec,
+                onProgress = { curSec, pct, spd, kb ->
+                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                    cpuBooster.pulseIfDue()
+                    val liveS = AppLanguageController.currentStrings()
+                    EncodingJobController.updateStateIfActive(
+                        runId,
+                        EncodingState.Running(
+                            modeTitle = liveS.turboRemuxModeTitle,
+                            outputFileName = remuxFile.name,
+                            passIndex = 1,
+                            totalPasses = 1,
+                            statusMessage = liveS.turboRemuxStepStatus,
+                            currentTimeSec = curSec,
+                            totalDurationSec = media.durationSec,
+                            percent = pct,
+                            speed = spd,
+                            sizeKb = kb,
+                            logs = synchronized(collectedLogs) { collectedLogs.toList() },
+                            summaryBanner = liveS.bannerRemux,
+                            videoSpecsSummary = specsSummary,
+                            presetLabel = null,
+                            isHardwareTurbo = false,
+                            canSwitchToTurbo = false,
+                            isTurboPreRemux = true
+                        )
+                    )
+                    updateNotificationThrottled(
+                        runId = runId,
+                        title = "FFmpeg · ${liveS.turboRemuxModeTitle}",
+                        text = FfmpegMath.formatTelemetryLine(curSec, media.durationSec, pct, spd, kb, includePercent = false, strings = liveS),
+                        percent = pct,
+                        passIndex = 1,
+                        totalPasses = 1,
+                        force = false
+                    )
+                },
+                onLogLine = { line ->
+                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                    appendLog(line)
+                    val cur = EncodingJobController.state.value
+                    if (cur is EncodingState.Running && !cur.isHardwareTurbo) {
+                        EncodingJobController.updateStateIfActive(
+                            runId,
+                            cur.copy(logs = synchronized(collectedLogs) { collectedLogs.toList() })
+                        )
+                    }
+                }
+            )
+
+            if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
+                return
+            }
+
+            if (!stepResult.success || !remuxFile.exists() || remuxFile.length() == 0L) {
+                val curS = AppLanguageController.currentStrings()
+                EncodingJobController.updateStateIfActive(
+                    runId,
+                    EncodingState.Failed(
+                        modeTitle = modeTitle,
+                        errorMessage = curS.turboAfterRemuxFailedBody,
+                        hint = curS.turboAfterRemuxFastHint,
+                        logs = emptyList(),
+                        wasCancelled = false,
+                        isHardwareTurbo = true,
+                        isUnsupportedFormat = true,
+                        hasTriedRemux = true
+                    )
+                )
+                return
+            }
+
+            // Lossless remux succeeded! Slide automatically back to the speedometer UI (Slide 2)
+            // without prompting the user again, and retry Media3 hardware encoding on the remuxed MP4.
+            cpuBooster.stop()
+            val curS = AppLanguageController.currentStrings()
+            val baseOut = FfmpegMath.computeOutputFileName(media, config, curS)
+            val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
+            EncodingJobController.markTurboEngineActive(true)
+            EncodingJobController.updateStateIfActive(
+                runId,
+                EncodingState.Running(
+                    modeTitle = modeTitle,
+                    outputFileName = turboOut,
+                    passIndex = 1,
+                    totalPasses = 1,
+                    statusMessage = curS.turboStatusPreparing,
+                    currentTimeSec = 0.0,
+                    totalDurationSec = media.durationSec,
+                    percent = 0,
+                    speed = "HW",
+                    sizeKb = 0L,
+                    logs = emptyList(),
+                    summaryBanner = buildTurboSummaryBanner(media, config, curS),
+                    videoSpecsSummary = specsSummary,
+                    presetLabel = "MediaCodec",
+                    isHardwareTurbo = true,
+                    canSwitchToTurbo = false,
+                    elapsedSec = 0.0
+                )
+            )
+            handedOffToTurbo = true
+            runTurboPipeline(
+                runId = runId,
+                media = media,
+                config = config,
+                inputUriOverride = Uri.fromFile(remuxFile),
+                hasTriedRemux = true,
+                extraDirToCleanup = remuxWorkDir
+            )
+        } catch (_: CancellationException) {
+            // Cancelled cleanly
+        } catch (_: Throwable) {
+            if (EncodingJobController.isRunActive(runId)) {
+                val curS = AppLanguageController.currentStrings()
+                EncodingJobController.updateStateIfActive(
+                    runId,
+                    EncodingState.Failed(
+                        modeTitle = modeTitle,
+                        errorMessage = curS.turboAfterRemuxFailedBody,
+                        hint = curS.turboAfterRemuxFastHint,
+                        logs = emptyList(),
+                        isHardwareTurbo = true,
+                        isUnsupportedFormat = true,
+                        hasTriedRemux = true
+                    )
+                )
+            }
+        } finally {
+            cpuBooster.stop()
+            if (!handedOffToTurbo) {
+                runCatching { remuxWorkDir.deleteRecursively() }
+                if (EncodingJobController.isRunActive(runId) || EncodingJobController.currentActiveRunId() == 0L) {
+                    releaseWakeLock()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+        }
+    }
+
+    private suspend fun runTurboPipeline(
+        runId: Long,
+        media: MediaInfo,
+        config: ModeConfigState,
+        inputUriOverride: Uri?,
+        hasTriedRemux: Boolean,
+        extraDirToCleanup: File?
+    ) {
+        EncodingJobController.markTurboEngineActive(true)
+        val s = AppLanguageController.currentStrings()
+        val workDir = FfmpegEngine.createWorkDir(applicationContext)
+        val modeLocalizedTitle = config.mode.localizedTitle(s)
+        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val baseOutputName = FfmpegMath.computeOutputFileName(media, config, s)
+        val turboOutputName = Media3TurboEngine.buildTurboOutputFileName(baseOutputName)
+        val summaryBanner = buildTurboSummaryBanner(media, config, s)
+        val videoSpecsSummary = buildTurboSpecsSummary(media, config)
+
+        try {
+            val tempOutFile = File(workDir, turboOutputName)
+            var lastKnownPercent = 0
+
+            val result = Media3TurboEngine.transcode(
+                context = applicationContext,
+                media = media,
+                config = config,
+                outputFile = tempOutFile,
+                inputUriOverride = inputUriOverride,
+                onProgress = { pct, elapsedSec ->
+                    if (!EncodingJobController.isRunActive(runId)) return@transcode
+                    val liveS = AppLanguageController.currentStrings()
+                    if (pct >= 0) {
+                        lastKnownPercent = pct.coerceIn(0, 100)
+                    }
+                    val statusMsg = if (pct < 0 && lastKnownPercent == 0) {
+                        liveS.turboStatusPreparing
+                    } else {
+                        liveS.turboStatusEncoding
+                    }
+                    EncodingJobController.updateStateIfActive(
+                        runId,
+                        EncodingState.Running(
+                            modeTitle = modeTitle,
+                            outputFileName = turboOutputName,
+                            passIndex = 1,
+                            totalPasses = 1,
+                            statusMessage = statusMsg,
+                            currentTimeSec = elapsedSec,
+                            totalDurationSec = media.durationSec,
+                            percent = lastKnownPercent,
+                            speed = "HW",
+                            sizeKb = if (tempOutFile.exists()) tempOutFile.length() / 1024L else 0L,
+                            logs = emptyList(),
+                            summaryBanner = summaryBanner,
+                            videoSpecsSummary = videoSpecsSummary,
+                            presetLabel = "MediaCodec",
+                            isHardwareTurbo = true,
+                            canSwitchToTurbo = false,
+                            elapsedSec = elapsedSec
+                        )
+                    )
+                    val elapsedText = FfmpegMath.formatElapsedTime(elapsedSec, liveS)
+                    updateNotificationThrottled(
+                        runId = runId,
+                        title = "${liveS.turboNotifTitle} · ${config.mode.localizedTitle(liveS)}",
+                        text = "${liveS.turboElapsedLabel(elapsedText)} · $videoSpecsSummary",
+                        percent = lastKnownPercent,
+                        passIndex = 1,
+                        totalPasses = 1,
+                        force = false
+                    )
+                }
+            )
+
+            if (!EncodingJobController.isRunActive(runId) || result.cancelled) {
+                return
+            }
+
+            if (!result.success) {
+                val curS = AppLanguageController.currentStrings()
+                val detailSuffix = listOfNotNull(result.errorCodeName, result.errorDetail)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" — ")
+                val errorMessage = when {
+                    hasTriedRemux -> {
+                        if (detailSuffix.isNotBlank()) "${curS.turboAfterRemuxFailedBody}\n($detailSuffix)"
+                        else curS.turboAfterRemuxFailedBody
+                    }
+                    result.isUnsupportedFormat -> {
+                        if (detailSuffix.isNotBlank()) "${curS.turboUnsupportedBody}\n($detailSuffix)"
+                        else curS.turboUnsupportedBody
+                    }
+                    else -> detailSuffix.ifBlank { curS.errUnexpected }
+                }
+                val hint = when {
+                    hasTriedRemux -> curS.turboAfterRemuxFastHint
+                    result.isUnsupportedFormat -> curS.turboUnsupportedHint
+                    else -> curS.turboErrorGenericHint
+                }
+                EncodingJobController.updateStateIfActive(
+                    runId,
+                    EncodingState.Failed(
+                        modeTitle = modeTitle,
+                        errorMessage = errorMessage,
+                        hint = hint,
+                        logs = emptyList(),
+                        wasCancelled = false,
+                        isHardwareTurbo = true,
+                        isUnsupportedFormat = result.isUnsupportedFormat || hasTriedRemux,
+                        hasTriedRemux = hasTriedRemux
+                    )
+                )
+                return
+            }
+
+            if (!tempOutFile.exists() || tempOutFile.length() == 0L) {
+                val curS = AppLanguageController.currentStrings()
+                EncodingJobController.updateStateIfActive(
+                    runId,
+                    EncodingState.Failed(
+                        modeTitle = modeTitle,
+                        errorMessage = if (hasTriedRemux) curS.turboAfterRemuxFailedBody else curS.errOutputNotCreated,
+                        hint = if (hasTriedRemux) curS.turboAfterRemuxFastHint else curS.turboErrorGenericHint,
+                        logs = emptyList(),
+                        isHardwareTurbo = true,
+                        isUnsupportedFormat = hasTriedRemux,
+                        hasTriedRemux = hasTriedRemux
+                    )
+                )
+                return
+            }
+
+            val curS = AppLanguageController.currentStrings()
+            EncodingJobController.updateStateIfActive(
+                runId,
+                EncodingState.Running(
+                    modeTitle = modeTitle,
+                    outputFileName = turboOutputName,
+                    passIndex = 1,
+                    totalPasses = 1,
+                    statusMessage = curS.turboStatusSaving,
+                    currentTimeSec = result.elapsedSec,
+                    totalDurationSec = media.durationSec,
+                    percent = 100,
+                    speed = "HW",
+                    sizeKb = tempOutFile.length() / 1024L,
+                    logs = emptyList(),
+                    summaryBanner = summaryBanner,
+                    videoSpecsSummary = videoSpecsSummary,
+                    presetLabel = "MediaCodec",
+                    isHardwareTurbo = true,
+                    canSwitchToTurbo = false,
+                    elapsedSec = result.elapsedSec
+                )
+            )
+
+            val saved = MediaStoreSaver.saveToPublicStorage(
+                context = applicationContext,
+                sourceFile = tempOutFile,
+                desiredFileName = turboOutputName
+            )
+            val completed = CompletedOutput(
+                id = UUID.randomUUID().toString(),
+                fileName = turboOutputName,
+                displayPath = saved.displayPath,
+                contentUriString = saved.uri.toString(),
+                mimeType = saved.mimeType,
+                outputSizeBytes = saved.sizeBytes,
+                inputSizeBytes = media.sizeBytes,
+                modeLabel = "${config.mode.localizedTitle(curS)} (Turbo)",
+                timestampMs = System.currentTimeMillis()
+            )
+            runCatching { PreferencesRepository(applicationContext).appendHistory(listOf(completed)) }
+
+            EncodingJobController.updateStateIfActive(
+                runId,
+                EncodingState.Success(
+                    outputs = listOf(completed),
+                    modeTitle = modeTitle,
+                    summaryMessage = curS.successOutputSize(FfmpegMath.formatSizeBytes(saved.sizeBytes)),
+                    logs = emptyList(),
+                    isHardwareTurbo = true,
+                    elapsedSec = result.elapsedSec
+                )
+            )
+        } catch (_: CancellationException) {
+            // Cancelled cleanly
+        } catch (t: Throwable) {
+            if (EncodingJobController.isRunActive(runId)) {
+                val curS = AppLanguageController.currentStrings()
+                EncodingJobController.updateStateIfActive(
+                    runId,
+                    EncodingState.Failed(
+                        modeTitle = modeTitle,
+                        errorMessage = if (hasTriedRemux) curS.turboAfterRemuxFailedBody else (t.message ?: curS.errUnexpected),
+                        hint = if (hasTriedRemux) curS.turboAfterRemuxFastHint else curS.turboErrorGenericHint,
+                        logs = emptyList(),
+                        isHardwareTurbo = true,
+                        isUnsupportedFormat = hasTriedRemux,
+                        hasTriedRemux = hasTriedRemux
+                    )
+                )
+            }
+        } finally {
+            EncodingJobController.markTurboEngineActive(false)
+            runCatching { workDir.deleteRecursively() }
+            runCatching { extraDirToCleanup?.deleteRecursively() }
+            if (EncodingJobController.isRunActive(runId) || EncodingJobController.currentActiveRunId() == 0L) {
+                releaseWakeLock()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 
