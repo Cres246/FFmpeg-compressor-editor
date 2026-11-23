@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,7 +58,8 @@ import com.example.domain.localizedSubtitle
 import com.example.domain.localizedTitle
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
-import java.util.Locale
+import com.example.ui.theme.PlayfairDisplayFontFamily
+import com.example.ui.theme.SpaceGroteskFontFamily
 
 private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
     ProcessingMode.DISCORD_20MB -> Icons.Rounded.Forum
@@ -79,27 +81,44 @@ fun ModeCategoryHeader(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
-    val upperLocale = if (strings.language.code == "tr") Locale("tr", "TR") else Locale.US
+    val warmLightBrown = MaterialTheme.colorScheme.secondary
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(19.dp)
+                .clip(RoundedCornerShape(50))
+                .background(warmLightBrown.copy(alpha = 0.85f))
+        )
         Text(
-            text = category.localizedTitle(strings).uppercase(upperLocale),
-            style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = category.localizedTitle(strings),
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontFamily = PlayfairDisplayFontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontStyle = FontStyle.Italic,
+                fontSize = 19.sp,
+                lineHeight = 24.sp,
+                letterSpacing = 0.25.sp
+            ),
+            color = warmLightBrown
         )
         HorizontalDivider(
             modifier = Modifier.weight(1f),
             thickness = 1.dp,
-            color = LocalExtendedColors.current.subtleBorder
+            color = warmLightBrown.copy(alpha = 0.22f)
         )
     }
 }
 
 /**
- * Group 1: Compact 2x2 grid for Hedef Boyut / Target Size (Discord, WhatsApp, Gmail, Özel Boyut).
+ * Group 1: First 3 presets (Discord, WhatsApp, Gmail) as side-by-side vertical cards,
+ * with a wide full-width horizontal card for Özel Boyut / Custom Size right underneath.
  */
 @Composable
 fun TargetSizeModeRow(
@@ -109,17 +128,19 @@ fun TargetSizeModeRow(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
-    val rows = modes.chunked(2)
+    val presetModes = modes.filter { it != ProcessingMode.CUSTOM_SIZE }
+    val customSizeMode = modes.firstOrNull { it == ProcessingMode.CUSTOM_SIZE }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        rows.forEach { rowModes ->
+        if (presetModes.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                rowModes.forEach { mode ->
+                presetModes.forEach { mode ->
                     val available = mediaInfo != null &&
                         (!mode.requiresAudio || mediaInfo.hasAudio) &&
                         (!mode.requiresVideo || mediaInfo.hasVideo)
@@ -137,17 +158,16 @@ fun TargetSizeModeRow(
                         border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
                         tonalElevation = 0.dp
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 54.dp)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(RoundedCornerShape(9.dp))
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -155,31 +175,120 @@ fun TargetSizeModeRow(
                                     imageVector = modeIcon(mode),
                                     contentDescription = mode.localizedTitle(strings),
                                     tint = iconColor,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
-                            Spacer(Modifier.width(9.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = mode.localizedShortTitle(strings),
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = mode.localizedShortSubtitle(strings),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = mode.localizedShortTitle(strings),
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = mode.localizedShortSubtitle(strings),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }
-                if (rowModes.size == 1) {
-                    Spacer(Modifier.weight(1f))
+            }
+        }
+
+        if (customSizeMode != null) {
+            val available = mediaInfo != null &&
+                (!customSizeMode.requiresAudio || mediaInfo.hasAudio) &&
+                (!customSizeMode.requiresVideo || mediaInfo.hasVideo)
+            val iconColor = MaterialTheme.colorScheme.primary
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .alpha(if (available) 1f else 0.84f)
+                    .clip(MaterialTheme.shapes.medium)
+                    .clickable { onSelectMode(customSizeMode) }
+                    .testTag("mode_card_${customSizeMode.number}"),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.30f)),
+                tonalElevation = 0.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 78.dp)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = modeIcon(customSizeMode),
+                            contentDescription = customSizeMode.localizedTitle(strings),
+                            tint = iconColor,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = customSizeMode.localizedTitle(strings),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontFamily = SpaceGroteskFontFamily,
+                                fontSize = 16.5.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = customSizeMode.localizedSubtitle(strings),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                        border = BorderStroke(0.9.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+                    ) {
+                        Text(
+                            text = customSizeMode.localizedShortSubtitle(strings),
+                            style = MonoLabelStyle.copy(
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.25.sp
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }

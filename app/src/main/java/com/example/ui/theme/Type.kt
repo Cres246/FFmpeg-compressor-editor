@@ -29,6 +29,13 @@ val JetBrainsMonoFontFamily = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.Bold)
 )
 
+val PlayfairDisplayFontFamily = FontFamily(
+    Font(R.font.playfair_display, FontWeight.Normal),
+    Font(R.font.playfair_display, FontWeight.Medium),
+    Font(R.font.playfair_display, FontWeight.SemiBold),
+    Font(R.font.playfair_display, FontWeight.Bold)
+)
+
 val MonoLabelStyle = TextStyle(
     fontFamily = JetBrainsMonoFontFamily,
     fontWeight = FontWeight.Medium,
