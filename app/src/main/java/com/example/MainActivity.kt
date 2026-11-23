@@ -1,11 +1,14 @@
 package com.example
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,9 +39,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -46,11 +52,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,10 +101,12 @@ private enum class AppScreenStage(val depth: Int) {
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private var isIgnoringBatteryOptimizations by mutableStateOf(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLanguageController.init(applicationContext)
+        isIgnoringBatteryOptimizations = checkIgnoringBatteryOptimizations()
         enableEdgeToEdge()
         requestHighestRefreshRate()
         handleIncomingIntent(intent)
@@ -105,6 +115,8 @@ class MainActivity : ComponentActivity() {
             FFLabTheme {
                 FFLabAppRoot(
                     viewModel = viewModel,
+                    isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                    onRequestIgnoreBatteryOptimizations = ::requestIgnoreBatteryOptimizations,
                     onOpenOutput = ::openCompletedOutput,
                     onShareOutput = ::shareCompletedOutput,
                     onPlaySourceMedia = ::openSourceMedia
@@ -116,7 +128,27 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppLanguageController.init(applicationContext)
+        isIgnoringBatteryOptimizations = checkIgnoringBatteryOptimizations()
         requestHighestRefreshRate()
+    }
+
+    private fun checkIgnoringBatteryOptimizations(): Boolean {
+        val pm = getSystemService(POWER_SERVICE) as? PowerManager ?: return true
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun requestIgnoreBatteryOptimizations() {
+        val directIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        runCatching {
+            startActivity(directIntent)
+        }.onFailure {
+            runCatching {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -239,6 +271,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun FFLabAppRoot(
     viewModel: MainViewModel,
+    isIgnoringBatteryOptimizations: Boolean,
+    onRequestIgnoreBatteryOptimizations: () -> Unit,
     onOpenOutput: (CompletedOutput) -> Unit,
     onShareOutput: (CompletedOutput) -> Unit,
     onPlaySourceMedia: (com.example.domain.MediaInfo) -> Unit
@@ -251,6 +285,7 @@ private fun FFLabAppRoot(
     val languagePreference by viewModel.languagePreference.collectAsStateWithLifecycle()
     val strings = remember(appLanguage) { stringsFor(appLanguage) }
     var showLanguageMenu by remember { mutableStateOf(false) }
+    var batteryDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
     // Zero-permission Android Photo Picker for gallery videos
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -617,6 +652,53 @@ private fun FFLabAppRoot(
                 onShareOutput(it)
             },
             onClearAll = viewModel::clearHistory
+        )
+    }
+
+    if (!isIgnoringBatteryOptimizations && !batteryDialogDismissed) {
+        AlertDialog(
+            onDismissRequest = { batteryDialogDismissed = true },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.BatteryChargingFull,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.batteryOptDialogTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = strings.batteryOptDialogBody,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        batteryDialogDismissed = true
+                        onRequestIgnoreBatteryOptimizations()
+                    },
+                    modifier = Modifier.testTag("battery_opt_allow_button")
+                ) {
+                    Text(strings.batteryOptAllowButton)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { batteryDialogDismissed = true },
+                    modifier = Modifier.testTag("battery_opt_later_button")
+                ) {
+                    Text(strings.batteryOptLaterButton)
+                }
+            }
         )
     }
     }

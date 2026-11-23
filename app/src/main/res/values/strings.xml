@@ -15,5 +15,5 @@
     <string name="action_back">Back</string>
     <string name="history_title">Recent Outputs</string>
     <string name="history_empty">No processed files yet. Select a video to get started.</string>
-    <string name="output_folder_label">Output Folder: Movies/TermuxVideo</string>
+    <string name="output_folder_label">Output Folder: Movies/FFmpeg</string>
 </resources>

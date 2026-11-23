@@ -22,11 +22,11 @@ data class SavedMediaResult(
 
 object MediaStoreSaver {
 
-    private const val SUBFOLDER = "TermuxVideo"
+    private const val SUBFOLDER = "FFmpeg"
 
     /**
-     * Saves a finished file into Movies/TermuxVideo (for video) or Music/TermuxVideo /
-     * Download/TermuxVideo (for audio/other) via MediaStore on API 29+ so it immediately appears
+     * Saves a finished file into Movies/FFmpeg (for video) or Music/FFmpeg /
+     * Download/FFmpeg (for audio/other) via MediaStore on API 29+ so it immediately appears
      * in Android Gallery & Recent Files without needing storage permissions or external scanners.
      */
     fun saveToPublicStorage(
@@ -39,7 +39,7 @@ object MediaStoreSaver {
         val isAudio = mimeType.startsWith("audio/")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Try primary collection first (Movies/TermuxVideo for video, Music/TermuxVideo for audio)
+            // Try primary collection first (Movies/FFmpeg for video, Music/FFmpeg for audio)
             val candidates: List<Pair<Uri, String>> = when {
                 isVideo -> listOf(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI to "${Environment.DIRECTORY_MOVIES}/$SUBFOLDER",
@@ -100,7 +100,7 @@ object MediaStoreSaver {
                 lastError
             )
         } else {
-            // API 24-28 fallback: /sdcard/Movies/TermuxVideo + MediaScannerConnection
+            // API 24-28 fallback: /sdcard/Movies/FFmpeg + MediaScannerConnection
             @Suppress("DEPRECATION")
             val moviesDir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),

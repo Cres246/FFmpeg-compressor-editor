@@ -45,6 +45,8 @@ data class WorkbenchUiState(
     val activeConfig: ModeConfigState? = null,
     val validationError: String? = null,
     val audioBitrateTouched: Boolean = false,
+    val fpsTouched: Boolean = false,
+    val resolutionTouched: Boolean = false,
     val showHistorySheet: Boolean = false
 )
 
@@ -148,12 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProcessingMode.CUSTOM_SIZE -> PresetOption.MEDIUM
             else -> PresetOption.FAST
         }
-        val defaultFps = when (mode) {
-            ProcessingMode.DISCORD_20MB,
-            ProcessingMode.WHATSAPP_100MB,
-            ProcessingMode.CUSTOM_SIZE -> FpsOption.FPS_30
-            else -> FpsOption.ORIGINAL
-        }
+        val defaultFps = FpsOption.ORIGINAL
         val defaultAudioKbps = when (mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
@@ -181,6 +178,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeConfig = initialConfig,
                 validationError = null,
                 audioBitrateTouched = false,
+                fpsTouched = false,
+                resolutionTouched = false,
                 probeError = null
             )
         }
@@ -193,14 +192,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateTargetMb(value: String) {
         _uiState.update { state ->
             val cfg = state.activeConfig ?: return@update state
+            val media = state.mediaInfo
             val parsedMb = FfmpegMath.parsePositiveDouble(value)
             val newAudio = if (!state.audioBitrateTouched && parsedMb != null) {
                 FfmpegMath.defaultAudioBitrateForTwoPass(parsedMb).toString()
             } else {
                 cfg.audioBitrateInput
             }
+            val newFps = if (!state.fpsTouched && parsedMb != null) {
+                if (parsedMb < 5.0) FpsOption.FPS_30 else FpsOption.ORIGINAL
+            } else {
+                cfg.fps
+            }
+            val newResolution = if (!state.resolutionTouched && parsedMb != null) {
+                val shortEdge = if (media?.width != null && media.height != null) {
+                    minOf(media.width, media.height)
+                } else null
+                if (parsedMb < 5.0 && (shortEdge == null || shortEdge > 720)) {
+                    ResolutionOption.P720
+                } else {
+                    ResolutionOption.ORIGINAL
+                }
+            } else {
+                cfg.resolution
+            }
             state.copy(
-                activeConfig = cfg.copy(targetMbInput = value, audioBitrateInput = newAudio),
+                activeConfig = cfg.copy(
+                    targetMbInput = value,
+                    audioBitrateInput = newAudio,
+                    fps = newFps,
+                    resolution = newResolution
+                ),
                 validationError = null
             )
         }
@@ -234,11 +256,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateFps(fps: FpsOption) {
-        updateConfig { it.copy(fps = fps) }
+        _uiState.update { state ->
+            val cfg = state.activeConfig ?: return@update state
+            state.copy(
+                activeConfig = cfg.copy(fps = fps),
+                fpsTouched = true,
+                validationError = null
+            )
+        }
     }
 
     fun updateResolution(resolution: ResolutionOption) {
-        updateConfig { it.copy(resolution = resolution) }
+        _uiState.update { state ->
+            val cfg = state.activeConfig ?: return@update state
+            state.copy(
+                activeConfig = cfg.copy(resolution = resolution),
+                resolutionTouched = true,
+                validationError = null
+            )
+        }
+    }
+
+    fun applyRecommended30Fps720p() {
+        _uiState.update { state ->
+            val cfg = state.activeConfig ?: return@update state
+            val media = state.mediaInfo
+            val shortEdge = if (media?.width != null && media.height != null) {
+                minOf(media.width, media.height)
+            } else null
+            val targetRes = if (shortEdge == null || shortEdge > 720) {
+                ResolutionOption.P720
+            } else {
+                cfg.resolution
+            }
+            state.copy(
+                activeConfig = cfg.copy(fps = FpsOption.FPS_30, resolution = targetRes),
+                fpsTouched = true,
+                resolutionTouched = true,
+                validationError = null
+            )
+        }
     }
 
     fun updatePreset(preset: PresetOption) {
@@ -272,6 +329,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 endTimeInput = value,
                 selectedEndKfSec = null,
                 trimScan = it.trimScan.copy(endScan = null, error = null)
+            )
+        }
+    }
+
+    fun updateTrimRangeFromSlider(startSec: Double, endSec: Double) {
+        val formattedStart = FfmpegMath.formatSliderTimestamp(startSec)
+        val formattedEnd = FfmpegMath.formatSliderTimestamp(endSec)
+        updateConfig {
+            it.copy(
+                startTimeInput = formattedStart,
+                endTimeInput = formattedEnd,
+                selectedStartKfSec = null,
+                selectedEndKfSec = null,
+                trimScan = TrimScanState()
             )
         }
     }
@@ -386,6 +457,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
             return
         }
+        if (media.durationSec != null && endSec != null && endSec > media.durationSec + 0.05) {
+            _uiState.update {
+                it.copy(
+                    validationError = s.trimEndExceedsDurationWarning(
+                        FfmpegMath.formatKeyframeTime(media.durationSec, s)
+                    )
+                )
+            }
+            return
+        }
 
         if (!media.hasVideo) {
             _uiState.update { it.copy(validationError = s.errKeyframeRequiresVideo) }
@@ -466,6 +547,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (sSec != null && eSec != null && eSec <= sSec) {
                     _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
+                    return
+                }
+                if (media.durationSec != null && eSec != null && eSec > media.durationSec + 0.05) {
+                    _uiState.update {
+                        it.copy(
+                            validationError = s.trimEndExceedsDurationWarning(
+                                FfmpegMath.formatKeyframeTime(media.durationSec, s)
+                            )
+                        )
+                    }
                     return
                 }
             }

@@ -29,6 +29,19 @@ object FfmpegMath {
     fun isBitrateWarningLow(videoBitrateKbps: Int): Boolean = videoBitrateKbps <= 120
 
     /**
+     * Recommends 30 FPS and 720p when the video is long and calculated 2-pass video bitrate
+     * drops low enough to degrade 60 FPS / 1080p+ sharpness.
+     */
+    fun shouldRecommend30Fps720p(
+        videoBitrateKbps: Int,
+        codec: VideoCodecOption,
+        durationSec: Double
+    ): Boolean {
+        val longVideoThreshold = if (codec == VideoCodecOption.H265) 950 else 1400
+        return (durationSec >= 60.0 && videoBitrateKbps < longVideoThreshold) || videoBitrateKbps < 650
+    }
+
+    /**
      * Exact 3-way aspect ratio protection + odd-pixel protection (EVEN_VF):
      * 1) Portrait (HEIGHT > WIDTH): scale=<target>:-2
      * 2) Cinema Ultrawide (WIDTH * 9 > HEIGHT * 16): scale=<L_MAX>:-2
@@ -137,6 +150,26 @@ object FfmpegMath {
      */
     fun formatRawSeconds(seconds: Double): String =
         String.format(Locale.US, "%.3f", seconds)
+
+    /**
+     * Formats slider position cleanly as MM:SS.d or H:MM:SS.d for the trim input fields.
+     */
+    fun formatSliderTimestamp(seconds: Double): String {
+        val safe = seconds.coerceAtLeast(0.0)
+        val t10 = (safe * 10.0 + 0.5).toLong()
+        val h = t10 / 36000
+        val m = (t10 % 36000) / 600
+        val s10 = t10 % 600
+        val s = s10 / 10
+        val dec = s10 % 10
+        return if (h > 0) {
+            if (dec == 0L) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+            else String.format(Locale.US, "%d:%02d:%02d.%d", h, m, s, dec)
+        } else {
+            if (dec == 0L) String.format(Locale.US, "%02d:%02d", m, s)
+            else String.format(Locale.US, "%02d:%02d.%d", m, s, dec)
+        }
+    }
 
     /**
      * Exact port of show_kf_at() awk parser:

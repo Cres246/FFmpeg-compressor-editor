@@ -2,9 +2,14 @@ package com.example.ui.components
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +34,7 @@ import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -41,15 +47,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,7 +80,9 @@ import com.example.domain.localizedTitle
 import com.example.ui.MainViewModel
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlin.math.abs
 
 /**
  * Top preview card on Trim screen: two side-by-side square frame thumbnails showing the exact
@@ -87,6 +102,10 @@ fun TrimVideoPreviewCard(
 
     val parsedStartSec = effStart?.let { FfmpegMath.parseTimestampToSeconds(it) }
     val parsedEndSec = effEnd?.let { FfmpegMath.parseTimestampToSeconds(it) }
+
+    val isEndBeyondDuration = media.durationSec != null &&
+        parsedEndSec != null &&
+        parsedEndSec > media.durationSec + 0.05
 
     var startSec by remember(media.uri) { mutableStateOf(0.0) }
     val nextStartSec = when {
@@ -126,34 +145,50 @@ fun TrimVideoPreviewCard(
     var endBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
     var endLoading by remember(media.uri) { mutableStateOf(true) }
 
-    LaunchedEffect(media.uri, startSec) {
-        if (startBitmap != null) delay(280L)
-        startLoading = true
-        val extracted = FfmpegEngine.extractPreviewFrame(
-            context = context,
-            uri = media.uri,
-            timeSec = startSec,
-            durationSec = media.durationSec
-        )
-        if (extracted != null || startBitmap == null) {
-            startBitmap = extracted
-        }
-        startLoading = false
+    val latestEndBeyond = rememberUpdatedState(isEndBeyondDuration)
+
+    // Conflated live frame extraction: updates smoothly during slider scrubbing and lands on exact final frame
+    LaunchedEffect(media.uri) {
+        snapshotFlow { startSec }
+            .distinctUntilChanged()
+            .conflate()
+            .collect { sec ->
+                startLoading = true
+                val extracted = FfmpegEngine.extractPreviewFrame(
+                    context = context,
+                    uri = media.uri,
+                    timeSec = sec,
+                    durationSec = media.durationSec
+                )
+                if (extracted != null || startBitmap == null) {
+                    startBitmap = extracted
+                }
+                startLoading = false
+            }
     }
 
-    LaunchedEffect(media.uri, endSec) {
-        if (endBitmap != null) delay(280L)
-        endLoading = true
-        val extracted = FfmpegEngine.extractPreviewFrame(
-            context = context,
-            uri = media.uri,
-            timeSec = endSec,
-            durationSec = media.durationSec
-        )
-        if (extracted != null || endBitmap == null) {
-            endBitmap = extracted
-        }
-        endLoading = false
+    LaunchedEffect(media.uri) {
+        snapshotFlow { endSec to latestEndBeyond.value }
+            .distinctUntilChanged()
+            .conflate()
+            .collect { (sec, beyond) ->
+                if (beyond) {
+                    endBitmap = null
+                    endLoading = false
+                } else {
+                    endLoading = true
+                    val extracted = FfmpegEngine.extractPreviewFrame(
+                        context = context,
+                        uri = media.uri,
+                        timeSec = sec,
+                        durationSec = media.durationSec
+                    )
+                    if (!latestEndBeyond.value && (extracted != null || endBitmap == null)) {
+                        endBitmap = extracted
+                    }
+                    endLoading = false
+                }
+            }
     }
 
     Surface(
@@ -177,6 +212,7 @@ fun TrimVideoPreviewCard(
                     timeText = startLabel,
                     bitmap = startBitmap,
                     isLoading = startLoading,
+                    isOutOfBoundsBlack = false,
                     onClick = onPlayVideoClick,
                     modifier = Modifier
                         .weight(1f)
@@ -185,13 +221,45 @@ fun TrimVideoPreviewCard(
                 SquareFramePreviewBox(
                     tag = strings.previewEndTag,
                     timeText = endLabel,
-                    bitmap = endBitmap,
-                    isLoading = endLoading,
+                    bitmap = if (isEndBeyondDuration) null else endBitmap,
+                    isLoading = !isEndBeyondDuration && endLoading,
+                    isOutOfBoundsBlack = isEndBeyondDuration,
                     onClick = onPlayVideoClick,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("trim_preview_end_frame")
                 )
+            }
+
+            if (isEndBeyondDuration && media.durationSec != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("trim_end_exceeds_warning"),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.72f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.WarningAmber,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = strings.trimEndExceedsDurationWarning(
+                                FfmpegMath.formatKeyframeTime(media.durationSec, strings)
+                            ),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
             }
 
             FilledTonalButton(
@@ -224,6 +292,7 @@ private fun SquareFramePreviewBox(
     timeText: String,
     bitmap: Bitmap?,
     isLoading: Boolean,
+    isOutOfBoundsBlack: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -234,11 +303,34 @@ private fun SquareFramePreviewBox(
         modifier = modifier
             .aspectRatio(1f)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(if (isOutOfBoundsBlack) Color.Black else MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null) {
+        if (isOutOfBoundsBlack) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.WarningAmber,
+                    contentDescription = strings.trimEndOutOfBoundsBadge,
+                    tint = Color(0xFFFF7B6B),
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = strings.trimEndOutOfBoundsBadge,
+                    style = MonoLabelStyle.copy(
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.4.sp
+                    ),
+                    color = Color(0xFFFFB4AB),
+                    maxLines = 1
+                )
+            }
+        } else if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = strings.previewFrameCd(tag, timeText),
@@ -254,18 +346,29 @@ private fun SquareFramePreviewBox(
             )
         }
 
-        if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = if (bitmap != null) 0.22f else 0.04f)),
-                contentAlignment = Alignment.Center
-            ) {
+        if (isLoading && !isOutOfBoundsBlack) {
+            if (bitmap != null) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(15.dp),
                     strokeWidth = 2.dp,
-                    color = if (bitmap != null) Color.White else MaterialTheme.colorScheme.primary
+                    color = Color.White.copy(alpha = 0.9f)
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.04f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
 
@@ -293,7 +396,7 @@ private fun SquareFramePreviewBox(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     ),
-                    color = Color.White.copy(alpha = 0.88f),
+                    color = if (isOutOfBoundsBlack) Color(0xFFFFB4AB) else Color.White.copy(alpha = 0.88f),
                     maxLines = 1
                 )
                 Text(
@@ -302,7 +405,7 @@ private fun SquareFramePreviewBox(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     ),
-                    color = Color.White,
+                    color = if (isOutOfBoundsBlack) Color(0xFFFF7B6B) else Color.White,
                     maxLines = 1
                 )
             }
@@ -313,7 +416,10 @@ private fun SquareFramePreviewBox(
             modifier = Modifier.fillMaxSize(),
             shape = shape,
             color = Color.Transparent,
-            border = BorderStroke(1.dp, extColors.subtleBorder)
+            border = BorderStroke(
+                width = if (isOutOfBoundsBlack) 1.5.dp else 1.dp,
+                color = if (isOutOfBoundsBlack) MaterialTheme.colorScheme.error else extColors.subtleBorder
+            )
         ) {}
     }
 }
@@ -331,6 +437,11 @@ fun TrimTimeAndKeyframeSection(
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val (effStart, effEnd, clipDur) = FfmpegMath.resolveTrimRange(config, media.durationSec)
+    val parsedStartSec = effStart?.let { FfmpegMath.parseTimestampToSeconds(it) }
+    val parsedEndSec = effEnd?.let { FfmpegMath.parseTimestampToSeconds(it) }
+    val isEndBeyondDuration = media.durationSec != null &&
+        parsedEndSec != null &&
+        parsedEndSec > media.durationSec + 0.05
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -368,7 +479,7 @@ fun TrimTimeAndKeyframeSection(
                         val startLabel = effStart?.let {
                             val parsed = FfmpegMath.parseTimestampToSeconds(it)
                             if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
-                        } ?: strings.trimStartPlaceholder
+                        } ?: strings.trimStartSummaryDefault
                         val endLabel = effEnd?.let {
                             val parsed = FfmpegMath.parseTimestampToSeconds(it)
                             if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
@@ -379,7 +490,7 @@ fun TrimTimeAndKeyframeSection(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    if (clipDur != null) {
+                    if (clipDur != null && !isEndBeyondDuration) {
                         Text(
                             text = FfmpegMath.formatDurationShort(clipDur, strings),
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
@@ -389,7 +500,27 @@ fun TrimTimeAndKeyframeSection(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
+            // Interactive dark-brown horizontal range slider directly above timestamp inputs
+            val totalDur = media.durationSec
+            if (totalDur != null && totalDur > 0.0) {
+                Spacer(Modifier.height(6.dp))
+                val visualStart = (parsedStartSec ?: 0.0).coerceIn(0.0, totalDur)
+                val visualEnd = (parsedEndSec ?: totalDur).coerceIn(visualStart, totalDur)
+                TrimTimelineRangeBar(
+                    durationSec = totalDur,
+                    startSec = visualStart,
+                    endSec = visualEnd,
+                    onRangeChanged = { newStart, newEnd ->
+                        viewModel.updateTrimRangeFromSlider(newStart, newEnd)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("trim_range_slider")
+                )
+                Spacer(Modifier.height(4.dp))
+            } else {
+                Spacer(Modifier.height(10.dp))
+            }
 
             // Start & End time inputs
             Row(
@@ -400,7 +531,14 @@ fun TrimTimeAndKeyframeSection(
                     value = config.startTimeInput,
                     onValueChange = viewModel::updateStartTime,
                     label = { Text(strings.trimStartLabel) },
-                    placeholder = { Text(strings.trimStartPlaceholder, style = MonoLabelStyle) },
+                    placeholder = {
+                        Text(
+                            text = strings.trimStartPlaceholder,
+                            style = MonoLabelStyle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -411,11 +549,34 @@ fun TrimTimeAndKeyframeSection(
                     onValueChange = viewModel::updateEndTime,
                     label = { Text(strings.trimEndLabel) },
                     placeholder = { Text(strings.trimEndPlaceholder, style = MonoLabelStyle) },
+                    isError = isEndBeyondDuration,
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("trim_end_input")
                 )
+            }
+
+            if (isEndBeyondDuration && totalDur != null) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = strings.trimEndExceedsDurationWarning(
+                            FfmpegMath.formatKeyframeTime(totalDur, strings)
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -757,6 +918,167 @@ private fun KeyframeGridBlock(
     }
 }
 
+private enum class ActiveTrimThumb { START, END }
+
+/**
+ * Sleek dark-brown horizontal range bar with circular drag handles on both ends.
+ * Smoothly updates start/end timestamps and live frame previews while preserving LazyColumn vertical scroll.
+ */
+@Composable
+private fun TrimTimelineRangeBar(
+    durationSec: Double,
+    startSec: Double,
+    endSec: Double,
+    onRangeChanged: (Double, Double) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val activeTrackColor = MaterialTheme.colorScheme.primary // CelloBrown (#562812)
+    val inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+    val ringColor = MaterialTheme.colorScheme.surface
+    val density = LocalDensity.current
+    val thumbPaddingPx = with(density) { 12.dp.toPx() }
+
+    val latestStart = rememberUpdatedState(startSec)
+    val latestEnd = rememberUpdatedState(endSec)
+    val latestOnRangeChanged = rememberUpdatedState(onRangeChanged)
+
+    var draggingThumb by remember { mutableStateOf<ActiveTrimThumb?>(null) }
+
+    val safeDuration = durationSec.coerceAtLeast(0.1)
+    val startFraction = (startSec / safeDuration).toFloat().coerceIn(0f, 1f)
+    val endFraction = (endSec / safeDuration).toFloat().coerceIn(startFraction, 1f)
+
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .pointerInput(safeDuration) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val trackWidth = (size.width - thumbPaddingPx * 2f).coerceAtLeast(1f)
+                    val startX = thumbPaddingPx + (latestStart.value / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
+                    val endX = thumbPaddingPx + (latestEnd.value / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
+
+                    val distStart = abs(down.position.x - startX)
+                    val distEnd = abs(down.position.x - endX)
+                    var chosenThumb: ActiveTrimThumb? = when {
+                        abs(endX - startX) < 12f -> null // resolve by initial drag direction
+                        distStart <= distEnd -> ActiveTrimThumb.START
+                        else -> ActiveTrimThumb.END
+                    }
+
+                    val minGapSec = minOf(0.5, safeDuration * 0.02).coerceAtLeast(0.1)
+
+                    fun applyPositionX(posX: Float, thumb: ActiveTrimThumb) {
+                        val frac = ((posX - thumbPaddingPx) / trackWidth).coerceIn(0f, 1f)
+                        val targetSec = frac * safeDuration
+                        val curStart = latestStart.value.coerceIn(0.0, safeDuration)
+                        val curEnd = latestEnd.value.coerceIn(curStart, safeDuration)
+                        if (thumb == ActiveTrimThumb.START) {
+                            val clampedStart = targetSec.coerceIn(0.0, (curEnd - minGapSec).coerceAtLeast(0.0))
+                            latestOnRangeChanged.value(clampedStart, curEnd)
+                        } else {
+                            val clampedEnd = targetSec.coerceIn((curStart + minGapSec).coerceAtMost(safeDuration), safeDuration)
+                            latestOnRangeChanged.value(curStart, clampedEnd)
+                        }
+                    }
+
+                    val dragStart = awaitHorizontalTouchSlopOrCancellation(down.id) { change, overSlop ->
+                        val resolved = chosenThumb ?: if (overSlop < 0f) ActiveTrimThumb.START else ActiveTrimThumb.END
+                        chosenThumb = resolved
+                        draggingThumb = resolved
+                        change.consume()
+                        applyPositionX(change.position.x, resolved)
+                    }
+
+                    if (dragStart != null) {
+                        val lockedThumb = chosenThumb ?: ActiveTrimThumb.END
+                        try {
+                            horizontalDrag(dragStart.id) { change ->
+                                val delta = change.positionChange().x
+                                if (delta != 0f) {
+                                    change.consume()
+                                    applyPositionX(change.position.x, lockedThumb)
+                                }
+                            }
+                        } finally {
+                            draggingThumb = null
+                        }
+                    }
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val centerY = size.height / 2f
+            val trackStart = thumbPaddingPx
+            val trackEnd = (size.width - thumbPaddingPx).coerceAtLeast(trackStart + 1f)
+            val trackSpan = trackEnd - trackStart
+
+            val startX = trackStart + startFraction * trackSpan
+            val endX = trackStart + endFraction * trackSpan
+
+            // Full thin background track
+            drawLine(
+                color = inactiveTrackColor,
+                start = Offset(trackStart, centerY),
+                end = Offset(trackEnd, centerY),
+                strokeWidth = 2.5.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+
+            // Active thin dark-brown trim line between the two circular handles
+            drawLine(
+                color = activeTrackColor,
+                start = Offset(startX, centerY),
+                end = Offset(endX, centerY),
+                strokeWidth = 3.2.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+
+            // Left circular thumb
+            val startDragging = draggingThumb == ActiveTrimThumb.START
+            val startRadius = (if (startDragging) 10.5.dp else 9.dp).toPx()
+            if (startDragging) {
+                drawCircle(
+                    color = activeTrackColor.copy(alpha = 0.18f),
+                    radius = 18.dp.toPx(),
+                    center = Offset(startX, centerY)
+                )
+            }
+            drawCircle(
+                color = ringColor,
+                radius = startRadius + 2.dp.toPx(),
+                center = Offset(startX, centerY)
+            )
+            drawCircle(
+                color = activeTrackColor,
+                radius = startRadius,
+                center = Offset(startX, centerY)
+            )
+
+            // Right circular thumb
+            val endDragging = draggingThumb == ActiveTrimThumb.END
+            val endRadius = (if (endDragging) 10.5.dp else 9.dp).toPx()
+            if (endDragging) {
+                drawCircle(
+                    color = activeTrackColor.copy(alpha = 0.18f),
+                    radius = 18.dp.toPx(),
+                    center = Offset(endX, centerY)
+                )
+            }
+            drawCircle(
+                color = ringColor,
+                radius = endRadius + 2.dp.toPx(),
+                center = Offset(endX, centerY)
+            )
+            drawCircle(
+                color = activeTrackColor,
+                radius = endRadius,
+                center = Offset(endX, centerY)
+            )
+        }
+    }
+}
+
 @Composable
 fun TrimSubModeSelector(
     cutStrategy: TrimCutStrategy,
@@ -772,27 +1094,41 @@ fun TrimSubModeSelector(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             TrimSubMode.entries.forEach { mode ->
                 val isDisabled = cutStrategy == TrimCutStrategy.PRECISE_REENCODE && mode.requiresLosslessKeyframes
+                val isGreenLossless = !isDisabled && mode.requiresLosslessKeyframes
                 val isSelected = !isDisabled && mode == selected
 
                 val containerColor = when {
                     isDisabled -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.68f)
+                    isGreenLossless && isSelected -> extColors.losslessContainer
+                    isGreenLossless -> extColors.losslessContainer.copy(alpha = 0.44f)
                     isSelected -> MaterialTheme.colorScheme.primaryContainer
                     else -> MaterialTheme.colorScheme.surfaceContainer
                 }
                 val borderColor = when {
                     isDisabled -> MaterialTheme.colorScheme.error.copy(alpha = 0.55f)
+                    isGreenLossless && isSelected -> extColors.lossless
+                    isGreenLossless -> extColors.lossless.copy(alpha = 0.45f)
                     isSelected -> MaterialTheme.colorScheme.primary
                     else -> extColors.subtleBorder
                 }
+                val numberColor = when {
+                    isDisabled -> MaterialTheme.colorScheme.error
+                    isGreenLossless -> extColors.lossless
+                    else -> MaterialTheme.colorScheme.primary
+                }
                 val titleColor = when {
                     isDisabled -> MaterialTheme.colorScheme.error
+                    isGreenLossless && isSelected -> extColors.onLosslessContainer
+                    isGreenLossless -> extColors.lossless
                     isSelected -> MaterialTheme.colorScheme.onPrimaryContainer
                     else -> MaterialTheme.colorScheme.onSurface
                 }
                 val subtitleColor = when {
                     isDisabled -> MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.78f)
+                    isGreenLossless -> extColors.onLosslessContainer.copy(alpha = 0.82f)
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
+                val checkTint = if (isGreenLossless) extColors.lossless else MaterialTheme.colorScheme.primary
 
                 Surface(
                     modifier = Modifier
@@ -803,7 +1139,7 @@ fun TrimSubModeSelector(
                     shape = MaterialTheme.shapes.small,
                     color = containerColor,
                     border = BorderStroke(
-                        width = if (isSelected) 1.5.dp else 1.dp,
+                        width = if (isSelected) 1.6.dp else 1.dp,
                         color = borderColor
                     )
                 ) {
@@ -814,7 +1150,7 @@ fun TrimSubModeSelector(
                         Text(
                             text = "${mode.number})",
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.Bold),
-                            color = if (isDisabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            color = numberColor
                         )
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -842,7 +1178,7 @@ fun TrimSubModeSelector(
                             Icon(
                                 imageVector = Icons.Rounded.CheckCircle,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = checkTint,
                                 modifier = Modifier.size(20.dp)
                             )
                         }

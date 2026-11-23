@@ -44,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -232,12 +231,29 @@ fun ModeConfigScreen(
                         )
                     }
                     item {
+                        val targetMb = when (config.mode) {
+                            ProcessingMode.DISCORD_20MB -> 20.0
+                            ProcessingMode.WHATSAPP_100MB -> 100.0
+                            else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
+                        }
+                        val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput)
+                        val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb)
+                        val abps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
+                        val vkbps = if (dur != null && dur > 0.0) {
+                            FfmpegMath.calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)
+                        } else null
+                        val shouldRecommend = vkbps != null && dur != null &&
+                            FfmpegMath.shouldRecommend30Fps720p(vkbps, config.codec, dur)
+
                         FpsAndResolutionSection(
                             media = media,
                             selectedFps = config.fps,
                             selectedResolution = config.resolution,
                             onSelectFps = viewModel::updateFps,
-                            onSelectResolution = viewModel::updateResolution
+                            onSelectResolution = viewModel::updateResolution,
+                            recommend30Fps720p = shouldRecommend,
+                            calculatedVideoBitrateKbps = vkbps,
+                            onApplyRecommended30Fps720p = viewModel::applyRecommended30Fps720p
                         )
                     }
                     item {

@@ -22,11 +22,13 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -170,23 +172,63 @@ fun CodecAndBitDepthSection(
                 )
             }
 
-            if (selectedCodec == VideoCodecOption.H264 && selectedBitDepth == BitDepthOption.BIT_10) {
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            val showNonNative10BitWarn = !inputHighBit && selectedBitDepth == BitDepthOption.BIT_10
+            val showH26410BitWarn = selectedCodec == VideoCodecOption.H264 && selectedBitDepth == BitDepthOption.BIT_10
+
+            if (showNonNative10BitWarn || showH26410BitWarn) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.32f))
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.WarningAmber,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = strings.h264TenBitWarning,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (showNonNative10BitWarn) {
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.WarningAmber,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .padding(top = 1.dp)
+                                        .size(16.dp)
+                                )
+                                Text(
+                                    text = strings.nonNativeTenBitWarning(media.bitDepthIn),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.testTag("non_native_10bit_warning")
+                                )
+                            }
+                        }
+                        if (showH26410BitWarn) {
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.WarningAmber,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier
+                                        .padding(top = 1.dp)
+                                        .size(16.dp)
+                                )
+                                Text(
+                                    text = strings.h264TenBitWarning,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -200,9 +242,13 @@ fun FpsAndResolutionSection(
     selectedFps: FpsOption,
     selectedResolution: ResolutionOption,
     onSelectFps: (FpsOption) -> Unit,
-    onSelectResolution: (ResolutionOption) -> Unit
+    onSelectResolution: (ResolutionOption) -> Unit,
+    recommend30Fps720p: Boolean = false,
+    calculatedVideoBitrateKbps: Int? = null,
+    onApplyRecommended30Fps720p: (() -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
     val computedScale = FfmpegMath.buildScaleFilter(
         width = media.width,
         height = media.height,
@@ -210,10 +256,63 @@ fun FpsAndResolutionSection(
         needsEvenScale = media.needsEvenScale
     )
 
+    val needs30FpsOr720p = selectedFps != FpsOption.FPS_30 ||
+        (selectedResolution != ResolutionOption.P720 && selectedResolution != ResolutionOption.P480)
+
     ConfigSectionCard(
         title = strings.fpsResSectionTitle,
         subtitle = strings.fpsResSectionSub
     ) {
+        if (recommend30Fps720p && calculatedVideoBitrateKbps != null && needs30FpsOr720p) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .testTag("recommend_30fps_720p_banner"),
+                shape = MaterialTheme.shapes.small,
+                color = extColors.keyframeContainer.copy(alpha = 0.78f),
+                border = BorderStroke(1.dp, extColors.keyframe.copy(alpha = 0.38f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.WarningAmber,
+                            contentDescription = null,
+                            tint = extColors.keyframe,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .size(16.dp)
+                        )
+                        Text(
+                            text = strings.recommend30Fps720pText(calculatedVideoBitrateKbps),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = extColors.onKeyframeContainer
+                        )
+                    }
+                    if (onApplyRecommended30Fps720p != null) {
+                        FilledTonalButton(
+                            onClick = onApplyRecommended30Fps720p,
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("apply_30fps_720p_button"),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = strings.apply30Fps720pButton,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+                    }
+                }
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)

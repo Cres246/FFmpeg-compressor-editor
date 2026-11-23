@@ -374,7 +374,7 @@ class EncodingForegroundService : Service() {
                 return
             }
 
-            // Publish cleanly to MediaStore (Movies/TermuxVideo or Music/TermuxVideo)
+            // Publish cleanly to MediaStore (Movies/FFmpeg or Music/FFmpeg)
             val curS = AppLanguageController.currentStrings()
             val saved = MediaStoreSaver.saveToPublicStorage(
                 context = applicationContext,

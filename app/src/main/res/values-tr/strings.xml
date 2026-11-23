@@ -15,5 +15,5 @@
     <string name="action_back">Geri</string>
     <string name="history_title">Son Çıktılar</string>
     <string name="history_empty">Henüz işlenmiş dosya yok. Bir video seçerek başlayın.</string>
-    <string name="output_folder_label">Kayıt Klasörü: Movies/TermuxVideo</string>
+    <string name="output_folder_label">Kayıt Klasörü: Movies/FFmpeg</string>
 </resources>
