@@ -326,9 +326,10 @@ object CustomFfmpegParser {
                 if (lower == "-passlogfile" && i + 1 < cleanedTokens.size) {
                     val rawLog = cleanedTokens[i + 1]
                     val safeLogName = extractSafeFileName(rawLog) ?: "ffmpeg2pass"
+                    val formattedLog = formatWorkPath(workDirPath, safeLogName, isPreview)
                     outArgs.add(tok)
-                    outArgs.add(formatWorkPath(workDirPath, safeLogName, isPreview))
-                    if (!rawLog.startsWith(workDirPath)) {
+                    outArgs.add(formattedLog)
+                    if (rawLog != formattedLog) {
                         autoConfiguredTwoPass = true
                     }
                     i += 2
@@ -548,7 +549,13 @@ object CustomFfmpegParser {
             }
 
             // If user pasted indented flags on the next line without trailing `\`, attach to previous line
-            if (pendingLine.isEmpty() && piece.startsWith("-") && logicalLines.isNotEmpty()) {
+            // (ignore Markdown bullets like `- Uses H.264` where `-` is followed by whitespace)
+            if (pendingLine.isEmpty() &&
+                piece.length > 1 &&
+                piece[0] == '-' &&
+                !piece[1].isWhitespace() &&
+                logicalLines.isNotEmpty()
+            ) {
                 val prev = logicalLines.removeAt(logicalLines.lastIndex)
                 joinedMultiline = true
                 if (hasContinuation) {
@@ -598,8 +605,9 @@ object CustomFfmpegParser {
         val filteredLines = if (hasExplicitFfmpegLine) {
             candidateLines.filter { line ->
                 val firstWord = line.substringBefore(' ').trim()
+                val isCliFlagLine = line.length > 1 && line[0] == '-' && !line[1].isWhitespace()
                 val keep = isExplicitFfmpegCommandLine(line) ||
-                    line.startsWith("-") ||
+                    isCliFlagLine ||
                     firstWord.lowercase(Locale.US) in IGNORED_SHELL_COMMANDS
                 if (!keep) strippedMarkdownOrProse = true
                 keep

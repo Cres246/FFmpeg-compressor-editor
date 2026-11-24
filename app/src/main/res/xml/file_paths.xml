@@ -2,5 +2,7 @@
 <paths>
     <external-path name="movies_ffmpeg" path="Movies/FFmpeg/" />
     <external-path name="music_ffmpeg" path="Music/FFmpeg/" />
+    <external-path name="pictures_ffmpeg" path="Pictures/FFmpeg/" />
+    <external-path name="downloads_ffmpeg" path="Download/FFmpeg/" />
     <cache-path name="fflab_cache" path="." />
 </paths>

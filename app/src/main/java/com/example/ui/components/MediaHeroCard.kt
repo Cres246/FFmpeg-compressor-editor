@@ -302,8 +302,30 @@ fun MediaHeroCard(
                             if (mediaInfo.width != null && mediaInfo.height != null) {
                                 CompactMetaChip(text = "${mediaInfo.width}×${mediaInfo.height}")
                             }
+                            val audioLabel = if (!mediaInfo.hasAudio || mediaInfo.audioCodec.isNullOrBlank()) {
+                                strings.noneLabel
+                            } else {
+                                buildString {
+                                    append(mediaInfo.audioCodec.uppercase())
+                                    val abr = mediaInfo.audioBitrateKbps
+                                    if (abr != null && abr > 0) {
+                                        append(" ")
+                                        append(abr)
+                                        append("k")
+                                    } else if (mediaInfo.isLosslessAudio) {
+                                        append(" (")
+                                        append(strings.badgeLossless)
+                                        append(")")
+                                    }
+                                    val ch = mediaInfo.audioChannels
+                                    if (ch != null && ch >= 6) {
+                                        append(" · 5.1")
+                                    }
+                                }
+                            }
                             CompactMetaChip(
-                                text = "${strings.audioTrackPrefix}: ${mediaInfo.audioCodec?.uppercase() ?: strings.noneLabel}"
+                                text = "${strings.audioTrackPrefix}: $audioLabel",
+                                modifier = Modifier.testTag("media_audio_chip")
                             )
                             if (mediaInfo.needsEvenScale) {
                                 CompactMetaChip(text = strings.evenDimensionFixChip)
@@ -368,8 +390,12 @@ private fun ProbeWarningBanner(
 }
 
 @Composable
-private fun CompactMetaChip(text: String) {
+private fun CompactMetaChip(
+    text: String,
+    modifier: Modifier = Modifier
+) {
     Surface(
+        modifier = modifier,
         shape = RoundedCornerShape(7.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder)

@@ -281,7 +281,11 @@ fun ModeConfigScreen(
                             else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
                         }
                         val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput)
-                        val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb)
+                        val defAb = FfmpegMath.resolveDefaultAudioBitrate(
+                            baseDefaultKbps = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb),
+                            sourceKbps = media.audioBitrateKbps,
+                            isLosslessSource = media.isLosslessAudio
+                        )
                         val abps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
                         val vkbps = if (dur != null && dur > 0.0) {
                             FfmpegMath.calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)
@@ -318,7 +322,10 @@ fun ModeConfigScreen(
                             AudioBitrateSection(
                                 bitrateInput = config.audioBitrateInput,
                                 defaultKbps = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb),
-                                onBitrateChange = viewModel::updateAudioBitrate
+                                onBitrateChange = viewModel::updateAudioBitrate,
+                                sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
+                                isLosslessSource = media.isLosslessAudio
                             )
                         }
                     }
@@ -385,7 +392,10 @@ fun ModeConfigScreen(
                             AudioBitrateSection(
                                 bitrateInput = config.audioBitrateInput,
                                 defaultKbps = 192,
-                                onBitrateChange = viewModel::updateAudioBitrate
+                                onBitrateChange = viewModel::updateAudioBitrate,
+                                sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
+                                isLosslessSource = media.isLosslessAudio
                             )
                         }
                     }
@@ -432,7 +442,10 @@ fun ModeConfigScreen(
                         AudioBitrateSection(
                             bitrateInput = config.audioBitrateInput,
                             defaultKbps = 256,
-                            onBitrateChange = viewModel::updateAudioBitrate
+                            onBitrateChange = viewModel::updateAudioBitrate,
+                            sourceAudioBitrateKbps = media.audioBitrateKbps,
+                            sourceAudioCodec = media.audioCodec,
+                            isLosslessSource = media.isLosslessAudio
                         )
                     }
                 }
@@ -500,7 +513,10 @@ fun ModeConfigScreen(
                             AudioBitrateSection(
                                 bitrateInput = config.audioBitrateInput,
                                 defaultKbps = 256,
-                                onBitrateChange = viewModel::updateAudioBitrate
+                                onBitrateChange = viewModel::updateAudioBitrate,
+                                sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
+                                isLosslessSource = media.isLosslessAudio
                             )
                         }
                     }
@@ -525,7 +541,10 @@ fun ModeConfigScreen(
                                 defaultKbps = 256,
                                 onBitrateChange = viewModel::updateAudioBitrate,
                                 title = strings.audioBitrateExtractTitle(config.audioExtractFormat.localizedLabel(strings)),
-                                maxKbps = if (config.audioExtractFormat == AudioExtractFormat.MP3) 320 else 768
+                                maxKbps = if (config.audioExtractFormat == AudioExtractFormat.MP3) 320 else 768,
+                                sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
+                                isLosslessSource = media.isLosslessAudio
                             )
                         }
                     }
@@ -568,7 +587,11 @@ private fun TwoPassTargetSummaryCard(
         else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
     }
     val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput)
-    val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb)
+    val defAb = FfmpegMath.resolveDefaultAudioBitrate(
+        baseDefaultKbps = FfmpegMath.defaultAudioBitrateForTwoPass(targetMb),
+        sourceKbps = media.audioBitrateKbps,
+        isLosslessSource = media.isLosslessAudio
+    )
     val abps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
     val vkbps = if (dur != null && dur > 0.0) {
         FfmpegMath.calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)

@@ -185,4 +185,132 @@ class FfmpegMathTest {
         assertEquals("Sesi Çıkart", ProcessingMode.EXTRACT_AUDIO.title)
         assertEquals(7, ProcessingMode.EXTRACT_AUDIO.number)
     }
+
+    @Test
+    fun telemetryFormatsLiveSizeInDecimalMegabytes() {
+        // 15.6 MB = ~15974 KB
+        val line156 = FfmpegMath.formatTelemetryLine(
+            currentSec = 30.0,
+            totalDurationSec = 60.0,
+            percent = 50,
+            speed = "3.40x",
+            sizeKb = 15974L,
+            includePercent = false
+        )
+        assertTrue("Expected 15.6mb in '$line156'", line156.contains("15.6mb"))
+        assertFalse("Should no longer emit kb suffix in '$line156'", line156.contains("kb"))
+
+        // Tiny positive write floors cleanly to 0.1mb
+        val lineSmall = FfmpegMath.formatTelemetryLine(
+            currentSec = 1.0,
+            totalDurationSec = 60.0,
+            percent = 2,
+            speed = "1.20x",
+            sizeKb = 32L,
+            includePercent = false
+        )
+        assertTrue("Expected 0.1mb floor in '$lineSmall'", lineSmall.contains("0.1mb"))
+
+        // Zero bytes hides size segment cleanly
+        val lineZero = FfmpegMath.formatTelemetryLine(
+            currentSec = 0.0,
+            totalDurationSec = 60.0,
+            percent = 0,
+            speed = "...",
+            sizeKb = 0L,
+            includePercent = false
+        )
+        assertFalse(lineZero.contains("mb"))
+    }
+
+    @Test
+    fun audioBitrateOptionsAndWarningsRespectSourceQuality() {
+        // 128k lossy source caps quick chips to [64, 128] and caps 256k default to 128k
+        assertEquals(
+            listOf(64, 128),
+            FfmpegMath.resolveAudioBitrateQuickOptions(sourceKbps = 128, isLosslessSource = false)
+        )
+        assertEquals(
+            128,
+            FfmpegMath.resolveDefaultAudioBitrate(baseDefaultKbps = 256, sourceKbps = 128, isLosslessSource = false)
+        )
+        assertFalse(FfmpegMath.isAudioBitrateAboveSource(128, sourceKbps = 128, isLosslessSource = false))
+        assertTrue(FfmpegMath.isAudioBitrateAboveSource(192, sourceKbps = 128, isLosslessSource = false))
+
+        // 126k phone/YouTube AAC still keeps 128k chip (+12k tolerance) without warning, warns at 192k
+        assertEquals(
+            listOf(64, 128),
+            FfmpegMath.resolveAudioBitrateQuickOptions(sourceKbps = 126, isLosslessSource = false)
+        )
+        assertFalse(FfmpegMath.isAudioBitrateAboveSource(128, sourceKbps = 126, isLosslessSource = false))
+        assertTrue(FfmpegMath.isAudioBitrateAboveSource(192, sourceKbps = 126, isLosslessSource = false))
+
+        // Non-standard 96k source injects 96 into chips and caps default to 96
+        assertEquals(
+            listOf(64, 96),
+            FfmpegMath.resolveAudioBitrateQuickOptions(sourceKbps = 96, isLosslessSource = false)
+        )
+        assertEquals(
+            96,
+            FfmpegMath.resolveDefaultAudioBitrate(baseDefaultKbps = 128, sourceKbps = 96, isLosslessSource = false)
+        )
+        assertTrue(FfmpegMath.isAudioBitrateAboveSource(128, sourceKbps = 96, isLosslessSource = false))
+
+        // Very low 48k source yields [48]
+        assertEquals(
+            listOf(48),
+            FfmpegMath.resolveAudioBitrateQuickOptions(sourceKbps = 48, isLosslessSource = false)
+        )
+
+        // Lossless FLAC keeps full options up to maxKbps and never warns
+        assertEquals(
+            listOf(64, 128, 192, 256, 320),
+            FfmpegMath.resolveAudioBitrateQuickOptions(sourceKbps = 900, isLosslessSource = true, maxKbps = 320)
+        )
+        assertFalse(FfmpegMath.isAudioBitrateAboveSource(768, sourceKbps = 900, isLosslessSource = true))
+
+        // Positive out-of-range inputs clamp cleanly instead of resetting to default
+        assertEquals(320, FfmpegMath.normalizeAudioBitrate("512", defaultKbps = 128, maxKbps = 320))
+        assertEquals(32, FfmpegMath.normalizeAudioBitrate("12", defaultKbps = 128, maxKbps = 768))
+    }
+
+    @Test
+    fun antiUpscalingTurkishCommasAndCustomSizeDefault() {
+        // 720p source targeting 1080p must NOT upscale
+        assertNull(FfmpegMath.buildScaleFilter(1280, 720, ResolutionOption.P1080, false))
+        // Odd 720p source targeting 1080p falls back to EVEN_VF instead of upscaling
+        assertEquals(
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            FfmpegMath.buildScaleFilter(1279, 719, ResolutionOption.P1080, true)
+        )
+
+        // Turkish decimal commas in trim inputs normalize to dots cleanly
+        val trimCfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            startTimeInput = "10,5",
+            endTimeInput = "25,75"
+        )
+        val (startStr, endStr, durSec) = FfmpegMath.resolveTrimRange(trimCfg, 60.0)
+        assertEquals("10.5", startStr)
+        assertEquals("25.75", endStr)
+        assertEquals(15.25, durSec!!, 0.001)
+
+        // Blank CUSTOM_SIZE input unifies on 8 MB default across UI & backend
+        val fakeMedia = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "clip.mp4",
+            baseName = "clip",
+            extension = "mp4",
+            sizeBytes = 30_000_000L,
+            durationSec = 30.0,
+            videoCodec = "h264",
+            width = 1280,
+            height = 720,
+            pixFmt = "yuv420p",
+            audioCodec = "aac",
+            audioBitrateKbps = 128
+        )
+        val blankCustom = ModeConfigState(mode = ProcessingMode.CUSTOM_SIZE, targetMbInput = "")
+        assertEquals("clip_H264_8MB.mp4", FfmpegMath.computeOutputFileName(fakeMedia, blankCustom))
+    }
 }

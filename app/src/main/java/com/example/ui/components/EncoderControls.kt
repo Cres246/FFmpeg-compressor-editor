@@ -407,38 +407,63 @@ fun AudioBitrateSection(
     defaultKbps: Int,
     onBitrateChange: (String) -> Unit,
     title: String? = null,
-    maxKbps: Int = 768
+    maxKbps: Int = 768,
+    sourceAudioBitrateKbps: Int? = null,
+    sourceAudioCodec: String? = null,
+    isLosslessSource: Boolean = false
 ) {
     val strings = LocalAppStrings.current
     val isMp3 = maxKbps <= 320
     val resolvedTitle = title ?: strings.audioBitrateTitle
-    val quickValues = if (isMp3) {
-        listOf("64", "128", "192", "256", "320")
-    } else {
-        listOf("64", "128", "192", "256", "320", "384", "512", "640", "768")
+    val effectiveDefaultKbps = FfmpegMath.resolveDefaultAudioBitrate(
+        baseDefaultKbps = defaultKbps,
+        sourceKbps = sourceAudioBitrateKbps,
+        isLosslessSource = isLosslessSource,
+        maxKbps = maxKbps
+    )
+    val quickValues = FfmpegMath.resolveAudioBitrateQuickOptions(
+        sourceKbps = sourceAudioBitrateKbps,
+        isLosslessSource = isLosslessSource,
+        maxKbps = maxKbps
+    )
+    val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, effectiveDefaultKbps, maxKbps)
+    val typedKbps = FfmpegMath.parseAudioBitrateInput(bitrateInput)
+    val isCappedBySource = !isLosslessSource &&
+        sourceAudioBitrateKbps != null &&
+        sourceAudioBitrateKbps > 0 &&
+        sourceAudioBitrateKbps < maxKbps
+    val subtitleText = when {
+        isCappedBySource -> strings.audioBitrateSourceCapSub(sourceAudioBitrateKbps, normalized)
+        isMp3 -> strings.audioBitrateMp3Sub(normalized)
+        else -> strings.audioBitrateSub(normalized)
     }
-    val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, defaultKbps, maxKbps)
+    val showUpscaleWarning = typedKbps != null && FfmpegMath.isAudioBitrateAboveSource(
+        requestedKbps = typedKbps,
+        sourceKbps = sourceAudioBitrateKbps,
+        isLosslessSource = isLosslessSource
+    )
 
     ConfigSectionCard(
         title = resolvedTitle,
-        subtitle = if (isMp3) strings.audioBitrateMp3Sub(normalized) else strings.audioBitrateSub(normalized)
+        subtitle = subtitleText
     ) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            quickValues.forEach { preset ->
-                val selected = bitrateInput.trim().replace("k", "", ignoreCase = true) == preset
+            quickValues.forEach { presetKbps ->
+                val presetStr = presetKbps.toString()
+                val selected = bitrateInput.trim().replace("k", "", ignoreCase = true) == presetStr
                 FilterChip(
                     selected = selected,
-                    onClick = { onBitrateChange(preset) },
+                    onClick = { onBitrateChange(presetStr) },
                     label = {
                         Text(
-                            text = if (preset == defaultKbps.toString()) "${preset}k ★" else "${preset}k",
+                            text = if (presetKbps == effectiveDefaultKbps) "${presetStr}k ★" else "${presetStr}k",
                             style = MonoLabelStyle
                         )
                     },
-                    modifier = Modifier.testTag("audio_kbps_$preset"),
+                    modifier = Modifier.testTag("audio_kbps_$presetStr"),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
@@ -458,6 +483,42 @@ fun AudioBitrateSection(
                 .fillMaxWidth()
                 .testTag("audio_bitrate_input")
         )
+
+        if (showUpscaleWarning && sourceAudioBitrateKbps != null) {
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("audio_bitrate_upscale_warning"),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.68f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.38f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(16.dp)
+                    )
+                    Text(
+                        text = strings.audioBitrateUpscaleWarning(
+                            sourceAudioBitrateKbps,
+                            sourceAudioCodec?.uppercase() ?: "?",
+                            normalized
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
     }
 }
 

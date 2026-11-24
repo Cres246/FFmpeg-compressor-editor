@@ -75,8 +75,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         AppLanguageController.init(appContext)
+        // Restore active media/config if Activity was recreated while a foreground job is running/finished
+        val activeSnapshot = EncodingJobController.activeJobSnapshot
+        if (activeSnapshot != null && EncodingJobController.state.value !is EncodingState.Idle) {
+            _uiState.update {
+                it.copy(
+                    mediaInfo = activeSnapshot.media,
+                    activeConfig = activeSnapshot.config
+                )
+            }
+        }
         viewModelScope.launch {
-            FfmpegEngine.cleanupOrphanTempDirs(appContext)
+            FfmpegEngine.cleanupOrphanTempDirsIfIdle(appContext) {
+                EncodingJobController.currentActiveRunId() == 0L &&
+                    EncodingJobController.state.value is EncodingState.Idle
+            }
             val caps = FfmpegEngine.probeEncoderCapabilities()
             _uiState.update { it.copy(capabilities = caps) }
         }
@@ -97,6 +110,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onMediaSelected(uri: Uri) {
+        val currentEncoding = EncodingJobController.state.value
+        if (currentEncoding is EncodingState.Running) {
+            showProbeError(AppLanguageController.currentStrings().errEncodingInProgress)
+            return
+        }
+        if (currentEncoding !is EncodingState.Idle) {
+            EncodingJobController.forceResetToIdle()
+        }
         keyframeScanJob?.cancel()
         keyframeScanJob = null
         mediaProbeJob?.cancel()
@@ -159,14 +180,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> PresetOption.FAST
         }
         val defaultFps = FpsOption.ORIGINAL
-        val defaultAudioKbps = when (mode) {
+        val baseAudioKbps = when (mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
             ProcessingMode.GMAIL_25MB,
-            ProcessingMode.CUSTOM_SIZE -> "128"
-            ProcessingMode.TRIM_VIDEO -> "192"
-            else -> "256"
+            ProcessingMode.CUSTOM_SIZE -> 128
+            ProcessingMode.TRIM_VIDEO -> 192
+            else -> 256
         }
+        val defaultAudioKbps = FfmpegMath.resolveDefaultAudioBitrate(
+            baseDefaultKbps = baseAudioKbps,
+            sourceKbps = media.audioBitrateKbps,
+            isLosslessSource = media.isLosslessAudio,
+            maxKbps = 768
+        ).toString()
 
         val initialConfig = ModeConfigState(
             mode = mode,
@@ -208,7 +235,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val media = state.mediaInfo
             val parsedMb = FfmpegMath.parsePositiveDouble(value)
             val newAudio = if (!state.audioBitrateTouched && parsedMb != null) {
-                FfmpegMath.defaultAudioBitrateForTwoPass(parsedMb).toString()
+                val baseAudio = FfmpegMath.defaultAudioBitrateForTwoPass(parsedMb)
+                FfmpegMath.resolveDefaultAudioBitrate(
+                    baseDefaultKbps = baseAudio,
+                    sourceKbps = media?.audioBitrateKbps,
+                    isLosslessSource = media?.isLosslessAudio == true,
+                    maxKbps = 768
+                ).toString()
             } else {
                 cfg.audioBitrateInput
             }
@@ -373,6 +406,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             TrimCutStrategy.PRECISE_REENCODE -> {
+                keyframeScanJob?.cancel()
+                keyframeScanJob = null
                 updateConfig { cfg ->
                     val nextSubMode = if (cfg.trimSubMode.requiresLosslessKeyframes) {
                         TrimSubMode.CRF_AUDIO_COPY
@@ -382,7 +417,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     cfg.copy(
                         trimCutStrategy = TrimCutStrategy.PRECISE_REENCODE,
                         trimTimeChoice = TrimTimeChoice.RAW_USER_TIMES,
-                        trimSubMode = nextSubMode
+                        trimSubMode = nextSubMode,
+                        trimScan = cfg.trimScan.copy(isScanning = false)
                     )
                 }
             }
@@ -414,24 +450,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateTrimSubMode(subMode: TrimSubMode) {
+        if (!subMode.requiresLosslessKeyframes) {
+            keyframeScanJob?.cancel()
+            keyframeScanJob = null
+        }
         updateConfig { current ->
-            if (current.trimCutStrategy == TrimCutStrategy.PRECISE_REENCODE && subMode.requiresLosslessKeyframes) {
-                current
-            } else {
-                current.copy(trimSubMode = subMode)
+            when {
+                current.trimCutStrategy == TrimCutStrategy.PRECISE_REENCODE && subMode.requiresLosslessKeyframes ->
+                    current
+                !subMode.requiresLosslessKeyframes ->
+                    current.copy(
+                        trimSubMode = subMode,
+                        trimCutStrategy = TrimCutStrategy.PRECISE_REENCODE,
+                        trimTimeChoice = TrimTimeChoice.RAW_USER_TIMES,
+                        trimScan = current.trimScan.copy(isScanning = false)
+                    )
+                else ->
+                    current.copy(trimSubMode = subMode)
             }
         }
     }
 
     fun updateAudioExtractFormat(format: AudioExtractFormat) {
-        updateConfig { cfg ->
-            val adjustedBitrate = if (format == AudioExtractFormat.MP3) {
-                val parsed = cfg.audioBitrateInput.trim().replace("k", "", ignoreCase = true).toIntOrNull()
+        _uiState.update { state ->
+            val cfg = state.activeConfig ?: return@update state
+            val media = state.mediaInfo
+            val maxKbps = if (format == AudioExtractFormat.MP3) 320 else 768
+            val adjustedBitrate = if (!state.audioBitrateTouched) {
+                FfmpegMath.resolveDefaultAudioBitrate(
+                    baseDefaultKbps = 256,
+                    sourceKbps = media?.audioBitrateKbps,
+                    isLosslessSource = media?.isLosslessAudio == true,
+                    maxKbps = maxKbps
+                ).toString()
+            } else if (format == AudioExtractFormat.MP3) {
+                val parsed = FfmpegMath.parseAudioBitrateInput(cfg.audioBitrateInput)
                 if (parsed != null && parsed > 320) "320" else cfg.audioBitrateInput
             } else {
                 cfg.audioBitrateInput
             }
-            cfg.copy(audioExtractFormat = format, audioBitrateInput = adjustedBitrate)
+            state.copy(
+                activeConfig = cfg.copy(audioExtractFormat = format, audioBitrateInput = adjustedBitrate),
+                validationError = null
+            )
         }
     }
 
@@ -443,8 +504,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
-        val startStr = cfg.startTimeInput.trim().replace(" ", "")
-        val endStr = cfg.endTimeInput.trim().replace(" ", "")
+        val startStr = cfg.startTimeInput.trim().replace(" ", "").replace(',', '.')
+        val endStr = cfg.endTimeInput.trim().replace(" ", "").replace(',', '.')
 
         if (startStr.isEmpty() && endStr.isEmpty()) {
             _uiState.update { it.copy(validationError = s.errEnterTrimTimeFirst) }
@@ -464,6 +525,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (startSec != null && endSec != null && endSec <= startSec) {
             _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
+            return
+        }
+        if (media.durationSec != null && startSec != null && startSec >= media.durationSec - 0.05) {
+            _uiState.update {
+                it.copy(
+                    validationError = s.errStartExceedsDuration(
+                        FfmpegMath.formatKeyframeTime(media.durationSec, s)
+                    )
+                )
+            }
             return
         }
         if (media.durationSec != null && endSec != null && endSec > media.durationSec + 0.05) {
@@ -525,13 +596,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startEncoding() {
-        if (EncodingJobController.state.value is EncodingState.Running) return
+    /**
+     * Validates the current mode configuration synchronously before permission dialogs or
+     * foreground service launch, updating [WorkbenchUiState.validationError] on failure.
+     */
+    fun validateBeforeLaunch(): Boolean {
+        if (EncodingJobController.state.value is EncodingState.Running) return false
         val s = AppLanguageController.currentStrings()
-        val media = _uiState.value.mediaInfo ?: return
-        val cfg = _uiState.value.activeConfig ?: return
+        val media = _uiState.value.mediaInfo ?: return false
+        val cfg = _uiState.value.activeConfig ?: return false
 
-        // Validate mode-specific constraints cleanly
         when (cfg.mode) {
             ProcessingMode.DISCORD_20MB,
             ProcessingMode.WHATSAPP_100MB,
@@ -539,29 +613,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProcessingMode.CUSTOM_SIZE -> {
                 if (cfg.mode == ProcessingMode.CUSTOM_SIZE && FfmpegMath.parsePositiveDouble(cfg.targetMbInput) == null) {
                     _uiState.update { it.copy(validationError = s.errInvalidTargetMb) }
-                    return
+                    return false
                 }
                 if (media.durationSec == null && FfmpegMath.parsePositiveDouble(cfg.manualDurationInput) == null) {
                     _uiState.update { it.copy(validationError = s.errEnterManualDuration) }
-                    return
+                    return false
                 }
             }
             ProcessingMode.TRIM_VIDEO -> {
-                val sRaw = cfg.startTimeInput.trim().replace(" ", "")
-                val eRaw = cfg.endTimeInput.trim().replace(" ", "")
+                val sRaw = cfg.startTimeInput.trim().replace(" ", "").replace(',', '.')
+                val eRaw = cfg.endTimeInput.trim().replace(" ", "").replace(',', '.')
                 if (sRaw.isEmpty() && eRaw.isEmpty()) {
                     _uiState.update { it.copy(validationError = s.errNoTrimRangeEntered) }
-                    return
+                    return false
                 }
                 val sSec = if (sRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(sRaw) else null
                 val eSec = if (eRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(eRaw) else null
                 if ((sRaw.isNotEmpty() && sSec == null) || (eRaw.isNotEmpty() && eSec == null)) {
                     _uiState.update { it.copy(validationError = s.errInvalidTimeFormat) }
-                    return
+                    return false
                 }
-                if (sSec != null && eSec != null && eSec <= sSec) {
+                val (effStartStr, effEndStr, _) = FfmpegMath.resolveTrimRange(cfg, media.durationSec)
+                val effStart = effStartStr?.let { FfmpegMath.parseTimestampToSeconds(it) } ?: sSec
+                val effEnd = effEndStr?.let { FfmpegMath.parseTimestampToSeconds(it) } ?: eSec
+
+                if ((sSec != null && eSec != null && eSec <= sSec) ||
+                    (effStart != null && effEnd != null && effEnd <= effStart)
+                ) {
                     _uiState.update { it.copy(validationError = s.errEndBeforeStart) }
-                    return
+                    return false
+                }
+                val startToCheck = effStart ?: sSec
+                if (media.durationSec != null && startToCheck != null && startToCheck >= media.durationSec - 0.05) {
+                    _uiState.update {
+                        it.copy(
+                            validationError = s.errStartExceedsDuration(
+                                FfmpegMath.formatKeyframeTime(media.durationSec, s)
+                            )
+                        )
+                    }
+                    return false
                 }
                 if (media.durationSec != null && eSec != null && eSec > media.durationSec + 0.05) {
                     _uiState.update {
@@ -571,20 +662,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         )
                     }
-                    return
+                    return false
                 }
             }
             ProcessingMode.AUDIO_ONLY_AAC,
             ProcessingMode.EXTRACT_AUDIO -> {
                 if (!media.hasAudio) {
                     _uiState.update { it.copy(validationError = s.errNoAudioTrack) }
-                    return
+                    return false
                 }
             }
             ProcessingMode.CUSTOM_COMMAND -> {
                 if (cfg.customCommandInput.isBlank()) {
                     _uiState.update { it.copy(validationError = s.errEnterCustomCommand) }
-                    return
+                    return false
                 }
                 val parsed = com.example.domain.CustomFfmpegParser.buildPlan(
                     rawCommand = cfg.customCommandInput,
@@ -596,13 +687,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (parsed.steps.isEmpty()) {
                     _uiState.update { it.copy(validationError = s.customCmdNoValidCommandWarning) }
-                    return
+                    return false
                 }
             }
             else -> Unit
         }
 
         _uiState.update { it.copy(validationError = null) }
+        return true
+    }
+
+    fun startEncoding() {
+        if (!validateBeforeLaunch()) return
+        val media = _uiState.value.mediaInfo ?: return
+        val cfg = _uiState.value.activeConfig ?: return
         EncodingForegroundService.startEncoding(appContext, media, cfg)
     }
 

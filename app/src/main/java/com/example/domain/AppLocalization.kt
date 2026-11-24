@@ -131,6 +131,8 @@ interface AppStrings {
     val creditsOriginalLibCreator: String
     val creditsForkSectionLabel: String
     val creditsForkMaintainer: String
+    val creditsMedia3SectionLabel: String
+    val creditsMedia3Author: String
     val actionClose: String
 
     // Common actions & intent choosers
@@ -217,8 +219,17 @@ interface AppStrings {
     val audioBitrateExtractTitle: (format: String) -> String
     val audioBitrateSub: (activeKbps: Int) -> String
     val audioBitrateMp3Sub: (activeKbps: Int) -> String
+    val audioBitrateSourceCapSub: (sourceKbps: Int, activeKbps: Int) -> String
+    val audioBitrateUpscaleWarning: (sourceKbps: Int, codec: String, requestedKbps: Int) -> String
     val customBitrateLabel: String
     val customBitrateMp3Label: String
+    val cancelConfirmTitle: String
+    val cancelConfirmBody: String
+    val cancelConfirmYes: String
+    val cancelConfirmKeepRunning: String
+    val errUnsupportedMediaFile: String
+    val errStartExceedsDuration: (durText: String) -> String
+    val errEncodingInProgress: String
     val outputFileNameHeader: String
     val ffmpegCommandPreview: String
     val actionHide: String
@@ -458,6 +469,8 @@ object TurkishStrings : AppStrings {
     override val creditsOriginalLibCreator = "Yapımcı: Taner Şener (ARTHENICA)"
     override val creditsForkSectionLabel = "Kullanılan Özel Fork"
     override val creditsForkMaintainer = "Sürdürücü: Jokobee & ffmpegkit-maintained Topluluğu"
+    override val creditsMedia3SectionLabel = "Donanım Hızlandırma Motoru"
+    override val creditsMedia3Author = "Geliştirici: Google / Android Open Source Project (Apache 2.0)"
     override val actionClose = "Kapat"
 
     override val actionBack = "Geri"
@@ -539,8 +552,17 @@ object TurkishStrings : AppStrings {
     override val audioBitrateExtractTitle: (String) -> String = { fmt -> "Çıktı Ses Bitrate ($fmt)" }
     override val audioBitrateSub: (Int) -> String = { kbps -> "32k – 768k aralığı desteklenir (5.1 surround için 320k/384k+ dahil) · Aktif: ${kbps}k" }
     override val audioBitrateMp3Sub: (Int) -> String = { kbps -> "MP3 için 32k – 320k aralığı desteklenir · Aktif: ${kbps}k" }
+    override val audioBitrateSourceCapSub: (Int, Int) -> String = { src, kbps -> "Kaynak ses: ${src}k · Hızlı seçenekler kaynak kalitesine göre ayarlandı · Aktif: ${kbps}k" }
+    override val audioBitrateUpscaleWarning: (Int, String, Int) -> String = { src, codec, req -> "Uyarı: Kaynağın sesi ${src}k ($codec) seviyesinde. Bundan yüksek bitrate (${req}k) girmek ses kalitesini artırmaz, yalnızca dosya boyutunu gereksiz büyütür." }
     override val customBitrateLabel = "Özel Bitrate (32..768 kbps)"
     override val customBitrateMp3Label = "Özel Bitrate (32..320 kbps)"
+    override val cancelConfirmTitle = "İşlemi İptal Et?"
+    override val cancelConfirmBody = "Devam eden işlem durdurulacak ve şu ana kadarki ilerleme silinecek. Emin misiniz?"
+    override val cancelConfirmYes = "Evet, İptal Et"
+    override val cancelConfirmKeepRunning = "Devam Et"
+    override val errUnsupportedMediaFile = "Bu dosya geçerli bir video veya ses izi içermiyor."
+    override val errStartExceedsDuration: (String) -> String = { dur -> "Başlangıç zamanı video süresinden ($dur) küçük olmalıdır." }
+    override val errEncodingInProgress = "Devam eden bir işlem var. Yeni dosya seçmek için önce mevcut işlemi bitirin veya iptal edin."
     override val outputFileNameHeader = "ÇIKTI DOSYA ADI"
     override val ffmpegCommandPreview = "FFmpeg Komutu Önizleme"
     override val actionHide = "Gizle"
@@ -776,6 +798,8 @@ object EnglishStrings : AppStrings {
     override val creditsOriginalLibCreator = "Author: Taner Şener (ARTHENICA)"
     override val creditsForkSectionLabel = "Maintained Fork Used"
     override val creditsForkMaintainer = "Maintainer: Jokobee & ffmpegkit-maintained Contributors"
+    override val creditsMedia3SectionLabel = "Hardware Acceleration Engine"
+    override val creditsMedia3Author = "Author: Google / Android Open Source Project (Apache 2.0)"
     override val actionClose = "Close"
 
     override val actionBack = "Back"
@@ -857,8 +881,17 @@ object EnglishStrings : AppStrings {
     override val audioBitrateExtractTitle: (String) -> String = { fmt -> "Output Audio Bitrate ($fmt)" }
     override val audioBitrateSub: (Int) -> String = { kbps -> "Supports 32k – 768k (including 320k/384k+ for 5.1 surround) · Active: ${kbps}k" }
     override val audioBitrateMp3Sub: (Int) -> String = { kbps -> "Supports 32k – 320k for MP3 · Active: ${kbps}k" }
+    override val audioBitrateSourceCapSub: (Int, Int) -> String = { src, kbps -> "Source audio: ${src}k · Quick presets capped to source quality · Active: ${kbps}k" }
+    override val audioBitrateUpscaleWarning: (Int, String, Int) -> String = { src, codec, req -> "Warning: Source audio is ${src}k ($codec). Entering a higher bitrate (${req}k) does not improve audio quality and only inflates file size." }
     override val customBitrateLabel = "Custom Bitrate (32–768 kbps)"
     override val customBitrateMp3Label = "Custom Bitrate (32–320 kbps)"
+    override val cancelConfirmTitle = "Cancel Processing?"
+    override val cancelConfirmBody = "The current operation will be stopped and progress so far will be discarded. Are you sure?"
+    override val cancelConfirmYes = "Yes, Cancel"
+    override val cancelConfirmKeepRunning = "Keep Running"
+    override val errUnsupportedMediaFile = "This file does not contain a valid video or audio track."
+    override val errStartExceedsDuration: (String) -> String = { dur -> "Start time must be less than video duration ($dur)." }
+    override val errEncodingInProgress = "An operation is already running. Finish or cancel it before selecting another file."
     override val outputFileNameHeader = "OUTPUT FILENAME"
     override val ffmpegCommandPreview = "FFmpeg Command Preview"
     override val actionHide = "Hide"

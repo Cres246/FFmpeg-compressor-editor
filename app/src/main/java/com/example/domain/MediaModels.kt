@@ -14,7 +14,9 @@ data class MediaInfo(
     val height: Int?,
     val pixFmt: String?,
     val audioCodec: String?,
-    val fps: Double? = null
+    val fps: Double? = null,
+    val audioBitrateKbps: Int? = null,
+    val audioChannels: Int? = null
 ) {
     val bitDepthIn: String
         get() = when {
@@ -40,6 +42,13 @@ data class MediaInfo(
 
     val hasVideo: Boolean
         get() = !videoCodec.isNullOrBlank()
+
+    val isLosslessAudio: Boolean
+        get() {
+            val c = audioCodec?.lowercase(java.util.Locale.US).orEmpty()
+            return c in setOf("flac", "alac", "wavpack", "truehd", "mlp", "ape", "tta", "tak") ||
+                c.startsWith("pcm_")
+        }
 }
 
 data class EncoderCapabilities(

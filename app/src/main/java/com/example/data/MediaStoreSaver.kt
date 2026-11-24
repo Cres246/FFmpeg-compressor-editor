@@ -105,11 +105,12 @@ object MediaStoreSaver {
                 lastError
             )
         } else {
-            // API 24-28 fallback: /sdcard/{Movies|Music|Pictures}/FFmpeg + MediaScannerConnection
+            // API 24-28 fallback: /sdcard/{Movies|Music|Pictures|Download}/FFmpeg + MediaScannerConnection
             val baseDirType = when {
+                isVideo -> Environment.DIRECTORY_MOVIES
                 isAudio -> Environment.DIRECTORY_MUSIC
                 isImage -> Environment.DIRECTORY_PICTURES
-                else -> Environment.DIRECTORY_MOVIES
+                else -> Environment.DIRECTORY_DOWNLOADS
             }
             @Suppress("DEPRECATION")
             val targetDir = File(
