@@ -78,7 +78,7 @@ data class TurboBitratePlan(
     val resolvedDisplayDims: Pair<Int, Int>? = null
 )
 
-private data class HardwareVideoEncoderCaps(
+internal data class HardwareVideoEncoderCaps(
     val codecName: String?,
     val minBitrateBps: Int,
     val maxBitrateBps: Int,
@@ -108,7 +108,7 @@ private data class HardwareVideoEncoderCaps(
     }
 }
 
-private data class HardwareAudioEncoderCaps(
+internal data class HardwareAudioEncoderCaps(
     val minBitrateBps: Int,
     val maxBitrateBps: Int,
     val maxChannelCount: Int,
@@ -130,7 +130,7 @@ private data class HardwareAudioEncoderCaps(
     }
 }
 
-private data class SourceTrackProbe(
+internal data class SourceTrackProbe(
     val displayDims: Pair<Int, Int>?,
     val durationSec: Double?,
     val sourceTotalBitrateBps: Int?,
@@ -238,7 +238,7 @@ object Media3TurboEngine {
      * requested MB limit (e.g. < 20 MB, < 25 MB, < 100 MB) without wasting unnecessary margin,
      * strictly honoring the user's chosen audio bitrate while staying inside hardware encoder ceilings.
      */
-    private fun computeTurboBitratePlan(
+    internal fun computeTurboBitratePlan(
         media: MediaInfo,
         config: ModeConfigState,
         probe: SourceTrackProbe,
@@ -499,6 +499,8 @@ object Media3TurboEngine {
             return attempt2
         }
 
+        val needsOpenGlHdrPipeline = attempt2.errorCodeName == DirectMediaCodecTranscoder.ERROR_HDR_NEEDS_OPENGL
+
         // Tier 3: Try either Media3 OpenGL HDR->SDR tone-mapping (for 10-bit HDR10/HLG/Dolby Vision)
         // or Direct MediaCodec 30 FPS VBR fallback (if 4K60 exceeded the VPU rate ceiling).
         val (outW, outH) = if (probe.displayDims != null) {
@@ -514,9 +516,9 @@ object Media3TurboEngine {
 
         onProgress(-1, 0.0, plan.effectiveDurationSec)
         runCatching { if (outputFile.exists()) outputFile.delete() }
-        delay(450L)
+        delay(if (needsOpenGlHdrPipeline) 200L else 450L)
 
-        if (canTryFpsFallback) {
+        if (canTryFpsFallback && !needsOpenGlHdrPipeline) {
             val attempt3Direct30 = executeDirectAttempt(
                 context = context,
                 media = media,

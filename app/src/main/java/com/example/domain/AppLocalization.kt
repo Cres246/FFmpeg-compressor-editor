@@ -131,6 +131,8 @@ interface AppStrings {
     val creditsOriginalLibCreator: String
     val creditsForkSectionLabel: String
     val creditsForkMaintainer: String
+    val creditsMedia3SectionLabel: String
+    val creditsMedia3Author: String
     val actionClose: String
 
     // Common actions & intent choosers
@@ -458,6 +460,8 @@ object TurkishStrings : AppStrings {
     override val creditsOriginalLibCreator = "Yapımcı: Taner Şener (ARTHENICA)"
     override val creditsForkSectionLabel = "Kullanılan Özel Fork"
     override val creditsForkMaintainer = "Sürdürücü: Jokobee & ffmpegkit-maintained Topluluğu"
+    override val creditsMedia3SectionLabel = "Donanım Hızlandırma Motoru"
+    override val creditsMedia3Author = "Geliştirici: Google / Android Open Source Project (Apache 2.0)"
     override val actionClose = "Kapat"
 
     override val actionBack = "Geri"
@@ -776,6 +780,8 @@ object EnglishStrings : AppStrings {
     override val creditsOriginalLibCreator = "Author: Taner Şener (ARTHENICA)"
     override val creditsForkSectionLabel = "Maintained Fork Used"
     override val creditsForkMaintainer = "Maintainer: Jokobee & ffmpegkit-maintained Contributors"
+    override val creditsMedia3SectionLabel = "Hardware Acceleration Engine"
+    override val creditsMedia3Author = "Author: Google / Android Open Source Project (Apache 2.0)"
     override val actionClose = "Close"
 
     override val actionBack = "Back"

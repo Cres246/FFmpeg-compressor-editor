@@ -9,6 +9,8 @@ env:
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -62,6 +64,15 @@ jobs:
           gradle-version: ${{ steps.gradle-ver.outputs.version }}
           validate-wrappers: false
 
+      - name: Birim Testleri Calistir
+        run: |
+          if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            chmod +x ./gradlew
+            ./gradlew testDebugUnitTest --stacktrace
+          else
+            gradle testDebugUnitTest --stacktrace
+          fi
+
       - name: APK Derle (Debug)
         run: |
           if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
@@ -84,6 +95,7 @@ jobs:
           path: dist/${{ env.APK_ADI }}
 
       - name: Indirme Linki Olustur (GitHub Release)
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.SURUM_ETIKETI }}

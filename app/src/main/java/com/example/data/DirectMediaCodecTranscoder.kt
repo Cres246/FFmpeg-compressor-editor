@@ -29,7 +29,143 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/**
+ * Pure-Kotlin timing, frame-rate cadence, and HDR metadata helpers for [DirectMediaCodecTranscoder].
+ */
+internal object DirectTranscodeMath {
+    private const val COLOR_TRANSFER_ST2084 = 6
+    private const val COLOR_TRANSFER_HLG = 7
+    private const val COLOR_STANDARD_BT2020 = 6
+
+    private const val HEVC_PROFILE_MAIN10_HDR10 = 0x1000
+    private const val HEVC_PROFILE_MAIN10_HDR10_PLUS = 0x2000
+    private const val VP9_PROFILE_2_HDR = 0x1000
+    private const val VP9_PROFILE_3_HDR = 0x2000
+    private const val VP9_PROFILE_2_HDR10_PLUS = 0x4000
+    private const val VP9_PROFILE_3_HDR10_PLUS = 0x8000
+    private const val AV1_PROFILE_MAIN10_HDR10 = 0x1000
+    private const val AV1_PROFILE_MAIN10_HDR10_PLUS = 0x2000
+
+    private const val MAX_SHARED_AV_OFFSET_US = 2_000_000L
+
+    fun isHdrColorMetadata(
+        colorTransfer: Int?,
+        colorStandard: Int?,
+        profile: Int?,
+        mime: String?
+    ): Boolean {
+        if (colorTransfer == COLOR_TRANSFER_ST2084 || colorTransfer == COLOR_TRANSFER_HLG) {
+            return true
+        }
+        if (colorStandard == COLOR_STANDARD_BT2020) {
+            return true
+        }
+        if (profile != null && !mime.isNullOrBlank()) {
+            when {
+                mime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) -> {
+                    if (profile == HEVC_PROFILE_MAIN10_HDR10 || profile == HEVC_PROFILE_MAIN10_HDR10_PLUS) {
+                        return true
+                    }
+                }
+                mime.equals(MediaFormat.MIMETYPE_VIDEO_VP9, ignoreCase = true) -> {
+                    if (profile == VP9_PROFILE_2_HDR ||
+                        profile == VP9_PROFILE_3_HDR ||
+                        profile == VP9_PROFILE_2_HDR10_PLUS ||
+                        profile == VP9_PROFILE_3_HDR10_PLUS
+                    ) {
+                        return true
+                    }
+                }
+                mime.equals("video/av01", ignoreCase = true) -> {
+                    if (profile == AV1_PROFILE_MAIN10_HDR10 || profile == AV1_PROFILE_MAIN10_HDR10_PLUS) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    fun isMediaFormatHdr(format: MediaFormat): Boolean {
+        val transfer = readIntOrNull(format, MediaFormat.KEY_COLOR_TRANSFER)
+        val standard = readIntOrNull(format, MediaFormat.KEY_COLOR_STANDARD)
+        val profile = readIntOrNull(format, MediaFormat.KEY_PROFILE)
+        val mime = runCatching { format.getString(MediaFormat.KEY_MIME) }.getOrNull()
+        return isHdrColorMetadata(transfer, standard, profile, mime)
+    }
+
+    fun isExplicitHdrTransfer(format: MediaFormat): Boolean {
+        val transfer = readIntOrNull(format, MediaFormat.KEY_COLOR_TRANSFER)
+        return transfer == COLOR_TRANSFER_ST2084 || transfer == COLOR_TRANSFER_HLG
+    }
+
+    /**
+     * Resolves a shared starting PTS baseline for untrimmed clips so an initial video B-frame
+     * or edit-list offset (e.g. video at 80ms, audio at 0ms) never shifts video ahead of audio.
+     * Returns `null` if tracks diverge by >2s (malformed container timestamps) so each track
+     * safely normalizes independently.
+     */
+    fun resolveUntrimmedAvBaselineUs(
+        firstVideoPtsUs: Long?,
+        firstAudioPtsUs: Long?
+    ): Long? {
+        if (firstVideoPtsUs == null || firstVideoPtsUs < 0L) return null
+        if (firstAudioPtsUs == null || firstAudioPtsUs < 0L) return null
+        if (abs(firstVideoPtsUs - firstAudioPtsUs) > MAX_SHARED_AV_OFFSET_US) return null
+        return minOf(firstVideoPtsUs, firstAudioPtsUs).coerceAtLeast(0L)
+    }
+
+    fun sanitizeMonotonicPtsUs(
+        candidatePtsUs: Long,
+        lastPtsUs: Long,
+        minStepUs: Long
+    ): Long {
+        val safeCandidate = candidatePtsUs.coerceAtLeast(0L)
+        return if (lastPtsUs != Long.MIN_VALUE && safeCandidate <= lastPtsUs) {
+            lastPtsUs + minStepUs.coerceAtLeast(1L)
+        } else {
+            safeCandidate
+        }
+    }
+
+    private fun readIntOrNull(format: MediaFormat, key: String): Int? =
+        if (format.containsKey(key)) runCatching { format.getInteger(key) }.getOrNull() else null
+}
+
+/**
+ * Fractional-accumulator frame dropper that hits exact target FPS across 60, 59.94, 50 PAL,
+ * 48, 120 FPS, and VFR screen recordings without halving 50 FPS down to 25 FPS.
+ */
+internal class TargetFpsFrameDropper(
+    targetFps: Double = 30.0,
+    private val toleranceUs: Double = 2_000.0
+) {
+    private val stepUs: Double = 1_000_000.0 / targetFps.coerceAtLeast(1.0)
+    private var hasKeptFrame = false
+    private var nextTargetPtsUs = 0.0
+
+    fun shouldKeepFrame(normalizedPtsUs: Long): Boolean {
+        val pts = normalizedPtsUs.toDouble()
+        if (!hasKeptFrame) {
+            hasKeptFrame = true
+            nextTargetPtsUs = pts + stepUs
+            return true
+        }
+        if (pts < nextTargetPtsUs - toleranceUs) {
+            return false
+        }
+        nextTargetPtsUs += stepUs
+        // Re-anchor cleanly only after genuine VFR pauses (gap > 1 target frame) so regular
+        // fractional cadences like 50 FPS PAL and 48 FPS preserve exact sub-frame phase.
+        if (nextTargetPtsUs <= pts) {
+            nextTargetPtsUs = pts + stepUs
+        }
+        return true
+    }
+}
 
 data class DirectTranscodeRequest(
     val sourceUri: Uri,
@@ -65,6 +201,7 @@ internal object DirectMediaCodecTranscoder {
 
     private const val TIMEOUT_US = 10_000L
     private const val EGL_RECORDABLE_ANDROID = 0x3142
+    const val ERROR_HDR_NEEDS_OPENGL = "DIRECT_HDR_NEEDS_OPENGL"
 
     fun transcode(
         context: Context,
@@ -116,6 +253,20 @@ internal object DirectMediaCodecTranscoder {
                     elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                 )
 
+            // Guard HDR color fidelity: this GLES20 8-bit surface pipeline cannot preserve 10-bit HDR
+            // and relies on Android 12+ decoder SDR tone-mapping when SDR is requested. Hand off early
+            // to Media3's OpenGL ES 3.0 HDR pipeline instead of silently outputting washed-out BT.2020.
+            val inputIsHdr = DirectTranscodeMath.isMediaFormatHdr(inVideoFormat)
+            if (inputIsHdr && (!request.requestSdrToneMap || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
+                return Media3TurboResult(
+                    success = false,
+                    isUnsupportedFormat = false,
+                    errorCodeName = ERROR_HDR_NEEDS_OPENGL,
+                    errorDetail = "HDR source requires Media3 OpenGL color pipeline",
+                    elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                )
+            }
+
             val rotation = resolveVideoRotation(context, request.sourceUri, inVideoFormat)
             val isRotated = rotation == 90 || rotation == 270
             val rawEncW = if (isRotated) request.targetDisplayHeight else request.targetDisplayWidth
@@ -124,11 +275,21 @@ internal object DirectMediaCodecTranscoder {
             val encH = makeEven(rawEncH.coerceAtLeast(16))
             val safeFps = request.targetFps.coerceIn(15, 120)
 
+            // Select video track early so we can peek its initial PTS for untrimmed A/V sync baseline
+            vExt.selectTrack(videoTrackIdx)
+            val clipStartUs = request.clipStartUs ?: 0L
+            val clipEndUs = request.clipEndUs
+            if (clipStartUs > 0L) {
+                vExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            }
+            val initialVideoPtsUs = if (clipStartUs <= 0L) vExt.sampleTime.takeIf { it >= 0L } else null
+
             // 2. Prepare audio source track (re-encode to AAC first in a fast isolated pass if needed,
             //    so MediaMuxer receives the final AAC csd-0 immediately with zero codec deadlocks)
             var audioTrackIndexInExtractor = -1
             var audioMuxFormat: MediaFormat? = null
             var audioPtsOffsetUs = 0L
+            var sharedAvBaselineUs: Long? = null
 
             if (request.hasAudio) {
                 val srcAudioTrackIdx = findTrackIndex(vExt, "audio/")
@@ -142,13 +303,14 @@ internal object DirectMediaCodecTranscoder {
                     if (mustTranscodeAudio) {
                         val tmpAudio = File(request.tempDir, "direct_audio_${System.nanoTime()}.m4a")
                         tempAudioFile = tmpAudio
-                        val audioOk = transcodeAudioToAacFile(
+                        val (audioOk, computedBaseline) = transcodeAudioToAacFile(
                             context = context,
                             sourceUri = request.sourceUri,
                             outAudioFile = tmpAudio,
                             targetBitrateBps = request.audioBitrateBps.coerceIn(32_000, 512_000),
                             clipStartUs = request.clipStartUs,
                             clipEndUs = request.clipEndUs,
+                            untrimmedVideoFirstPtsUs = initialVideoPtsUs,
                             cancelFlag = cancelFlag
                         )
                         if (cancelFlag.get()) {
@@ -168,6 +330,7 @@ internal object DirectMediaCodecTranscoder {
                                 audioMuxFormat = aExt.getTrackFormat(idx)
                                 aExt.selectTrack(idx)
                                 audioPtsOffsetUs = 0L
+                                sharedAvBaselineUs = computedBaseline
                             } else {
                                 runCatching { aExt.release() }
                             }
@@ -184,11 +347,17 @@ internal object DirectMediaCodecTranscoder {
                             audioTrackIndexInExtractor = idx
                             audioMuxFormat = aExt.getTrackFormat(idx)
                             aExt.selectTrack(idx)
-                            val startSeek = request.clipStartUs ?: 0L
-                            if (startSeek > 0L) {
-                                aExt.seekTo(startSeek, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                            if (clipStartUs > 0L) {
+                                aExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                                audioPtsOffsetUs = clipStartUs
+                            } else {
+                                val initialAudioPtsUs = aExt.sampleTime.takeIf { it >= 0L }
+                                sharedAvBaselineUs = DirectTranscodeMath.resolveUntrimmedAvBaselineUs(
+                                    firstVideoPtsUs = initialVideoPtsUs,
+                                    firstAudioPtsUs = initialAudioPtsUs
+                                )
+                                audioPtsOffsetUs = sharedAvBaselineUs ?: 0L
                             }
-                            audioPtsOffsetUs = startSeek
                         }
                     }
                 }
@@ -238,14 +407,7 @@ internal object DirectMediaCodecTranscoder {
             decoder.configure(inVideoFormat, outSurf.surface, null, 0)
             decoder.start()
 
-            // 5. Select video track & seek if trimming
-            vExt.selectTrack(videoTrackIdx)
-            val clipStartUs = request.clipStartUs ?: 0L
-            val clipEndUs = request.clipEndUs
-            if (clipStartUs > 0L) {
-                vExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            }
-
+            // 5. Initialize MediaMuxer with orientation hint
             if (request.outputFile.exists()) {
                 runCatching { request.outputFile.delete() }
             }
@@ -268,10 +430,15 @@ internal object DirectMediaCodecTranscoder {
             var encoderDone = false
             var audioDone = (audioExtractor == null || audioMuxFormat == null)
 
-            var firstKeptRawPtsUs = Long.MIN_VALUE
+            var firstKeptRawPtsUs = if (clipStartUs <= 0L && sharedAvBaselineUs != null) {
+                sharedAvBaselineUs
+            } else {
+                Long.MIN_VALUE
+            }
             var lastEncodedPtsUs = Long.MIN_VALUE
             var lastMuxedVideoPtsUs = Long.MIN_VALUE
             var lastMuxedAudioPtsUs = Long.MIN_VALUE
+            val frameDropper = if (request.dropTo30Fps) TargetFpsFrameDropper(targetFps = 30.0) else null
             val minFrameStepUs = (1_000_000L / safeFps.coerceAtLeast(15)).coerceAtLeast(4_000L)
             val effectiveDurUs = (request.effectiveDurationSec * 1_000_000.0).toLong().coerceAtLeast(500_000L)
             var lastProgressPostMs = 0L
@@ -303,11 +470,11 @@ internal object DirectMediaCodecTranscoder {
                         aExt.advance()
                         continue
                     }
-                    val safeAudioPts = if (lastMuxedAudioPtsUs != Long.MIN_VALUE && normalizedAudioPts <= lastMuxedAudioPtsUs) {
-                        lastMuxedAudioPtsUs + 1_000L
-                    } else {
-                        normalizedAudioPts
-                    }
+                    val safeAudioPts = DirectTranscodeMath.sanitizeMonotonicPtsUs(
+                        candidatePtsUs = normalizedAudioPts,
+                        lastPtsUs = lastMuxedAudioPtsUs,
+                        minStepUs = 1_000L
+                    )
                     audioBufferInfo.offset = 0
                     audioBufferInfo.size = sampleSize
                     audioBufferInfo.presentationTimeUs = safeAudioPts
@@ -347,10 +514,11 @@ internal object DirectMediaCodecTranscoder {
                                 if (encBufferInfo.size > 0 && muxerStarted) {
                                     encodedData.position(encBufferInfo.offset)
                                     encodedData.limit(encBufferInfo.offset + encBufferInfo.size)
-                                    var safePts = encBufferInfo.presentationTimeUs.coerceAtLeast(0L)
-                                    if (lastMuxedVideoPtsUs != Long.MIN_VALUE && safePts <= lastMuxedVideoPtsUs) {
-                                        safePts = lastMuxedVideoPtsUs + 1_000L
-                                    }
+                                    val safePts = DirectTranscodeMath.sanitizeMonotonicPtsUs(
+                                        candidatePtsUs = encBufferInfo.presentationTimeUs,
+                                        lastPtsUs = lastMuxedVideoPtsUs,
+                                        minStepUs = 1_000L
+                                    )
                                     encBufferInfo.presentationTimeUs = safePts
                                     outMuxer.writeSampleData(muxVideoTrack, encodedData, encBufferInfo)
                                     lastMuxedVideoPtsUs = safePts
@@ -421,17 +589,14 @@ internal object DirectMediaCodecTranscoder {
                                 firstKeptRawPtsUs = if (clipStartUs > 0L) minOf(rawPtsUs, clipStartUs) else rawPtsUs
                             }
                             val normalized = (rawPtsUs - firstKeptRawPtsUs).coerceAtLeast(0L)
-                            if (request.dropTo30Fps &&
-                                lastEncodedPtsUs != Long.MIN_VALUE &&
-                                (normalized - lastEncodedPtsUs) < 31_000L
-                            ) {
+                            if (frameDropper != null && !frameDropper.shouldKeepFrame(normalized)) {
                                 shouldRender = false
                             } else {
-                                outPtsUs = if (lastEncodedPtsUs != Long.MIN_VALUE && normalized <= lastEncodedPtsUs) {
-                                    lastEncodedPtsUs + minFrameStepUs
-                                } else {
-                                    normalized
-                                }
+                                outPtsUs = DirectTranscodeMath.sanitizeMonotonicPtsUs(
+                                    candidatePtsUs = normalized,
+                                    lastPtsUs = lastEncodedPtsUs,
+                                    minStepUs = minFrameStepUs
+                                )
                             }
                         }
 
@@ -450,6 +615,22 @@ internal object DirectMediaCodecTranscoder {
                         } else {
                             drainEncoder(endOfStream = false)
                         }
+                    } else if (decStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        // Catch OEM decoders that silently ignore KEY_COLOR_TRANSFER_REQUEST and emit
+                        // un-tonemapped HDR frames so we hand off to Media3's OpenGL GPU tone-mapper.
+                        if (inputIsHdr &&
+                            request.requestSdrToneMap &&
+                            DirectTranscodeMath.isExplicitHdrTransfer(decoder.outputFormat)
+                        ) {
+                            return Media3TurboResult(
+                                success = false,
+                                isUnsupportedFormat = false,
+                                errorCodeName = ERROR_HDR_NEEDS_OPENGL,
+                                errorDetail = "Hardware decoder ignored SDR tone-map request",
+                                elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                            )
+                        }
+                        drainEncoder(endOfStream = false)
                     } else if (decStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
                         drainEncoder(endOfStream = false)
                     }
@@ -575,8 +756,9 @@ internal object DirectMediaCodecTranscoder {
         targetBitrateBps: Int,
         clipStartUs: Long?,
         clipEndUs: Long?,
+        untrimmedVideoFirstPtsUs: Long?,
         cancelFlag: AtomicBoolean
-    ): Boolean {
+    ): Pair<Boolean, Long?> {
         var pfd: ParcelFileDescriptor? = null
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
@@ -589,10 +771,10 @@ internal object DirectMediaCodecTranscoder {
             extractor = ext
             pfd = fd
             val audioIdx = findTrackIndex(ext, "audio/")
-            if (audioIdx < 0) return false
+            if (audioIdx < 0) return false to null
 
             val inFmt = ext.getTrackFormat(audioIdx)
-            val inMime = inFmt.getString(MediaFormat.KEY_MIME) ?: return false
+            val inMime = inFmt.getString(MediaFormat.KEY_MIME) ?: return false to null
             val sampleRate = if (inFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
                 inFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceIn(8_000, 48_000)
             } else 48_000
@@ -602,8 +784,15 @@ internal object DirectMediaCodecTranscoder {
 
             ext.selectTrack(audioIdx)
             val startUs = clipStartUs ?: 0L
-            if (startUs > 0L) {
+            val sharedBaselineUs = if (startUs > 0L) {
                 ext.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                null
+            } else {
+                val initialAudioPtsUs = ext.sampleTime.takeIf { it >= 0L }
+                DirectTranscodeMath.resolveUntrimmedAvBaselineUs(
+                    firstVideoPtsUs = untrimmedVideoFirstPtsUs,
+                    firstAudioPtsUs = initialAudioPtsUs
+                )
             }
 
             val dec = MediaCodec.createDecoderByType(inMime)
@@ -630,7 +819,7 @@ internal object DirectMediaCodecTranscoder {
             var inputDone = false
             var decoderDone = false
             var encoderDone = false
-            var firstPtsUs = Long.MIN_VALUE
+            var firstPtsUs = if (startUs <= 0L && sharedBaselineUs != null) sharedBaselineUs else Long.MIN_VALUE
             var lastMuxPtsUs = Long.MIN_VALUE
 
             while (!encoderDone && !cancelFlag.get()) {
@@ -695,11 +884,11 @@ internal object DirectMediaCodecTranscoder {
                                         if (outBuf != null && muxerStarted && (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && encInfo.size > 0) {
                                             outBuf.position(encInfo.offset)
                                             outBuf.limit(encInfo.offset + encInfo.size)
-                                            val safePts = if (lastMuxPtsUs != Long.MIN_VALUE && encInfo.presentationTimeUs <= lastMuxPtsUs) {
-                                                lastMuxPtsUs + 1_000L
-                                            } else {
-                                                encInfo.presentationTimeUs.coerceAtLeast(0L)
-                                            }
+                                            val safePts = DirectTranscodeMath.sanitizeMonotonicPtsUs(
+                                                candidatePtsUs = encInfo.presentationTimeUs,
+                                                lastPtsUs = lastMuxPtsUs,
+                                                minStepUs = 1_000L
+                                            )
                                             encInfo.presentationTimeUs = safePts
                                             outMux.writeSampleData(muxTrack, outBuf, encInfo)
                                             lastMuxPtsUs = safePts
@@ -741,11 +930,11 @@ internal object DirectMediaCodecTranscoder {
                             if (outBuf != null && muxerStarted && (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && encInfo.size > 0) {
                                 outBuf.position(encInfo.offset)
                                 outBuf.limit(encInfo.offset + encInfo.size)
-                                val safePts = if (lastMuxPtsUs != Long.MIN_VALUE && encInfo.presentationTimeUs <= lastMuxPtsUs) {
-                                    lastMuxPtsUs + 1_000L
-                                } else {
-                                    encInfo.presentationTimeUs.coerceAtLeast(0L)
-                                }
+                                val safePts = DirectTranscodeMath.sanitizeMonotonicPtsUs(
+                                    candidatePtsUs = encInfo.presentationTimeUs,
+                                    lastPtsUs = lastMuxPtsUs,
+                                    minStepUs = 1_000L
+                                )
                                 encInfo.presentationTimeUs = safePts
                                 outMux.writeSampleData(muxTrack, outBuf, encInfo)
                                 lastMuxPtsUs = safePts
@@ -759,9 +948,9 @@ internal object DirectMediaCodecTranscoder {
                     }
                 }
             }
-            muxerStarted && !cancelFlag.get()
+            (muxerStarted && !cancelFlag.get()) to sharedBaselineUs
         } catch (_: Throwable) {
-            false
+            false to null
         } finally {
             runCatching { decoder?.stop() }
             runCatching { decoder?.release() }
@@ -778,21 +967,26 @@ internal object DirectMediaCodecTranscoder {
 
     private fun openExtractor(context: Context, uri: Uri): Pair<MediaExtractor, ParcelFileDescriptor?> {
         val extractor = MediaExtractor()
-        if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
-            extractor.setDataSource(uri.path!!)
-            return extractor to null
-        }
-        val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
-        if (pfd != null) {
-            try {
-                extractor.setDataSource(pfd.fileDescriptor)
-                return extractor to pfd
-            } catch (_: Throwable) {
-                runCatching { pfd.close() }
+        try {
+            if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
+                extractor.setDataSource(uri.path!!)
+                return extractor to null
             }
+            val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+            if (pfd != null) {
+                try {
+                    extractor.setDataSource(pfd.fileDescriptor)
+                    return extractor to pfd
+                } catch (_: Throwable) {
+                    runCatching { pfd.close() }
+                }
+            }
+            extractor.setDataSource(context, uri, null)
+            return extractor to null
+        } catch (t: Throwable) {
+            runCatching { extractor.release() }
+            throw t
         }
-        extractor.setDataSource(context, uri, null)
-        return extractor to null
     }
 
     private fun findTrackIndex(extractor: MediaExtractor, mimePrefix: String): Int {

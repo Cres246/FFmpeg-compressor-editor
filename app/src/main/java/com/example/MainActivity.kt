@@ -832,6 +832,13 @@ private fun OpenSourceCreditsDialog(
                     authorLine = strings.creditsForkMaintainer,
                     borderColor = extColors.subtleBorder
                 )
+                CreditEntryCard(
+                    sectionLabel = strings.creditsMedia3SectionLabel,
+                    libraryName = "AndroidX Media3 Transformer",
+                    packageTag = "androidx.media3 · v1.11.1",
+                    authorLine = strings.creditsMedia3Author,
+                    borderColor = extColors.subtleBorder
+                )
             }
         },
         confirmButton = {

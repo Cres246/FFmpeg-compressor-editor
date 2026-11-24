@@ -1,6 +1,6 @@
 {
   "name": "FFmpeg",
-  "description": "10 modlu, kayıpsız kesim, akıllı keyframe tarama, gerçek 2-Pass sıkıştırma ve 8/10-bit H.264/H.265 dönüştürme sunan FFmpeg medya işleme aracı.",
+  "description": "11 modlu, kayıpsız kesim, akıllı keyframe tarama, gerçek 2-Pass sıkıştırma, Media3 donanım hızlandırma ve 8/10-bit H.264/H.265 dönüştürme sunan FFmpeg medya işleme aracı.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
