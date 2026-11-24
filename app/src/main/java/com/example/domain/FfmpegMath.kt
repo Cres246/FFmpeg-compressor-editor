@@ -34,6 +34,23 @@ object FfmpegMath {
         return v.coerceAtLeast(80)
     }
 
+    /**
+     * Stress classification for Target-Size encoding when a low bit budget collides with high
+     * resolution/FPS or extreme bitrate starvation (where x264/x265 & hardware VPU hit QP ceilings
+     * and can overshoot target MB). Normal encodes ALWAYS produce tier 0 (0.0 extra margin drop).
+     */
+    data class TargetSizeStressAssessment(
+        val tier: Int,
+        val ffmpegExtraMarginDrop: Double,
+        val turboExtraMarginDrop: Double
+    )
+
+    data class AdaptiveTwoPassPlan(
+        val videoBitrateKbps: Int,
+        val audioBitrateKbps: Int,
+        val stress: TargetSizeStressAssessment
+    )
+
     fun isBitrateWarningLow(videoBitrateKbps: Int): Boolean = videoBitrateKbps <= 120
 
     /**
@@ -47,6 +64,206 @@ object FfmpegMath {
     ): Boolean {
         val longVideoThreshold = if (codec == VideoCodecOption.H265) 950 else 1400
         return (durationSec >= 60.0 && videoBitrateKbps < longVideoThreshold) || videoBitrateKbps < 650
+    }
+
+    /**
+     * Resolves effective post-scale output dimensions matching [buildScaleFilter]'s 3-way
+     * no-upscale rules so bitrate stress checks reflect actual encoded pixel count.
+     */
+    fun resolveEffectiveOutputDimensions(
+        width: Int?,
+        height: Int?,
+        resolution: ResolutionOption
+    ): Pair<Int, Int> {
+        val target = resolution.targetShort
+        val lMax = resolution.maxLong
+        if (width == null || height == null || width <= 0 || height <= 0) {
+            return if (target != null) {
+                ((target * 16) / 9) to target
+            } else {
+                1920 to 1080
+            }
+        }
+        if (target == null || lMax == null) return width to height
+        return when {
+            height > width -> {
+                if (width <= target) width to height
+                else {
+                    val outH = ((height.toDouble() * target / width).roundToInt() / 2) * 2
+                    target to outH.coerceAtLeast(2)
+                }
+            }
+            width.toLong() * 9L > height.toLong() * 16L -> {
+                if (width <= lMax) width to height
+                else {
+                    val outH = ((height.toDouble() * lMax / width).roundToInt() / 2) * 2
+                    lMax to outH.coerceAtLeast(2)
+                }
+            }
+            else -> {
+                if (height <= target) width to height
+                else {
+                    val outW = ((width.toDouble() * target / height).roundToInt() / 2) * 2
+                    outW.coerceAtLeast(2) to target
+                }
+            }
+        }
+    }
+
+    /**
+     * Evaluates whether a target-size encode is at risk of overshooting due to QP saturation:
+     * - Tier 0 (Normal): 0.0 extra margin (general calculation stays 100% untouched).
+     * - Tier 1 (1 notch): Low-bitrate warning active, yet user kept >720p or >30 FPS.
+     * - Tier 2 (2 notches): Severe BPP starvation, 1440p/4K or 1080p60 under warning, or <360 kbps.
+     * - Tier 3 (3 notches): Extreme starvation (<220 kbps, BPP < 0.0065, or <450 kbps at 1440p/4K).
+     */
+    fun assessTargetSizeBitrateStress(
+        baseVideoBitrateKbps: Int,
+        codec: VideoCodecOption,
+        durationSec: Double,
+        outputWidth: Int,
+        outputHeight: Int,
+        outputFps: Double
+    ): TargetSizeStressAssessment {
+        val safeW = outputWidth.coerceAtLeast(16)
+        val safeH = outputHeight.coerceAtLeast(16)
+        val safeFps = outputFps.coerceIn(15.0, 120.0)
+        val effShort = minOf(safeW, safeH)
+        val isHighResolution = effShort > 720
+        val isUltraHighResolution = effShort >= 1440
+        val isHighFps = safeFps > 32.0
+        val lowBitrateRec = shouldRecommend30Fps720p(baseVideoBitrateKbps, codec, durationSec)
+
+        val pixelsPerSec = safeW.toDouble() * safeH.toDouble() * safeFps
+        val rawBpp = (baseVideoBitrateKbps * 1000.0) / pixelsPerSec.coerceAtLeast(1.0)
+        val effectiveBpp = if (codec == VideoCodecOption.H265) rawBpp * 1.35 else rawBpp
+
+        return when {
+            baseVideoBitrateKbps < 220 ||
+                effectiveBpp < 0.0065 ||
+                (baseVideoBitrateKbps < 450 && isUltraHighResolution) ->
+                TargetSizeStressAssessment(
+                    tier = 3,
+                    ffmpegExtraMarginDrop = 0.085,
+                    turboExtraMarginDrop = 0.105
+                )
+
+            baseVideoBitrateKbps < 360 ||
+                effectiveBpp < 0.0105 ||
+                (lowBitrateRec && (isUltraHighResolution || (isHighResolution && isHighFps))) ->
+                TargetSizeStressAssessment(
+                    tier = 2,
+                    ffmpegExtraMarginDrop = 0.055,
+                    turboExtraMarginDrop = 0.065
+                )
+
+            lowBitrateRec && (isHighResolution || isHighFps) ->
+                TargetSizeStressAssessment(
+                    tier = 1,
+                    ffmpegExtraMarginDrop = 0.025,
+                    turboExtraMarginDrop = 0.030
+                )
+
+            else ->
+                TargetSizeStressAssessment(
+                    tier = 0,
+                    ffmpegExtraMarginDrop = 0.0,
+                    turboExtraMarginDrop = 0.0
+                )
+        }
+    }
+
+    /**
+     * Context-aware 2-Pass ABR bitrate planner:
+     * - Normal scenarios (Tier 0): returns the EXACT same video & audio bitrates as
+     *   [calculateTwoPassVideoBitrateKbps] (100% untouched).
+     * - Special stress scenarios (Tiers 1–3): trims 1–3 extra notches from the safety factor
+     *   and in extreme audio-choked starvation (Tier 3 where video falls below 120 kbps) takes
+     *   initiative to trim audio share so total file size stays strictly under the target MB.
+     */
+    fun calculateAdaptiveTwoPassPlan(
+        targetMb: Double,
+        durationSec: Double,
+        audioBitrateKbps: Int,
+        codec: VideoCodecOption,
+        width: Int?,
+        height: Int?,
+        resolution: ResolutionOption,
+        fpsOption: FpsOption,
+        sourceFps: Double?
+    ): AdaptiveTwoPassPlan {
+        val safeDur = if (durationSec <= 0.0) 1.0 else durationSec
+        val baseSafety = when {
+            targetMb <= 1.0 + 1e-6 -> 0.91
+            targetMb <= 2.0 + 1e-6 -> 0.935
+            else -> 0.96
+        }
+        val baseVkbps = calculateTwoPassVideoBitrateKbps(targetMb, safeDur, audioBitrateKbps)
+        val (outW, outH) = resolveEffectiveOutputDimensions(width, height, resolution)
+        val rawSrcFps = (sourceFps ?: 30.0).coerceIn(15.0, 120.0)
+        val effFps = if (fpsOption == FpsOption.FPS_30) minOf(rawSrcFps, 30.0) else rawSrcFps
+
+        val stress = assessTargetSizeBitrateStress(
+            baseVideoBitrateKbps = baseVkbps,
+            codec = codec,
+            durationSec = safeDur,
+            outputWidth = outW,
+            outputHeight = outH,
+            outputFps = effFps
+        )
+        if (stress.tier == 0) {
+            return AdaptiveTwoPassPlan(
+                videoBitrateKbps = baseVkbps,
+                audioBitrateKbps = audioBitrateKbps,
+                stress = stress
+            )
+        }
+
+        val adjustedSafety = (baseSafety - stress.ffmpegExtraMarginDrop).coerceAtLeast(0.78)
+        val totalKb = targetMb * 8000.0 * adjustedSafety
+        val totalBudgetKbps = totalKb / safeDur
+        val effectiveAudioKbps = if (
+            stress.tier >= 3 &&
+            audioBitrateKbps > 32 &&
+            (totalBudgetKbps - audioBitrateKbps) < 120.0
+        ) {
+            val maxAudioShare = floor(totalBudgetKbps * 0.30).toInt().coerceIn(32, audioBitrateKbps)
+            minOf(audioBitrateKbps, maxAudioShare)
+        } else {
+            audioBitrateKbps
+        }
+        val rawV = floor(totalBudgetKbps - effectiveAudioKbps).toInt()
+        val floorKbps = if (stress.tier >= 2) 48 else 80
+        return AdaptiveTwoPassPlan(
+            videoBitrateKbps = rawV.coerceAtLeast(floorKbps),
+            audioBitrateKbps = effectiveAudioKbps,
+            stress = stress
+        )
+    }
+
+    fun calculateAdaptiveTwoPassVideoBitrateKbps(
+        targetMb: Double,
+        durationSec: Double,
+        audioBitrateKbps: Int,
+        codec: VideoCodecOption,
+        width: Int?,
+        height: Int?,
+        resolution: ResolutionOption,
+        fpsOption: FpsOption,
+        sourceFps: Double?
+    ): Pair<Int, TargetSizeStressAssessment> {
+        val plan = calculateAdaptiveTwoPassPlan(
+            targetMb = targetMb,
+            durationSec = durationSec,
+            audioBitrateKbps = audioBitrateKbps,
+            codec = codec,
+            width = width,
+            height = height,
+            resolution = resolution,
+            fpsOption = fpsOption,
+            sourceFps = sourceFps
+        )
+        return plan.videoBitrateKbps to plan.stress
     }
 
     /**
@@ -266,7 +483,8 @@ object FfmpegMath {
     ): KeyframePointResult {
         var prevKf: Double? = null
         var nextKf: Double? = null
-        val nearby = mutableListOf<Double>()
+        val allKeyframes = mutableListOf<Double>()
+        var afterTargetCount = 0
         var lastFmt = ""
 
         for (line in ffprobeOutput.lineSequence()) {
@@ -288,15 +506,47 @@ object FfmpegMath {
             if (nextKf == null && value >= targetSec - 0.05) {
                 nextKf = value
             }
-            if (value >= targetSec - 12.0 && value <= targetSec + 12.0) {
-                val fmt = formatKeyframeTime(value)
-                if (fmt != lastFmt) {
-                    nearby.add(value)
-                    lastFmt = fmt
-                }
+            if (value > targetSec + 0.05) {
+                afterTargetCount++
             }
-            if (value > targetSec + 14.0) break
+            val fmt = formatKeyframeTime(value)
+            if (fmt != lastFmt) {
+                allKeyframes.add(value)
+                lastFmt = fmt
+            }
+            // Never break before capturing at least 2 keyframes past targetSec so sparse 10s-30s+
+            // GOP videos always expose the next keyframe option for user trimming decisions.
+            if (value > targetSec + 20.0 && afterTargetCount >= 2) break
         }
+
+        val nearbySet = linkedMapOf<String, Double>()
+        fun addKf(kf: Double?) {
+            if (kf == null) return
+            val fmt = formatKeyframeTime(kf)
+            if (!nearbySet.containsKey(fmt)) {
+                nearbySet[fmt] = kf
+            }
+        }
+
+        // Include standard ±18s neighborhood first
+        for (kf in allKeyframes) {
+            if (kf >= targetSec - 18.0 && kf <= targetSec + 18.0) {
+                addKf(kf)
+            }
+        }
+
+        // Always guarantee immediate previous & next keyframe choices even when GOP distance > 18s
+        addKf(prevKf)
+        addKf(nextKf)
+        val strictlyBefore = allKeyframes.filter { it < (prevKf ?: targetSec) - 0.05 }
+        addKf(strictlyBefore.lastOrNull())
+        val strictlyAfter = allKeyframes.filter { it > targetSec + 0.05 }
+        addKf(strictlyAfter.firstOrNull())
+        if (strictlyAfter.size >= 2) {
+            addKf(strictlyAfter[1])
+        }
+
+        val nearby = nearbySet.values.sorted()
 
         val recommendedRaw = if (isStart) {
             prevKf?.let { it + 0.005 }
@@ -662,9 +912,26 @@ object FfmpegMath {
                 }
                 val dur = media.durationSec ?: parsePositiveDouble(config.manualDurationInput) ?: 1.0
                 val defAb = defaultAudioBitrateForTwoPass(targetMb)
-                val abps = if (!media.hasAudio) 0 else normalizeAudioBitrate(config.audioBitrateInput, defAb)
-                val vkbps = calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)
+                val reqAbps = if (!media.hasAudio) 0 else normalizeAudioBitrate(config.audioBitrateInput, defAb)
+                val plan = calculateAdaptiveTwoPassPlan(
+                    targetMb = targetMb,
+                    durationSec = dur,
+                    audioBitrateKbps = reqAbps,
+                    codec = codec,
+                    width = media.width,
+                    height = media.height,
+                    resolution = config.resolution,
+                    fpsOption = config.fps,
+                    sourceFps = media.fps
+                )
+                val vkbps = plan.videoBitrateKbps
+                val abps = plan.audioBitrateKbps
+                val stress = plan.stress
                 val vf = buildScaleFilter(media.width, media.height, config.resolution, media.needsEvenScale)
+                // Only in severe/extreme bitrate starvation (Tier >= 2), add a gentle VBV ceiling
+                // so complex bursts cannot push output over the target MB limit.
+                val vbvMaxKbps = if (stress.tier >= 2) (vkbps * 1.45).roundToInt().coerceAtLeast(vkbps + 40) else null
+                val vbvBufKbps = if (stress.tier >= 2) (vkbps * 2.5).roundToInt().coerceAtLeast(vkbps * 2) else null
 
                 val pass1 = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
                 config.fps.ffmpegValue?.let { pass1.addAll(listOf("-r", it)) }
@@ -680,13 +947,19 @@ object FfmpegMath {
                     )
                 )
                 if (codec == VideoCodecOption.H265) {
+                    val vbvSuffix = if (vbvMaxKbps != null && vbvBufKbps != null) {
+                        ":vbv-maxrate=$vbvMaxKbps:vbv-bufsize=$vbvBufKbps"
+                    } else ""
                     pass1.addAll(
                         listOf(
                             "-x265-params",
-                            "log-level=warning:pools=+:pass=1:stats=$passLogPrefix.log"
+                            "log-level=warning:pools=+:pass=1:stats=$passLogPrefix.log$vbvSuffix"
                         )
                     )
                 } else {
+                    if (vbvMaxKbps != null && vbvBufKbps != null) {
+                        pass1.addAll(listOf("-maxrate", "${vbvMaxKbps}k", "-bufsize", "${vbvBufKbps}k"))
+                    }
                     pass1.addAll(listOf("-pass", "1", "-passlogfile", passLogPrefix))
                 }
                 pass1.addAll(listOf("-an", "-f", "null", "/dev/null"))
@@ -705,14 +978,20 @@ object FfmpegMath {
                     )
                 )
                 if (codec == VideoCodecOption.H265) {
+                    val vbvSuffix = if (vbvMaxKbps != null && vbvBufKbps != null) {
+                        ":vbv-maxrate=$vbvMaxKbps:vbv-bufsize=$vbvBufKbps"
+                    } else ""
                     pass2.addAll(
                         listOf(
                             "-tag:v", "hvc1",
                             "-x265-params",
-                            "log-level=warning:pools=+:pass=2:stats=$passLogPrefix.log"
+                            "log-level=warning:pools=+:pass=2:stats=$passLogPrefix.log$vbvSuffix"
                         )
                     )
                 } else {
+                    if (vbvMaxKbps != null && vbvBufKbps != null) {
+                        pass2.addAll(listOf("-maxrate", "${vbvMaxKbps}k", "-bufsize", "${vbvBufKbps}k"))
+                    }
                     pass2.addAll(listOf("-pass", "2", "-passlogfile", passLogPrefix))
                 }
                 if (abps == 0) {

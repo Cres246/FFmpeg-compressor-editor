@@ -802,8 +802,14 @@ fun TrimTimeAndKeyframeSection(
                     startSec = visualStart,
                     endSec = visualEnd,
                     scrubState = scrubState,
-                    onRangeChanged = { newStart, newEnd ->
-                        viewModel.updateTrimRangeFromSlider(newStart, newEnd)
+                    onRangeChanged = { newStart, newEnd, activeThumb, isDragFinished ->
+                        viewModel.updateTrimRangeFromSlider(
+                            startSec = newStart,
+                            endSec = newEnd,
+                            updateStart = activeThumb == ActiveTrimThumb.START,
+                            updateEnd = activeThumb == ActiveTrimThumb.END,
+                            isDragFinished = isDragFinished
+                        )
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -873,7 +879,9 @@ fun TrimTimeAndKeyframeSection(
 
             val startScan = config.trimScan.startScan
             val endScan = config.trimScan.endScan
-            if (config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME && (startScan != null || endScan != null)) {
+            val showKeyframeCard = config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
+                (startScan != null || endScan != null || (config.trimScan.panelExpanded && config.trimScan.isScanning))
+            if (showKeyframeCard) {
                 Spacer(Modifier.height(10.dp))
                 Surface(
                     shape = MaterialTheme.shapes.medium,
@@ -886,6 +894,26 @@ fun TrimTimeAndKeyframeSection(
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        if (startScan == null && endScan == null && config.trimScan.isScanning) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(15.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = strings.scanningKeyframes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         if (startScan != null) {
                             val activeStartKf = config.selectedStartKfSec ?: startScan.prevKf
                             KeyframeGridBlock(
@@ -896,6 +924,7 @@ fun TrimTimeAndKeyframeSection(
                                     maxCount = 12
                                 ),
                                 selectedKf = activeStartKf,
+                                isRefreshing = config.trimScan.isScanning,
                                 onSelectKeyframe = viewModel::applyNearbyKeyframeToStart
                             )
                         }
@@ -909,6 +938,7 @@ fun TrimTimeAndKeyframeSection(
                                     maxCount = 12
                                 ),
                                 selectedKf = activeEndKf,
+                                isRefreshing = startScan == null && config.trimScan.isScanning,
                                 onSelectKeyframe = viewModel::applyNearbyKeyframeToEnd
                             )
                         }
@@ -980,8 +1010,10 @@ fun TrimTimeAndKeyframeSection(
                 val hasEndInput = config.endTimeInput.trim().isNotEmpty()
                 val needsScan = (hasStartInput && config.trimScan.startScan == null) ||
                     (hasEndInput && config.trimScan.endScan == null)
+                val showScanButton = (!config.trimScan.panelExpanded && (config.trimScan.isScanning || needsScan)) ||
+                    (config.trimScan.panelExpanded && config.trimScan.error != null)
 
-                if (config.trimScan.isScanning || needsScan) {
+                if (showScanButton) {
                     Spacer(Modifier.height(10.dp))
                     FilledTonalButton(
                         onClick = { viewModel.scanTrimKeyframes() },
@@ -1124,6 +1156,7 @@ private fun KeyframeGridBlock(
     label: String,
     keyframes: List<Double>,
     selectedKf: Double?,
+    isRefreshing: Boolean = false,
     onSelectKeyframe: (Double) -> Unit
 ) {
     val extColors = LocalExtendedColors.current
@@ -1134,11 +1167,24 @@ private fun KeyframeGridBlock(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.6.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
 
         if (rows.isEmpty()) {
             Text(
@@ -1221,7 +1267,7 @@ private fun TrimTimelineRangeBar(
     startSec: Double,
     endSec: Double,
     scrubState: TrimScrubState?,
-    onRangeChanged: (Double, Double) -> Unit,
+    onRangeChanged: (Double, Double, ActiveTrimThumb, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val activeTrackColor = MaterialTheme.colorScheme.primary // CelloBrown (#562812)
@@ -1279,7 +1325,7 @@ private fun TrimTimelineRangeBar(
                         val now = SystemClock.uptimeMillis()
                         if (now - lastCommitMs >= SLIDER_VIEWMODEL_THROTTLE_MS) {
                             lastCommitMs = now
-                            latestOnRangeChanged.value(curStartSec, curEndSec)
+                            latestOnRangeChanged.value(curStartSec, curEndSec, thumb, false)
                         }
                     }
 
@@ -1305,7 +1351,7 @@ private fun TrimTimelineRangeBar(
                             if (didDrag) {
                                 // Commit final exact range to ViewModel BEFORE clearing live scrub state
                                 // so thumbnails and text fields never jump back for a single frame.
-                                latestOnRangeChanged.value(curStartSec, curEndSec)
+                                latestOnRangeChanged.value(curStartSec, curEndSec, lockedThumb, true)
                             }
                             latestScrubState.value?.endDrag()
                             localDraggingThumb = null

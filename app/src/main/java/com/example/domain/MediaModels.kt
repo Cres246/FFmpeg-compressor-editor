@@ -2,6 +2,11 @@ package com.example.domain
 
 import android.net.Uri
 
+enum class MediaPickSource {
+    GALLERY_VIDEO,
+    FILE_PICKER
+}
+
 data class MediaInfo(
     val uri: Uri,
     val fileName: String,
@@ -302,6 +307,7 @@ data class KeyframePointResult(
 
 data class TrimScanState(
     val isScanning: Boolean = false,
+    val panelExpanded: Boolean = false,
     val startScan: KeyframePointResult? = null,
     val endScan: KeyframePointResult? = null,
     val error: String? = null

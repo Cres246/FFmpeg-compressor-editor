@@ -412,30 +412,46 @@ object FfmpegEngine {
     }
 
     /**
-     * Exact port of show_kf_at(): scans packet headers within [target - 15s, +28s] without
-     * decoding frames to find prev/next/nearby keyframes in milliseconds.
+     * Scans packet headers without decoding frames to find prev/next/nearby keyframes in
+     * milliseconds. Uses a generous [-30s, +35s] window and adaptively widens to [-75s, +80s]
+     * for ultra-sparse GOP videos so the user always sees both previous and next keyframe options.
      */
     suspend fun scanKeyframes(
         context: Context,
         uri: Uri,
         targetSec: Double,
-        isStart: Boolean
+        isStart: Boolean,
+        durationSec: Double? = null
     ): KeyframePointResult = withContext(Dispatchers.IO) {
-        val seekS = (targetSec.toInt() - 15).coerceAtLeast(0)
-        val readSpan = (targetSec.toInt() + 16 - seekS).coerceAtLeast(32)
-        val safPath = resolveInputPath(context, uri)
-        val args = arrayOf(
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-read_intervals", "${seekS}%+${readSpan}",
-            "-show_packets",
-            "-show_entries", "packet=pts_time,dts_time,flags",
-            "-of", "compact=p=0",
-            safPath
-        )
-        val session = FFprobeKit.executeWithArguments(args)
-        val output = session.output.orEmpty()
-        FfmpegMath.parseKeyframePackets(output, targetSec, isStart)
+        suspend fun runWindowScan(backSec: Int, forwardSec: Int): KeyframePointResult {
+            val seekS = (targetSec.toInt() - backSec).coerceAtLeast(0)
+            val readSpan = (targetSec.toInt() + forwardSec - seekS).coerceAtLeast(backSec + forwardSec)
+            val safPath = resolveInputPath(context, uri)
+            val args = arrayOf(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-read_intervals", "${seekS}%+${readSpan}",
+                "-show_packets",
+                "-show_entries", "packet=pts_time,dts_time,flags",
+                "-of", "compact=p=0",
+                safPath
+            )
+            val session = FFprobeKit.executeWithArguments(args)
+            val output = session.output.orEmpty()
+            return FfmpegMath.parseKeyframePackets(output, targetSec, isStart)
+        }
+
+        val initial = runWindowScan(backSec = 30, forwardSec = 35)
+        val missingPrev = initial.prevKf == null && targetSec > 1.0
+        val hasStrictlyAfter = initial.nearbyKeyframes.any { it > targetSec + 0.05 }
+        val farFromEnd = durationSec == null || targetSec < durationSec - 2.0
+        val missingNext = (initial.nextKf == null || !hasStrictlyAfter) && farFromEnd
+
+        if (missingPrev || missingNext) {
+            runWindowScan(backSec = 75, forwardSec = 80)
+        } else {
+            initial
+        }
     }
 
     /**

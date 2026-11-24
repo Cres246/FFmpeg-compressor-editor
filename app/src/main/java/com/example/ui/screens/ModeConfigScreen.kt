@@ -289,11 +289,24 @@ fun ModeConfigScreen(
                             isLosslessSource = media.isLosslessAudio
                         )
                         val abps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
-                        val vkbps = if (dur != null && dur > 0.0) {
+                        val baseVkbps = if (dur != null && dur > 0.0) {
                             FfmpegMath.calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)
                         } else null
-                        val shouldRecommend = vkbps != null && dur != null &&
-                            FfmpegMath.shouldRecommend30Fps720p(vkbps, config.codec, dur)
+                        val adaptiveVkbps = if (dur != null && dur > 0.0) {
+                            FfmpegMath.calculateAdaptiveTwoPassVideoBitrateKbps(
+                                targetMb = targetMb,
+                                durationSec = dur,
+                                audioBitrateKbps = abps,
+                                codec = config.codec,
+                                width = media.width,
+                                height = media.height,
+                                resolution = config.resolution,
+                                fpsOption = config.fps,
+                                sourceFps = media.fps
+                            ).first
+                        } else null
+                        val shouldRecommend = baseVkbps != null && dur != null &&
+                            FfmpegMath.shouldRecommend30Fps720p(baseVkbps, config.codec, dur)
 
                         FpsAndResolutionSection(
                             media = media,
@@ -302,7 +315,7 @@ fun ModeConfigScreen(
                             onSelectFps = viewModel::updateFps,
                             onSelectResolution = viewModel::updateResolution,
                             recommend30Fps720p = shouldRecommend,
-                            calculatedVideoBitrateKbps = vkbps
+                            calculatedVideoBitrateKbps = adaptiveVkbps
                         )
                     }
                     if (media.hasAudio) {
@@ -599,10 +612,22 @@ private fun TwoPassTargetSummaryCard(
         sourceKbps = media.audioBitrateKbps,
         isLosslessSource = media.isLosslessAudio
     )
-    val abps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
-    val vkbps = if (dur != null && dur > 0.0) {
-        FfmpegMath.calculateTwoPassVideoBitrateKbps(targetMb, dur, abps)
+    val reqAbps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
+    val adaptivePlan = if (dur != null && dur > 0.0) {
+        FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = targetMb,
+            durationSec = dur,
+            audioBitrateKbps = reqAbps,
+            codec = config.codec,
+            width = media.width,
+            height = media.height,
+            resolution = config.resolution,
+            fpsOption = config.fps,
+            sourceFps = media.fps
+        )
     } else null
+    val vkbps = adaptivePlan?.videoBitrateKbps
+    val abps = adaptivePlan?.audioBitrateKbps ?: reqAbps
 
     ConfigSectionCard(
         title = strings.twoPassTitle,

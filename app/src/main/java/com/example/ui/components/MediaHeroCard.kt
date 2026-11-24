@@ -62,6 +62,7 @@ fun MediaHeroCard(
     probeError: String?,
     onPickGalleryVideo: () -> Unit,
     onPickAnyFile: () -> Unit,
+    onChangeMedia: () -> Unit = onPickAnyFile,
     modifier: Modifier = Modifier
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -261,7 +262,7 @@ fun MediaHeroCard(
                             }
                             Spacer(Modifier.width(6.dp))
                             OutlinedButton(
-                                onClick = onPickAnyFile,
+                                onClick = onChangeMedia,
                                 modifier = Modifier
                                     .height(48.dp)
                                     .testTag("change_file_button"),

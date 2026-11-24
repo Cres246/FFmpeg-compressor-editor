@@ -381,4 +381,170 @@ class FfmpegMathTest {
         assertEquals("Play", com.example.domain.EnglishStrings.actionPlayOutput)
         assertEquals("Edit", com.example.domain.EnglishStrings.actionEditOutput)
     }
+
+    @Test
+    fun adaptiveTwoPassLeavesNormalEncodesUntouchedAndProtectsStarvedTiers() {
+        // Normal encode (60s 1080p30 -> 20 MB): Tier 0, 100% identical to baseline formula
+        val normalBase = FfmpegMath.calculateTwoPassVideoBitrateKbps(20.0, 60.0, 128)
+        val normalPlan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = 20.0,
+            durationSec = 60.0,
+            audioBitrateKbps = 128,
+            codec = VideoCodecOption.H264,
+            width = 1920,
+            height = 1080,
+            resolution = ResolutionOption.ORIGINAL,
+            fpsOption = FpsOption.ORIGINAL,
+            sourceFps = 30.0
+        )
+        assertEquals(0, normalPlan.stress.tier)
+        assertEquals(normalBase, normalPlan.videoBitrateKbps)
+        assertEquals(128, normalPlan.audioBitrateKbps)
+
+        // User followed warning (90s 720p30 -> 10 MB): stays Tier 0, 100% untouched
+        val heededBase = FfmpegMath.calculateTwoPassVideoBitrateKbps(10.0, 90.0, 128)
+        val heededPlan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = 10.0,
+            durationSec = 90.0,
+            audioBitrateKbps = 128,
+            codec = VideoCodecOption.H264,
+            width = 1920,
+            height = 1080,
+            resolution = ResolutionOption.P720,
+            fpsOption = FpsOption.FPS_30,
+            sourceFps = 30.0
+        )
+        assertEquals(0, heededPlan.stress.tier)
+        assertEquals(heededBase, heededPlan.videoBitrateKbps)
+
+        // Tier 1: User ignored low-bitrate warning and kept 1080p on 90s -> 10 MB (1 notch lower)
+        val tier1Plan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = 10.0,
+            durationSec = 90.0,
+            audioBitrateKbps = 128,
+            codec = VideoCodecOption.H264,
+            width = 1920,
+            height = 1080,
+            resolution = ResolutionOption.ORIGINAL,
+            fpsOption = FpsOption.ORIGINAL,
+            sourceFps = 30.0
+        )
+        assertEquals(1, tier1Plan.stress.tier)
+        assertTrue(tier1Plan.videoBitrateKbps < heededBase)
+        assertEquals(128, tier1Plan.audioBitrateKbps)
+
+        // Tier 2: Severe BPP starvation (120s 1080p30 -> 10 MB) -> 2 notches + gentle VBV ceiling
+        val media1080 = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "long.mp4",
+            baseName = "long",
+            extension = "mp4",
+            sizeBytes = 120_000_000L,
+            durationSec = 120.0,
+            videoCodec = "h264",
+            width = 1920,
+            height = 1080,
+            pixFmt = "yuv420p",
+            audioCodec = "aac",
+            audioBitrateKbps = 128,
+            fps = 30.0
+        )
+        val tier2Cfg = ModeConfigState(
+            mode = ProcessingMode.CUSTOM_SIZE,
+            targetMbInput = "10",
+            codec = VideoCodecOption.H264,
+            resolution = ResolutionOption.ORIGINAL,
+            fps = FpsOption.ORIGINAL,
+            audioBitrateInput = "128"
+        )
+        val tier2Plan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = 10.0,
+            durationSec = 120.0,
+            audioBitrateKbps = 128,
+            codec = VideoCodecOption.H264,
+            width = 1920,
+            height = 1080,
+            resolution = ResolutionOption.ORIGINAL,
+            fpsOption = FpsOption.ORIGINAL,
+            sourceFps = 30.0
+        )
+        assertEquals(2, tier2Plan.stress.tier)
+        val tier2Steps = FfmpegMath.buildFfmpegSteps(
+            media = media1080,
+            config = tier2Cfg,
+            inputTokenProvider = { "in.mp4" },
+            outputPath = "/tmp/out.mp4",
+            passLogPrefix = "/tmp/p"
+        )
+        assertTrue("Expected -maxrate VBV guard on Tier 2 H.264", tier2Steps[1].args.contains("-maxrate"))
+        assertTrue("Expected -bufsize VBV guard on Tier 2 H.264", tier2Steps[1].args.contains("-bufsize"))
+
+        // Normal encode must NOT emit -maxrate
+        val normalSteps = FfmpegMath.buildFfmpegSteps(
+            media = media1080.copy(durationSec = 60.0),
+            config = tier2Cfg.copy(mode = ProcessingMode.DISCORD_20MB),
+            inputTokenProvider = { "in.mp4" },
+            outputPath = "/tmp/out.mp4",
+            passLogPrefix = "/tmp/p"
+        )
+        assertFalse("Normal Tier 0 encode must not emit -maxrate", normalSteps[1].args.contains("-maxrate"))
+
+        // Tier 3 extreme audio-choked starvation (300s 1080p -> 5 MB with 128k audio):
+        // takes initiative to trim audio share so video + audio physically fits under 5 MB
+        val tier3Plan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+            targetMb = 5.0,
+            durationSec = 300.0,
+            audioBitrateKbps = 128,
+            codec = VideoCodecOption.H264,
+            width = 1920,
+            height = 1080,
+            resolution = ResolutionOption.ORIGINAL,
+            fpsOption = FpsOption.ORIGINAL,
+            sourceFps = 30.0
+        )
+        assertEquals(3, tier3Plan.stress.tier)
+        assertTrue("Expected extreme starvation to trim 128k audio share (got ${tier3Plan.audioBitrateKbps}k)", tier3Plan.audioBitrateKbps < 128)
+        val totalEstimatedMb = ((tier3Plan.videoBitrateKbps + tier3Plan.audioBitrateKbps) * 300.0) / 8000.0
+        assertTrue("Expected total estimated MB ($totalEstimatedMb) strictly below 5.0 MB", totalEstimatedMb < 5.0)
+    }
+
+    @Test
+    fun sparseGopKeyframesAlwaysExposePreviousAndNextOptionsEvenBeyondTenSeconds() {
+        // 15-second GOP video: keyframes at 0s, 15s, 30s, 45s
+        val probe15s = """
+            pts_time=0.000000|dts_time=0.000000|flags=K_
+            pts_time=15.000000|dts_time=15.000000|flags=K_
+            pts_time=30.000000|dts_time=30.000000|flags=K_
+            pts_time=45.000000|dts_time=45.000000|flags=K_
+        """.trimIndent()
+
+        // Target 16s: next keyframe is 14s away (30s) -> MUST still be offered while prevKf (15s) auto-selects
+        val startAt16 = FfmpegMath.parseKeyframePackets(probe15s, targetSec = 16.0, isStart = true)
+        assertEquals(15.0, startAt16.prevKf!!, 0.001)
+        assertEquals(30.0, startAt16.nextKf!!, 0.001)
+        assertEquals(15.005, startAt16.recommendedRawSec!!, 0.001)
+        assertTrue("Previous keyframe 0s must be selectable", startAt16.nearbyKeyframes.contains(0.0))
+        assertTrue("Auto-selected prevKf 15s must be selectable", startAt16.nearbyKeyframes.contains(15.0))
+        assertTrue("Next keyframe 30s (14s away) must be selectable", startAt16.nearbyKeyframes.contains(30.0))
+        assertTrue("Subsequent keyframe 45s must be selectable", startAt16.nearbyKeyframes.contains(45.0))
+
+        // Target landing directly on 15s keyframe: MUST still expose both 0s (prev) and 30s (next)
+        val exactAt15 = FfmpegMath.parseKeyframePackets(probe15s, targetSec = 15.0, isStart = true)
+        assertTrue(exactAt15.nearbyKeyframes.contains(0.0))
+        assertTrue(exactAt15.nearbyKeyframes.contains(15.0))
+        assertTrue(exactAt15.nearbyKeyframes.contains(30.0))
+
+        // Ultra-sparse 25-second GOP video: target at 5s -> next keyframe is 20s away (25s)
+        val probe25s = """
+            pts_time=0.000000|dts_time=0.000000|flags=K_
+            pts_time=25.000000|dts_time=25.000000|flags=K_
+            pts_time=50.000000|dts_time=50.000000|flags=K_
+        """.trimIndent()
+        val endAt5 = FfmpegMath.parseKeyframePackets(probe25s, targetSec = 5.0, isStart = false)
+        assertEquals(0.0, endAt5.prevKf!!, 0.001)
+        assertEquals(25.0, endAt5.nextKf!!, 0.001)
+        assertEquals(25.0, endAt5.recommendedRawSec!!, 0.001)
+        assertTrue("25s keyframe (20s away) must be included in nearby options", endAt5.nearbyKeyframes.contains(25.0))
+        assertTrue("50s keyframe must also be included in nearby options", endAt5.nearbyKeyframes.contains(50.0))
+    }
 }

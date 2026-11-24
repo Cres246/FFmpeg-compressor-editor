@@ -259,4 +259,99 @@ class Media3TurboEngineTest {
         val projected1MbBytes = ((plan1Mb.videoBitrateBps + plan1Mb.audioBitrateBps).toDouble() / 8.0) * 30.0
         assertTrue("Expected 1 MB projected bytes ($projected1MbBytes) safely below 940 KB", projected1MbBytes < 940_000.0)
     }
+
+    @Test
+    fun turboStressTiersKeepNormalUnchangedAndProtectHighResStarvation() {
+        val baseProbe = SourceTrackProbe(
+            displayDims = 1920 to 1080,
+            durationSec = 60.0,
+            sourceTotalBitrateBps = 12_000_000,
+            sourceAudioBitrateBps = 128_000,
+            sourceAudioMime = "audio/mp4a-latm",
+            sourceAudioChannels = 2,
+            sourceAudioSampleRate = 48_000,
+            sourceVideoFps = 30.0
+        )
+
+        // Normal 60s 1080p30 -> 20 MB stays Tier 0
+        val normalPlan = Media3TurboEngine.computeTurboBitratePlan(
+            media = sampleMedia(durationSec = 60.0, fps = 30.0),
+            config = ModeConfigState(mode = ProcessingMode.DISCORD_20MB, audioBitrateInput = "128"),
+            probe = baseProbe,
+            hwCaps = defaultVideoCaps(supportsCbr = true),
+            aacCaps = defaultAudioCaps()
+        )
+        assertEquals(0, normalPlan.stressTier)
+
+        // 90s -> 10 MB: 720p30 (heeded warning) stays Tier 0; 1080p30 (ignored warning) gets Tier 1 tighter bitrate
+        val probe90s = baseProbe.copy(durationSec = 90.0)
+        val plan720 = Media3TurboEngine.computeTurboBitratePlan(
+            media = sampleMedia(durationSec = 90.0, fps = 30.0),
+            config = ModeConfigState(
+                mode = ProcessingMode.CUSTOM_SIZE,
+                targetMbInput = "10",
+                resolution = ResolutionOption.P720,
+                fps = FpsOption.FPS_30,
+                audioBitrateInput = "128"
+            ),
+            probe = probe90s,
+            hwCaps = defaultVideoCaps(supportsCbr = true),
+            aacCaps = defaultAudioCaps()
+        )
+        val plan1080Ignored = Media3TurboEngine.computeTurboBitratePlan(
+            media = sampleMedia(durationSec = 90.0, fps = 30.0),
+            config = ModeConfigState(
+                mode = ProcessingMode.CUSTOM_SIZE,
+                targetMbInput = "10",
+                resolution = ResolutionOption.ORIGINAL,
+                fps = FpsOption.ORIGINAL,
+                audioBitrateInput = "128"
+            ),
+            probe = probe90s,
+            hwCaps = defaultVideoCaps(supportsCbr = true),
+            aacCaps = defaultAudioCaps()
+        )
+        assertEquals(0, plan720.stressTier)
+        assertEquals(1, plan1080Ignored.stressTier)
+        assertTrue(
+            "Ignored-warning 1080p bitrate (${plan1080Ignored.videoBitrateBps}) must be tighter than 720p (${plan720.videoBitrateBps})",
+            plan1080Ignored.videoBitrateBps < plan720.videoBitrateBps
+        )
+
+        // 120s 1080p30 -> 10 MB hits Tier 2
+        val planTier2 = Media3TurboEngine.computeTurboBitratePlan(
+            media = sampleMedia(durationSec = 120.0, fps = 30.0),
+            config = ModeConfigState(
+                mode = ProcessingMode.CUSTOM_SIZE,
+                targetMbInput = "10",
+                resolution = ResolutionOption.ORIGINAL,
+                fps = FpsOption.ORIGINAL,
+                audioBitrateInput = "128"
+            ),
+            probe = baseProbe.copy(durationSec = 120.0),
+            hwCaps = defaultVideoCaps(supportsCbr = true),
+            aacCaps = defaultAudioCaps()
+        )
+        assertEquals(2, planTier2.stressTier)
+
+        // Extreme audio-choked 300s 1080p30 -> 5 MB hits Tier 3, trims audio share, forces audio re-encode, stays < 5 MB
+        val planTier3 = Media3TurboEngine.computeTurboBitratePlan(
+            media = sampleMedia(durationSec = 300.0, fps = 30.0),
+            config = ModeConfigState(
+                mode = ProcessingMode.CUSTOM_SIZE,
+                targetMbInput = "5",
+                resolution = ResolutionOption.ORIGINAL,
+                fps = FpsOption.ORIGINAL,
+                audioBitrateInput = "128"
+            ),
+            probe = baseProbe.copy(durationSec = 300.0),
+            hwCaps = defaultVideoCaps(supportsCbr = true).copy(minBitrateBps = 64_000),
+            aacCaps = defaultAudioCaps()
+        )
+        assertEquals(3, planTier3.stressTier)
+        assertTrue("Expected Tier 3 audio cap below 128k (got ${planTier3.audioBitrateBps})", planTier3.audioBitrateBps < 128_000)
+        assertTrue("Expected forceAudioReencode when Tier 3 caps AAC below source", planTier3.forceAudioReencode)
+        val projectedBytes = ((planTier3.videoBitrateBps + planTier3.audioBitrateBps).toDouble() / 8.0) * 300.0
+        assertTrue("Expected Tier 3 projected bytes ($projectedBytes) strictly below 5,000,000", projectedBytes < 5_000_000.0)
+    }
 }

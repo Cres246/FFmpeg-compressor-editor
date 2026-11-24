@@ -78,7 +78,8 @@ data class TurboBitratePlan(
     val forceAudioReencode: Boolean,
     val sourceIsAac: Boolean,
     val isTargetSizeMode: Boolean,
-    val resolvedDisplayDims: Pair<Int, Int>? = null
+    val resolvedDisplayDims: Pair<Int, Int>? = null,
+    val stressTier: Int = 0
 )
 
 internal data class HardwareVideoEncoderCaps(
@@ -288,13 +289,59 @@ object Media3TurboEngine {
             // WhatsApp, and Android file managers without ever crossing the MB threshold.
             val strictTargetBytes = targetMb * 1_000_000.0
             val muxOverheadBytes = strictTargetBytes * 0.018 + 64_000.0
-            val audioBytes = (effectiveAudioBps / 8.0) * effectiveDurationSec
-            val availableVideoBytes = (strictTargetBytes - muxOverheadBytes - audioBytes)
-                .coerceAtLeast(effectiveDurationSec * 12_500.0)
+
+            // Evaluate bitrate stress against actual encoded resolution & FPS so ONLY high-res
+            // ignored-warning or extreme low-bitrate encodes receive 1–3 extra margin notches.
+            val (outW, outH) = if (probe.displayDims != null) {
+                resolveTargetDimensionsForDisplay(probe.displayDims.first, probe.displayDims.second, config)
+            } else {
+                resolveTargetDimensions(media, config)
+            }
+            val rawSrcFps = (probe.sourceVideoFps ?: media.fps ?: 30.0).coerceIn(15.0, 120.0)
+            val effFps = if (config.fps == FpsOption.FPS_30) minOf(rawSrcFps, 30.0) else rawSrcFps
+            val baseEstimatedKbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(
+                targetMb = targetMb,
+                durationSec = effectiveDurationSec,
+                audioBitrateKbps = (effectiveAudioBps / 1000).coerceAtLeast(0)
+            )
+            val stress = FfmpegMath.assessTargetSizeBitrateStress(
+                baseVideoBitrateKbps = baseEstimatedKbps,
+                codec = config.codec,
+                durationSec = effectiveDurationSec,
+                outputWidth = outW,
+                outputHeight = outH,
+                outputFps = effFps
+            )
+
+            // In extreme starvation (Tier 3) where audio alone chokes video below 120 kbps,
+            // take initiative to trim audio share so video + audio physically fits under target MB.
+            val totalBudgetBps = ((strictTargetBytes - muxOverheadBytes) * 8.0 / effectiveDurationSec)
+                .coerceAtLeast(0.0)
+            val finalAudioBps = if (
+                stress.tier >= 3 &&
+                media.hasAudio &&
+                effectiveAudioBps > 32_000 &&
+                (totalBudgetBps - effectiveAudioBps) < 120_000.0
+            ) {
+                val maxAudioShareBps = (totalBudgetBps * 0.30).toInt().coerceIn(32_000, effectiveAudioBps)
+                aacCaps.clampBitrateForChannels(minOf(effectiveAudioBps, maxAudioShareBps), channels)
+            } else {
+                effectiveAudioBps
+            }
+            val finalForceAudioReencode = forceAudioReencode || (media.hasAudio && finalAudioBps < effectiveAudioBps)
+
+            val audioBytes = (finalAudioBps / 8.0) * effectiveDurationSec
+            val baseAvailableVideoBytes = (strictTargetBytes - muxOverheadBytes - audioBytes)
+                .coerceAtLeast(effectiveDurationSec * 8_000.0)
+            val availableVideoBytes = if (stress.tier >= 2) {
+                baseAvailableVideoBytes
+            } else {
+                baseAvailableVideoBytes.coerceAtLeast(effectiveDurationSec * 12_500.0)
+            }
 
             // Hardware 1-pass CBR holds tightly within ~2-3%; VBR overshoots more on complex scenes.
-            // Tiny 1-2 MB targets get one extra notch of headroom for fixed container/moov overhead
-            // without changing > 2 MB calculations.
+            // Tiny 1-2 MB targets and starved high-res/extreme-low-bitrate scenarios get targeted
+            // extra headroom without changing normal > 2 MB calculations.
             val useCbr = hwCaps.supportsCbr
             val baseMargin = if (useCbr) 0.955 else 0.885
             val smallTargetNotch = when {
@@ -302,7 +349,8 @@ object Media3TurboEngine {
                 targetMb <= 2.0 + 1e-6 -> 0.015
                 else -> 0.0
             }
-            val hwRateControlMargin = (baseMargin - smallTargetNotch).coerceAtLeast(0.80)
+            val hwRateControlMargin = (baseMargin - smallTargetNotch - stress.turboExtraMarginDrop)
+                .coerceAtLeast(0.72)
             val rawVideoBps = ((availableVideoBytes * hwRateControlMargin * 8.0) / effectiveDurationSec).roundToInt()
 
             // Protect Qualcomm/Exynos/MTK encoders (e.g. AVC Level 5.1) from extreme bitrates on short clips
@@ -313,20 +361,22 @@ object Media3TurboEngine {
                 ?.let { maxOf((it * 1.15).roundToInt(), 16_000_000) }
                 ?: hwCeiling
 
+            val minVideoFloorBps = if (stress.tier >= 2) 64_000 else 100_000
             val finalVideoBps = rawVideoBps.coerceIn(
-                maxOf(100_000, hwCaps.minBitrateBps),
+                maxOf(minVideoFloorBps, hwCaps.minBitrateBps),
                 minOf(hwCeiling, shortClipCap)
             )
 
             return TurboBitratePlan(
                 videoBitrateBps = finalVideoBps,
-                audioBitrateBps = effectiveAudioBps,
+                audioBitrateBps = finalAudioBps,
                 effectiveDurationSec = effectiveDurationSec,
                 useCbr = useCbr,
-                forceAudioReencode = forceAudioReencode,
+                forceAudioReencode = finalForceAudioReencode,
                 sourceIsAac = sourceIsAac,
                 isTargetSizeMode = true,
-                resolvedDisplayDims = probe.displayDims
+                resolvedDisplayDims = probe.displayDims,
+                stressTier = stress.tier
             )
         }
 
@@ -936,8 +986,9 @@ object Media3TurboEngine {
 
                     EncoderAttemptMode.CLEAN_MINIMAL_HW,
                     EncoderAttemptMode.SAFE_FPS_FALLBACK -> {
+                        val vbrFallbackFactor = if (plan.stressTier >= 2) 0.90 else 0.93
                         val fallbackAdjustedBps = if (plan.isTargetSizeMode && plan.useCbr) {
-                            (plan.videoBitrateBps * 0.93).roundToInt().coerceAtLeast(100_000)
+                            (plan.videoBitrateBps * vbrFallbackFactor).roundToInt().coerceAtLeast(64_000)
                         } else {
                             plan.videoBitrateBps
                         }

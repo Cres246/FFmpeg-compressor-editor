@@ -89,6 +89,7 @@ import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.LanguagePreference
 import com.example.domain.LocalAppStrings
+import com.example.domain.MediaPickSource
 import com.example.domain.ModeCategory
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
@@ -322,7 +323,7 @@ private fun FFLabAppRoot(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            viewModel.onMediaSelected(uri)
+            viewModel.onMediaSelected(uri, MediaPickSource.GALLERY_VIDEO)
         }
     }
 
@@ -337,7 +338,7 @@ private fun FFLabAppRoot(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             }
-            viewModel.onMediaSelected(uri)
+            viewModel.onMediaSelected(uri, MediaPickSource.FILE_PICKER)
         }
     }
 
@@ -687,6 +688,16 @@ private fun FFLabAppRoot(
                                         documentPickerLauncher.launch(
                                             arrayOf("video/*", "audio/*", "application/octet-stream")
                                         )
+                                    },
+                                    onChangeMedia = {
+                                        when (uiState.lastMediaPickSource) {
+                                            MediaPickSource.GALLERY_VIDEO -> photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                            )
+                                            MediaPickSource.FILE_PICKER -> documentPickerLauncher.launch(
+                                                arrayOf("video/*", "audio/*", "application/octet-stream")
+                                            )
+                                        }
                                     }
                                 )
 

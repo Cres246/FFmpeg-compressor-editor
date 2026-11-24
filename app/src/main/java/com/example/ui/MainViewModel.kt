@@ -17,6 +17,7 @@ import com.example.domain.FfmpegMath
 import com.example.domain.FpsOption
 import com.example.domain.LanguagePreference
 import com.example.domain.MediaInfo
+import com.example.domain.MediaPickSource
 import com.example.domain.ModeConfigState
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
@@ -38,9 +39,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 data class WorkbenchUiState(
     val mediaInfo: MediaInfo? = null,
+    val lastMediaPickSource: MediaPickSource = MediaPickSource.FILE_PICKER,
     val isProbing: Boolean = false,
     val probeError: String? = null,
     val capabilities: EncoderCapabilities = EncoderCapabilities(),
@@ -109,7 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(probeError = null, validationError = null) }
     }
 
-    fun onMediaSelected(uri: Uri) {
+    fun onMediaSelected(uri: Uri, source: MediaPickSource? = null) {
         val currentEncoding = EncodingJobController.state.value
         if (currentEncoding is EncodingState.Running) {
             showProbeError(AppLanguageController.currentStrings().errEncodingInProgress)
@@ -124,6 +127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mediaProbeJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
+                    lastMediaPickSource = source ?: it.lastMediaPickSource,
                     isProbing = true,
                     probeError = null,
                     activeConfig = null,
@@ -342,42 +346,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateStartTime(value: String) {
+        val curCfg = _uiState.value.activeConfig
+        val autoRefresh = curCfg != null &&
+            curCfg.mode == ProcessingMode.TRIM_VIDEO &&
+            curCfg.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
+            curCfg.trimScan.panelExpanded
+        val isBlank = value.trim().isEmpty()
+
         keyframeScanJob?.cancel()
         keyframeScanJob = null
         updateConfig {
             it.copy(
                 startTimeInput = value,
                 selectedStartKfSec = null,
-                trimScan = it.trimScan.copy(isScanning = false, startScan = null, error = null)
+                trimScan = it.trimScan.copy(
+                    isScanning = false,
+                    startScan = if (!autoRefresh || isBlank) null else it.trimScan.startScan,
+                    error = null
+                )
             )
+        }
+        if (autoRefresh && !isBlank) {
+            scheduleAutoKeyframeRescan(debounceMs = 280L)
         }
     }
 
     fun updateEndTime(value: String) {
+        val curCfg = _uiState.value.activeConfig
+        val autoRefresh = curCfg != null &&
+            curCfg.mode == ProcessingMode.TRIM_VIDEO &&
+            curCfg.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
+            curCfg.trimScan.panelExpanded
+        val isBlank = value.trim().isEmpty()
+
         keyframeScanJob?.cancel()
         keyframeScanJob = null
         updateConfig {
             it.copy(
                 endTimeInput = value,
                 selectedEndKfSec = null,
-                trimScan = it.trimScan.copy(isScanning = false, endScan = null, error = null)
+                trimScan = it.trimScan.copy(
+                    isScanning = false,
+                    endScan = if (!autoRefresh || isBlank) null else it.trimScan.endScan,
+                    error = null
+                )
             )
+        }
+        if (autoRefresh && !isBlank) {
+            scheduleAutoKeyframeRescan(debounceMs = 280L)
         }
     }
 
-    fun updateTrimRangeFromSlider(startSec: Double, endSec: Double) {
+    fun updateTrimRangeFromSlider(
+        startSec: Double,
+        endSec: Double,
+        updateStart: Boolean = true,
+        updateEnd: Boolean = true,
+        isDragFinished: Boolean = true
+    ) {
+        val curCfg = _uiState.value.activeConfig
+        val autoRefresh = curCfg != null &&
+            curCfg.mode == ProcessingMode.TRIM_VIDEO &&
+            curCfg.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
+            curCfg.trimScan.panelExpanded
+
         keyframeScanJob?.cancel()
         keyframeScanJob = null
         val formattedStart = FfmpegMath.formatSliderTimestamp(startSec)
         val formattedEnd = FfmpegMath.formatSliderTimestamp(endSec)
-        updateConfig {
-            it.copy(
-                startTimeInput = formattedStart,
-                endTimeInput = formattedEnd,
-                selectedStartKfSec = null,
-                selectedEndKfSec = null,
-                trimScan = TrimScanState()
+        updateConfig { cfg ->
+            val applyStart = updateStart || cfg.startTimeInput.isBlank()
+            val applyEnd = updateEnd || cfg.endTimeInput.isBlank()
+            val nextStartInput = if (applyStart) formattedStart else cfg.startTimeInput
+            val nextEndInput = if (applyEnd) formattedEnd else cfg.endTimeInput
+            val startModified = applyStart && nextStartInput != cfg.startTimeInput
+            val endModified = applyEnd && nextEndInput != cfg.endTimeInput
+
+            cfg.copy(
+                startTimeInput = nextStartInput,
+                endTimeInput = nextEndInput,
+                selectedStartKfSec = if (applyStart) null else cfg.selectedStartKfSec,
+                selectedEndKfSec = if (applyEnd) null else cfg.selectedEndKfSec,
+                trimScan = if (autoRefresh) {
+                    // Keep panel open & previous pills visible while dragging (zero layout jump)
+                    cfg.trimScan.copy(isScanning = false, error = null)
+                } else {
+                    cfg.trimScan.copy(
+                        isScanning = false,
+                        startScan = if (startModified || applyStart) null else cfg.trimScan.startScan,
+                        endScan = if (endModified || applyEnd) null else cfg.trimScan.endScan,
+                        error = null
+                    )
+                }
             )
+        }
+        if (autoRefresh) {
+            scheduleAutoKeyframeRescan(debounceMs = if (isDragFinished) 60L else 240L)
         }
     }
 
@@ -555,13 +619,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         keyframeScanJob?.cancel()
         keyframeScanJob = viewModelScope.launch {
-            updateConfig { it.copy(trimScan = TrimScanState(isScanning = true)) }
+            updateConfig {
+                it.copy(
+                    trimScan = it.trimScan.copy(
+                        panelExpanded = true,
+                        isScanning = true,
+                        error = null
+                    )
+                )
+            }
             try {
                 val startDeferred = startSec?.let { st ->
-                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, st, isStart = true) }
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = appContext,
+                            uri = media.uri,
+                            targetSec = st,
+                            isStart = true,
+                            durationSec = media.durationSec
+                        )
+                    }
                 }
                 val endDeferred = endSec?.let { en ->
-                    async { FfmpegEngine.scanKeyframes(appContext, media.uri, en, isStart = false) }
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = appContext,
+                            uri = media.uri,
+                            targetSec = en,
+                            isStart = false,
+                            durationSec = media.durationSec
+                        )
+                    }
                 }
                 val startResult = startDeferred?.await()
                 val endResult = endDeferred?.await()
@@ -569,6 +657,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updateConfig {
                     it.copy(
                         trimScan = TrimScanState(
+                            panelExpanded = true,
                             isScanning = false,
                             startScan = startResult,
                             endScan = endResult,
@@ -586,12 +675,113 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val curS = AppLanguageController.currentStrings()
                 updateConfig {
                     it.copy(
-                        trimScan = TrimScanState(
+                        trimScan = it.trimScan.copy(
+                            panelExpanded = true,
                             isScanning = false,
                             error = curS.errKeyframeScanFailed(t.message ?: curS.errUnknown)
                         )
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Silently re-scans whichever trim endpoint(s) changed once the keyframe picker is open,
+     * preserving the untouched endpoint and avoiding validation-error flicker mid-typing.
+     */
+    private fun scheduleAutoKeyframeRescan(debounceMs: Long) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = viewModelScope.launch {
+            if (debounceMs > 0L) {
+                delay(debounceMs)
+            }
+            val media = _uiState.value.mediaInfo ?: return@launch
+            val cfg = _uiState.value.activeConfig ?: return@launch
+            if (!media.hasVideo ||
+                cfg.mode != ProcessingMode.TRIM_VIDEO ||
+                cfg.trimCutStrategy != TrimCutStrategy.LOSSLESS_KEYFRAME ||
+                !cfg.trimScan.panelExpanded
+            ) {
+                return@launch
+            }
+
+            val startRaw = cfg.startTimeInput.trim().replace(" ", "").replace(',', '.')
+            val endRaw = cfg.endTimeInput.trim().replace(" ", "").replace(',', '.')
+            val parsedStart = if (startRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(startRaw) else null
+            val parsedEnd = if (endRaw.isNotEmpty()) FfmpegMath.parseTimestampToSeconds(endRaw) else null
+
+            val validStartSec = parsedStart?.takeIf { st ->
+                media.durationSec == null || st < media.durationSec - 0.05
+            }
+            val validEndSec = parsedEnd?.takeIf { en ->
+                media.durationSec == null || en <= media.durationSec + 0.05
+            }
+
+            val prevStartTarget = cfg.trimScan.startScan?.targetSec
+            val prevEndTarget = cfg.trimScan.endScan?.targetSec
+            val needStartScan = validStartSec != null &&
+                (prevStartTarget == null || abs(prevStartTarget - validStartSec) > 0.02)
+            val needEndScan = validEndSec != null &&
+                (prevEndTarget == null || abs(prevEndTarget - validEndSec) > 0.02)
+
+            if (!needStartScan && !needEndScan) return@launch
+
+            updateConfig { it.copy(trimScan = it.trimScan.copy(isScanning = true, error = null)) }
+            try {
+                val startDeferred = if (needStartScan) {
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = appContext,
+                            uri = media.uri,
+                            targetSec = validStartSec,
+                            isStart = true,
+                            durationSec = media.durationSec
+                        )
+                    }
+                } else null
+                val endDeferred = if (needEndScan) {
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = appContext,
+                            uri = media.uri,
+                            targetSec = validEndSec,
+                            isStart = false,
+                            durationSec = media.durationSec
+                        )
+                    }
+                } else null
+
+                val newStartScan = startDeferred?.await()
+                val newEndScan = endDeferred?.await()
+
+                updateConfig { latest ->
+                    val latestStartRaw = latest.startTimeInput.trim().replace(" ", "").replace(',', '.')
+                    val latestEndRaw = latest.endTimeInput.trim().replace(" ", "").replace(',', '.')
+                    val startStillMatches = needStartScan && latestStartRaw == startRaw
+                    val endStillMatches = needEndScan && latestEndRaw == endRaw
+
+                    val mergedStartScan = if (startStillMatches) newStartScan else latest.trimScan.startScan
+                    val mergedEndScan = if (endStillMatches) newEndScan else latest.trimScan.endScan
+                    val mergedStartKf = if (startStillMatches) newStartScan?.prevKf else latest.selectedStartKfSec
+                    val mergedEndKf = if (endStillMatches) newEndScan?.nextKf else latest.selectedEndKfSec
+
+                    latest.copy(
+                        trimScan = latest.trimScan.copy(
+                            panelExpanded = true,
+                            isScanning = false,
+                            startScan = mergedStartScan,
+                            endScan = mergedEndScan,
+                            error = null
+                        ),
+                        selectedStartKfSec = mergedStartKf,
+                        selectedEndKfSec = mergedEndKf
+                    )
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                updateConfig { it.copy(trimScan = it.trimScan.copy(isScanning = false)) }
             }
         }
     }

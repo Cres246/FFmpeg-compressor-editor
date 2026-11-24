@@ -496,9 +496,19 @@ class EncodingForegroundService : Service() {
                     }
                     val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput) ?: 1.0
                     val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(mb)
-                    val ab = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
-                    val vkbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(mb, dur, ab)
-                    listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${vkbps}k", audioPart)
+                    val reqAb = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
+                    val plan = FfmpegMath.calculateAdaptiveTwoPassPlan(
+                        targetMb = mb,
+                        durationSec = dur,
+                        audioBitrateKbps = reqAb,
+                        codec = config.codec,
+                        width = media.width,
+                        height = media.height,
+                        resolution = config.resolution,
+                        fpsOption = config.fps,
+                        sourceFps = media.fps
+                    )
+                    listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${plan.videoBitrateKbps}k", audioPart)
                 }
                 ProcessingMode.TRIM_VIDEO -> {
                     val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
@@ -1901,10 +1911,10 @@ class EncodingForegroundService : Service() {
         return try {
             coroutineScope {
                 val startDeferred = startSec?.let { st ->
-                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, st, isStart = true) }
+                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, st, isStart = true, durationSec = media.durationSec) }
                 }
                 val endDeferred = endSec?.let { en ->
-                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, en, isStart = false) }
+                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, en, isStart = false, durationSec = media.durationSec) }
                 }
                 FfmpegMath.applyAutoScannedKeyframes(
                     config = config,

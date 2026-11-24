@@ -346,10 +346,10 @@ fun TrimFeatureCard(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (available) 1f else 0.84f)
-            .clip(MaterialTheme.shapes.medium)
+            .clip(MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
             .testTag("mode_card_${mode.number}"),
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
         tonalElevation = 0.dp
@@ -357,14 +357,14 @@ fun TrimFeatureCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 50.dp)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 11.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(9.dp))
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
@@ -372,7 +372,7 @@ fun TrimFeatureCard(
                     imageVector = modeIcon(mode),
                     contentDescription = mode.localizedTitle(strings),
                     tint = iconColor,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(17.dp)
                 )
             }
             Spacer(Modifier.width(10.dp))
@@ -402,7 +402,7 @@ fun TrimFeatureCard(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
     }
