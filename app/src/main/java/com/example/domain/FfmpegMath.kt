@@ -973,7 +973,8 @@ object FfmpegMath {
         inputPath: String,
         outputPath: String,
         bracket: TrimPreCutBracket,
-        hasAudio: Boolean
+        hasAudio: Boolean,
+        isHevcVideo: Boolean = false
     ): List<String> {
         val args = mutableListOf("-y")
         if (bracket.safeStartKfSec > 0.001) {
@@ -992,7 +993,7 @@ object FfmpegMath {
         if (bracket.safeEndKfSec != null) {
             args.addAll(listOf("-to", formatRawSeconds(bracket.safeEndKfSec)))
         }
-        args.addAll(listOf("-i", inputPath, "-map", "0:v:0"))
+        args.addAll(listOf("-i", inputPath, "-map", "0:V:0"))
         if (hasAudio) {
             args.addAll(listOf("-map", "0:a:0?"))
         }
@@ -1005,6 +1006,9 @@ object FfmpegMath {
             )
         )
         if (outputPath.endsWith(".mp4", ignoreCase = true)) {
+            if (isHevcVideo) {
+                args.addAll(listOf("-tag:v", "hvc1"))
+            }
             args.addAll(listOf("-movflags", "+faststart"))
         }
         args.add(outputPath)
@@ -1118,6 +1122,30 @@ object FfmpegMath {
         return candidate
     }
 
+    fun isHevcCodec(videoCodec: String?): Boolean {
+        val c = videoCodec?.lowercase(Locale.US)?.trim().orEmpty()
+        return c == "hevc" || c == "h265" || c == "h.265" || c == "hvc1" || c == "hev1"
+    }
+
+    /**
+     * Resolves the safest 100% lossless container extension for [TrimSubMode.FULL_LOSSLESS]:
+     * - Keeps `.mkv` when the source is Matroska/WebM and carries non-MP4-native audio
+     *   (DTS, TrueHD, AC-3, E-AC-3, FLAC, Opus, Vorbis, PCM, ALAC, etc.) or non-MP4 video,
+     *   so players like MX Player use hardware 10-bit HDR (HW+) + Custom Codec audio identically
+     *   to the original file instead of choking on non-standard `mp4a`/DTS or `hev1` MP4 muxes.
+     * - Uses `.mp4` (with `-tag:v hvc1` for HEVC) for MP4/MOV sources or MKV files whose tracks
+     *   are already universally MP4-native (H.264/HEVC/AV1 + AAC/MP3 or silent).
+     */
+    fun resolveFullLosslessTrimExtension(media: MediaInfo): String {
+        val srcExt = media.extension.lowercase(Locale.US)
+        if (srcExt !in setOf("mkv", "webm", "mka")) return "mp4"
+        val v = media.videoCodec?.lowercase(Locale.US).orEmpty()
+        val a = media.audioCodec?.lowercase(Locale.US).orEmpty()
+        val videoIsMp4Native = v.isBlank() || v in setOf("h264", "avc", "avc1", "hevc", "h265", "hvc1", "hev1", "av1", "av01", "mpeg4")
+        val audioIsMp4Native = a.isBlank() || a in setOf("aac", "mp3")
+        return if (videoIsMp4Native && audioIsMp4Native) "mp4" else "mkv"
+    }
+
     /**
      * Computes the exact output filename following every naming rule of the script.
      */
@@ -1145,7 +1173,7 @@ object FfmpegMath {
             }
             ProcessingMode.TRIM_VIDEO -> {
                 when (config.trimSubMode) {
-                    TrimSubMode.FULL_LOSSLESS -> "${base}_${clipTag}.mp4"
+                    TrimSubMode.FULL_LOSSLESS -> "${base}_${clipTag}.${resolveFullLosslessTrimExtension(media)}"
                     TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
                         if (!media.hasAudio) "${base}_${clipTag}_${silentTag}.mp4"
                         else {
@@ -1338,26 +1366,50 @@ object FfmpegMath {
             ProcessingMode.TRIM_VIDEO -> {
                 val (startT, endT, clipDur) = resolveTrimRange(config, media.durationSec)
                 val args = mutableListOf("-y")
+                val sourceIsHevc = isHevcCodec(media.videoCodec)
+                val isMp4Output = outputPath.endsWith(".mp4", ignoreCase = true)
+                val srcExt = media.extension.lowercase(Locale.US)
+                val needsAacAdtsBsf = isMp4Output &&
+                    media.audioCodec.equals("aac", ignoreCase = true) &&
+                    srcExt in setOf("ts", "m2ts", "mts", "flv", "aac")
                 when (config.trimSubMode) {
                     TrimSubMode.FULL_LOSSLESS -> {
                         if (startT != null) args.addAll(listOf("-noaccurate_seek", "-ss", startT))
                         if (endT != null) args.addAll(listOf("-to", endT))
+                        args.addAll(listOf("-i", inputTokenProvider(), "-map", "0:V:0"))
+                        if (media.hasAudio) {
+                            args.addAll(listOf("-map", "0:a:0?"))
+                        }
+                        args.addAll(listOf("-sn", "-dn", "-c", "copy"))
+                        if (isMp4Output && sourceIsHevc) {
+                            args.addAll(listOf("-tag:v", "hvc1"))
+                        }
+                        if (needsAacAdtsBsf) {
+                            args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
+                        }
                         args.addAll(
                             listOf(
-                                "-i", inputTokenProvider(),
-                                "-sn", "-dn",
-                                "-c", "copy",
                                 "-avoid_negative_ts", "make_zero",
-                                "-movflags", "+faststart",
-                                outputPath
+                                "-max_muxing_queue_size", "1024"
                             )
                         )
+                        if (isMp4Output) {
+                            args.addAll(listOf("-movflags", "+faststart"))
+                        }
+                        args.add(outputPath)
                         listOf(FfmpegStepSpec(strings.stepTrimLossless, args, clipDur))
                     }
                     TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
                         if (startT != null) args.addAll(listOf("-noaccurate_seek", "-ss", startT))
                         if (endT != null) args.addAll(listOf("-to", endT))
-                        args.addAll(listOf("-i", inputTokenProvider(), "-sn", "-dn", "-c:v", "copy"))
+                        args.addAll(listOf("-i", inputTokenProvider(), "-map", "0:V:0"))
+                        if (media.hasAudio) {
+                            args.addAll(listOf("-map", "0:a:0?"))
+                        }
+                        args.addAll(listOf("-sn", "-dn", "-c:v", "copy"))
+                        if (isMp4Output && sourceIsHevc) {
+                            args.addAll(listOf("-tag:v", "hvc1"))
+                        }
                         if (!media.hasAudio) {
                             args.add("-an")
                         } else {
@@ -1367,6 +1419,7 @@ object FfmpegMath {
                         args.addAll(
                             listOf(
                                 "-avoid_negative_ts", "make_zero",
+                                "-max_muxing_queue_size", "1024",
                                 "-movflags", "+faststart",
                                 outputPath
                             )
@@ -1438,24 +1491,49 @@ object FfmpegMath {
             }
 
             ProcessingMode.REMUX_FORMAT -> {
-                val args = listOf(
-                    "-y", "-i", inputTokenProvider(),
-                    "-sn", "-dn", "-c", "copy",
-                    "-movflags", "+faststart",
-                    outputPath
+                val args = mutableListOf("-y", "-i", inputTokenProvider(), "-map", "0:V:0")
+                if (media.hasAudio) {
+                    args.addAll(listOf("-map", "0:a:0?"))
+                }
+                args.addAll(listOf("-sn", "-dn", "-c", "copy"))
+                if (isHevcCodec(media.videoCodec)) {
+                    args.addAll(listOf("-tag:v", "hvc1"))
+                }
+                val srcExt = media.extension.lowercase(Locale.US)
+                if (media.audioCodec.equals("aac", ignoreCase = true) &&
+                    srcExt in setOf("ts", "m2ts", "mts", "flv", "aac")
+                ) {
+                    args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
+                }
+                args.addAll(
+                    listOf(
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        outputPath
+                    )
                 )
                 listOf(FfmpegStepSpec(strings.stepRemux, args, media.durationSec))
             }
 
             ProcessingMode.AUDIO_ONLY_AAC -> {
                 val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
-                val args = listOf(
-                    "-y", "-i", inputTokenProvider(),
-                    "-sn", "-dn",
-                    "-c:v", "copy",
-                    "-c:a", "aac", "-b:a", "${ab}k",
-                    "-movflags", "+faststart",
-                    outputPath
+                val args = mutableListOf("-y", "-i", inputTokenProvider(), "-map", "0:V:0")
+                if (media.hasAudio) {
+                    args.addAll(listOf("-map", "0:a:0?"))
+                }
+                args.addAll(listOf("-sn", "-dn", "-c:v", "copy"))
+                if (isHevcCodec(media.videoCodec)) {
+                    args.addAll(listOf("-tag:v", "hvc1"))
+                }
+                args.addAll(
+                    listOf(
+                        "-c:a", "aac", "-b:a", "${ab}k",
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        outputPath
+                    )
                 )
                 listOf(FfmpegStepSpec(strings.stepAudioOnly(ab), args, media.durationSec))
             }

@@ -772,4 +772,67 @@ class FfmpegMathTest {
         assertFalse("Starting at 0.0 must omit -ss", frontArgs.contains("-ss"))
         assertTrue(frontArgs.contains("-to"))
     }
+
+    @Test
+    fun losslessTrimPreservesMkvForTheaterAudioAndTagsHevcMp4WithHvc1() {
+        val dummyUri = android.net.Uri.EMPTY
+        val mkvHevcDts = MediaInfo(
+            uri = dummyUri,
+            fileName = "movie_4k_hdr.mkv",
+            baseName = "movie_4k_hdr",
+            extension = "mkv",
+            sizeBytes = 5_000_000_000L,
+            durationSec = 3600.0,
+            videoCodec = "hevc",
+            width = 3840,
+            height = 2160,
+            pixFmt = "yuv420p10le",
+            audioCodec = "dts",
+            audioBitrateKbps = 754,
+            audioChannels = 6
+        )
+        val mkvHevcAac = mkvHevcDts.copy(fileName = "clip_aac.mkv", baseName = "clip_aac", audioCodec = "aac", audioBitrateKbps = 256)
+        val mp4HevcEac3 = mkvHevcDts.copy(fileName = "clip_eac3.mp4", baseName = "clip_eac3", extension = "mp4", audioCodec = "eac3")
+
+        val fullLosslessCfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            trimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
+            trimSubMode = TrimSubMode.FULL_LOSSLESS,
+            startTimeInput = "00:01:00",
+            endTimeInput = "00:02:00"
+        )
+
+        // 1) MKV + HEVC 10-bit + DTS -> stays .mkv losslessly (no MP4 faststart / no invalid mp4a DTS wrap)
+        val mkvOutName = FfmpegMath.computeOutputFileName(mkvHevcDts, fullLosslessCfg)
+        assertTrue("MKV with DTS must stay .mkv in FULL_LOSSLESS", mkvOutName.endsWith(".mkv"))
+        val mkvSteps = FfmpegMath.buildFfmpegSteps(mkvHevcDts, fullLosslessCfg, { "\$IN" }, mkvOutName, "/tmp/p")
+        val mkvArgs = mkvSteps.single().args
+        assertTrue(mkvArgs.contains("-map") && mkvArgs.contains("0:V:0"))
+        assertFalse("MKV output must not include MP4-only -movflags", mkvArgs.contains("-movflags"))
+        assertFalse("MKV output must not inject MP4-only hvc1 tag", mkvArgs.contains("hvc1"))
+
+        // 2) MKV + HEVC 10-bit + AAC -> .mp4 WITH -tag:v hvc1 (never hev1!)
+        val mp4FromMkvAac = FfmpegMath.computeOutputFileName(mkvHevcAac, fullLosslessCfg)
+        assertTrue(mp4FromMkvAac.endsWith(".mp4"))
+        val mp4AacArgs = FfmpegMath.buildFfmpegSteps(mkvHevcAac, fullLosslessCfg, { "\$IN" }, mp4FromMkvAac, "/tmp/p").single().args
+        assertTrue("HEVC MP4 lossless trim must include -tag:v hvc1", mp4AacArgs.contains("-tag:v") && mp4AacArgs.contains("hvc1"))
+        assertTrue(mp4AacArgs.contains("-movflags") && mp4AacArgs.contains("+faststart"))
+
+        // 3) MP4 + HEVC 10-bit + EAC3 -> .mp4 WITH -tag:v hvc1
+        val mp4TrimName = FfmpegMath.computeOutputFileName(mp4HevcEac3, fullLosslessCfg)
+        assertTrue(mp4TrimName.endsWith(".mp4"))
+        val mp4TrimArgs = FfmpegMath.buildFfmpegSteps(mp4HevcEac3, fullLosslessCfg, { "\$IN" }, mp4TrimName, "/tmp/p").single().args
+        assertTrue(mp4TrimArgs.contains("-tag:v") && mp4TrimArgs.contains("hvc1"))
+
+        // 4) Trim Sub-mode 2 (VIDEO_LOSSLESS_AUDIO_AAC), REMUX_FORMAT, and AUDIO_ONLY_AAC on HEVC -> all get -tag:v hvc1
+        val trimAacCfg = fullLosslessCfg.copy(trimSubMode = TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC, audioBitrateInput = "256")
+        val trimAacArgs = FfmpegMath.buildFfmpegSteps(mkvHevcDts, trimAacCfg, { "\$IN" }, "out.mp4", "/tmp/p").single().args
+        assertTrue(trimAacArgs.contains("-tag:v") && trimAacArgs.contains("hvc1"))
+
+        val remuxArgs = FfmpegMath.buildFfmpegSteps(mkvHevcDts, ModeConfigState(mode = ProcessingMode.REMUX_FORMAT), { "\$IN" }, "out.mp4", "/tmp/p").single().args
+        assertTrue(remuxArgs.contains("-tag:v") && remuxArgs.contains("hvc1"))
+
+        val audioOnlyArgs = FfmpegMath.buildFfmpegSteps(mkvHevcDts, ModeConfigState(mode = ProcessingMode.AUDIO_ONLY_AAC, audioBitrateInput = "256"), { "\$IN" }, "out.mp4", "/tmp/p").single().args
+        assertTrue(audioOnlyArgs.contains("-tag:v") && audioOnlyArgs.contains("hvc1"))
+    }
 }

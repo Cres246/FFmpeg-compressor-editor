@@ -1616,26 +1616,30 @@ class EncodingForegroundService : Service() {
             suspend fun executeRemuxAttempt(bracket: FfmpegMath.TrimPreCutBracket?): FfmpegStepResult {
                 runCatching { if (remuxFile.exists()) remuxFile.delete() }
                 val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                val isHevc = FfmpegMath.isHevcCodec(media.videoCodec)
                 val remuxArgs = if (bracket != null) {
                     FfmpegMath.buildTrimPreCutArgs(
                         inputPath = inputPath,
                         outputPath = remuxFile.absolutePath,
                         bracket = bracket,
-                        hasAudio = media.hasAudio
+                        hasAudio = media.hasAudio,
+                        isHevcVideo = isHevc
                     )
                 } else {
-                    listOf(
-                        "-y",
-                        "-i", inputPath,
-                        "-map", "0:v:0",
-                        "-map", "0:a:0?",
-                        "-c", "copy",
-                        "-sn", "-dn",
-                        "-avoid_negative_ts", "make_zero",
-                        "-max_muxing_queue_size", "1024",
-                        "-movflags", "+faststart",
-                        remuxFile.absolutePath
-                    )
+                    buildList {
+                        addAll(listOf("-y", "-i", inputPath, "-map", "0:V:0"))
+                        if (media.hasAudio) addAll(listOf("-map", "0:a:0?"))
+                        addAll(listOf("-c", "copy", "-sn", "-dn"))
+                        if (isHevc) addAll(listOf("-tag:v", "hvc1"))
+                        addAll(
+                            listOf(
+                                "-avoid_negative_ts", "make_zero",
+                                "-max_muxing_queue_size", "1024",
+                                "-movflags", "+faststart",
+                                remuxFile.absolutePath
+                            )
+                        )
+                    }
                 }
                 val expectedDur = bracket?.expectedSpanSec ?: media.durationSec
                 var lastUiEmitMs = 0L
@@ -1896,21 +1900,32 @@ class EncodingForegroundService : Service() {
                 ?: preCut?.bracket?.expectedSpanSec
                 ?: media.durationSec
 
-            val audioArgs = listOf(
-                "-y",
-                "-i", inputPath,
-                "-map", "0:v:0",
-                "-map", "0:a:0",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "${safeAb}k",
-                "-af", "aresample=async=1:first_pts=0",
-                "-sn", "-dn",
-                "-avoid_negative_ts", "make_zero",
-                "-max_muxing_queue_size", "1024",
-                "-movflags", "+faststart",
-                audioPrepFile.absolutePath
-            )
+            val audioArgs = buildList {
+                addAll(
+                    listOf(
+                        "-y",
+                        "-i", inputPath,
+                        "-map", "0:V:0",
+                        "-map", "0:a:0",
+                        "-c:v", "copy"
+                    )
+                )
+                if (FfmpegMath.isHevcCodec(media.videoCodec)) {
+                    addAll(listOf("-tag:v", "hvc1"))
+                }
+                addAll(
+                    listOf(
+                        "-c:a", "aac",
+                        "-b:a", "${safeAb}k",
+                        "-af", "aresample=async=1:first_pts=0",
+                        "-sn", "-dn",
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        audioPrepFile.absolutePath
+                    )
+                )
+            }
 
             var lastUiEmitMs = 0L
             var lastEmittedPct: Int? = null
