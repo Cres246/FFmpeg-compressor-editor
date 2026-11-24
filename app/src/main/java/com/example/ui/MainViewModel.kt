@@ -765,8 +765,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val prevStartTarget = cfg.trimScan.startScan?.targetSec
             val prevEndTarget = cfg.trimScan.endScan?.targetSec
             val needStartScan = validStartSec != null &&
+                cfg.selectedStartKfSec == null &&
                 (prevStartTarget == null || abs(prevStartTarget - validStartSec) > 0.02)
             val needEndScan = validEndSec != null &&
+                cfg.selectedEndKfSec == null &&
                 (prevEndTarget == null || abs(prevEndTarget - validEndSec) > 0.02)
 
             if (!needStartScan && !needEndScan) return@launch

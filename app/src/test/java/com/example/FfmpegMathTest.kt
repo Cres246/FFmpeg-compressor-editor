@@ -67,8 +67,8 @@ class FfmpegMathTest {
         val startRes = FfmpegMath.parseKeyframePackets(sampleProbe, 60.0, isStart = true)
         assertEquals(58.0, startRes.prevKf!!, 0.0001)
         assertEquals(62.4, startRes.nextKf!!, 0.0001)
-        // Start snaps to prev_kf + 0.005 (5ms buffer)
-        assertEquals(58.005, startRes.recommendedRawSec!!, 0.0001)
+        // Start uses adaptive MKV/B-frame-safe seek probe (+0.45s inside [58.0, 62.4))
+        assertEquals(58.45, startRes.recommendedRawSec!!, 0.0001)
         assertEquals("00:58.0", startRes.recommendedDisplay)
 
         val endRes = FfmpegMath.parseKeyframePackets(sampleProbe, 60.0, isStart = false)
@@ -356,16 +356,18 @@ class FfmpegMathTest {
 
         val snapped = FfmpegMath.applyAutoScannedKeyframes(baseCfg, 60.0, startScan, endScan)
         val (effStart, effEnd, clipDur) = FfmpegMath.resolveTrimRange(snapped, 60.0)
-        assertEquals("8.005", effStart)
+        // Seek probe is safely inside [8.0, 12.0) (+0.45s) while clipDur stays exact 22.0 - 8.0 = 14.0s
+        assertEquals("8.450", effStart)
         assertEquals("22.000", effEnd)
-        assertEquals(13.995, clipDur!!, 0.001)
+        assertEquals(14.0, clipDur!!, 0.001)
 
         // Manual start keyframe selection must be preserved even when auto-scan supplies startScan
         val manualStart = baseCfg.copy(selectedStartKfSec = 12.0)
         val snappedManual = FfmpegMath.applyAutoScannedKeyframes(manualStart, 60.0, startScan, endScan)
-        val (manStart, manEnd, _) = FfmpegMath.resolveTrimRange(snappedManual, 60.0)
-        assertEquals("12.005", manStart)
+        val (manStart, manEnd, manDur) = FfmpegMath.resolveTrimRange(snappedManual, 60.0)
+        assertEquals("12.350", manStart)
         assertEquals("22.000", manEnd)
+        assertEquals(10.0, manDur!!, 0.001)
     }
 
     @Test
@@ -527,7 +529,7 @@ class FfmpegMathTest {
         val startAt16 = FfmpegMath.parseKeyframePackets(probe15s, targetSec = 16.0, isStart = true)
         assertEquals(15.0, startAt16.prevKf!!, 0.001)
         assertEquals(30.0, startAt16.nextKf!!, 0.001)
-        assertEquals(15.005, startAt16.recommendedRawSec!!, 0.001)
+        assertEquals(15.45, startAt16.recommendedRawSec!!, 0.001)
         assertTrue("Previous keyframe 0s must be selectable", startAt16.nearbyKeyframes.contains(0.0))
         assertTrue("Auto-selected prevKf 15s must be selectable", startAt16.nearbyKeyframes.contains(15.0))
         assertTrue("Next keyframe 30s (14s away) must be selectable", startAt16.nearbyKeyframes.contains(30.0))
@@ -611,13 +613,12 @@ class FfmpegMathTest {
     }
 
     @Test
-    fun manualKeyframeTakesFinalAuthorityAndPreviewAvoidsFiveMsRoundingSkew() {
-        // 18.447s rounds to 00:18.4, whereas (18.447 + 0.005) = 18.452s would round to 00:18.5!
+    fun manualKeyframeTakesFinalAuthorityAndUsesMkvSafeSeekOffsetWithoutSkewingPreview() {
         val startScan = KeyframePointResult(
             targetSec = 20.0,
             prevKf = 16.0,
             nextKf = 22.0,
-            recommendedRawSec = 16.005,
+            recommendedRawSec = 16.45,
             recommendedDisplay = "00:16.0",
             nearbyKeyframes = listOf(16.0, 18.447, 22.0)
         )
@@ -641,10 +642,12 @@ class FfmpegMathTest {
             selectedEndKfSec = 39.2
         )
 
-        // FFmpeg range still applies +5ms GOP guard on the USER'S manual keyframe (never prevKf=16.0)
-        val (ffStart, ffEnd, _) = FfmpegMath.resolveTrimRange(cfg, 120.0)
-        assertEquals("18.452", ffStart)
+        // FFmpeg range applies MKV/B-frame-safe seek offset (+0.45s inside [18.447, 22.0)) on the
+        // USER'S manual keyframe (never prevKf=16.0), while clipDur stays exact (39.2 - 18.447)!
+        val (ffStart, ffEnd, ffDur) = FfmpegMath.resolveTrimRange(cfg, 120.0)
+        assertEquals("18.897", ffStart)
         assertEquals("39.200", ffEnd)
+        assertEquals(20.753, ffDur!!, 0.001)
 
         // Preview range exposes exact 18.447 (formats as 00:18.4, matching the chip 1:1!)
         val (prevStart, prevEnd, prevDur) = FfmpegMath.resolveTrimPreviewSeconds(cfg, 120.0)
@@ -652,10 +655,16 @@ class FfmpegMathTest {
         assertEquals(39.2, prevEnd!!, 0.0001)
         assertEquals(20.753, prevDur!!, 0.001)
         assertEquals("00:18.4", FfmpegMath.formatKeyframeTime(prevStart))
+
+        // Adaptive seek offset scales cleanly across 10s, 1s, 0.5s, and 0.0s GOPs
+        assertEquals(0.0, FfmpegMath.computeSafeNoAccurateSeekSec(0.0, listOf(0.0, 5.0)), 0.0001)
+        assertEquals(10.45, FfmpegMath.computeSafeNoAccurateSeekSec(10.0, listOf(5.0, 10.0, 20.0)), 0.0001)
+        assertEquals(5.45, FfmpegMath.computeSafeNoAccurateSeekSec(5.0, listOf(4.0, 5.0, 6.0)), 0.0001)
+        assertEquals(5.24, FfmpegMath.computeSafeNoAccurateSeekSec(5.0, listOf(4.5, 5.0, 5.5)), 0.0001)
     }
 
     @Test
-    fun trimPreCutComputesMillimetricSyncOffsetsAndRejectsCorruptIndices() {
+    fun trimPreCutComputesMillimetricSyncOffsetsAndRecoversPriorKeyframeLandings() {
         val movieDur = 7200.0 // 2-hour 4K MKV movie
         val targetCfg = ModeConfigState(
             mode = ProcessingMode.TRIM_VIDEO,
@@ -675,7 +684,7 @@ class FfmpegMathTest {
             targetSec = 4200.0,
             prevKf = 4197.420,
             nextKf = 4201.500,
-            recommendedRawSec = 4197.425,
+            recommendedRawSec = 4197.870,
             recommendedDisplay = "1:09:57.4",
             nearbyKeyframes = listOf(4193.0, 4197.420, 4201.500)
         )
@@ -697,11 +706,13 @@ class FfmpegMathTest {
         assertEquals(4197.420, bracket.safeStartKfSec, 0.0001)
         assertEquals(4323.180, bracket.safeEndKfSec!!, 0.0001)
         assertEquals(125.760, bracket.expectedSpanSec!!, 0.001)
+        assertEquals(4201.500, bracket.nextKfAfterStartSec!!, 0.0001)
+        assertEquals(listOf(4193.0), bracket.priorStartCandidates)
 
-        // Pre-cut args use -noaccurate_seek +5ms guard, -c copy, and -avoid_negative_ts make_zero
+        // Pre-cut args use MKV-safe -noaccurate_seek (+0.450s inside [4197.420, 4201.500)), -c copy, make_zero
         val mkvPreCutArgs = FfmpegMath.buildTrimPreCutArgs("movie.mkv", "precut.mkv", bracket, hasAudio = true)
         assertTrue(mkvPreCutArgs.contains("-noaccurate_seek"))
-        assertEquals("4197.425", mkvPreCutArgs[mkvPreCutArgs.indexOf("-ss") + 1])
+        assertEquals("4197.870", mkvPreCutArgs[mkvPreCutArgs.indexOf("-ss") + 1])
         assertEquals("4323.180", mkvPreCutArgs[mkvPreCutArgs.indexOf("-to") + 1])
         assertTrue(mkvPreCutArgs.contains("make_zero"))
         assertFalse("MKV intermediate must not force MP4 +faststart", mkvPreCutArgs.contains("+faststart"))
@@ -730,16 +741,27 @@ class FfmpegMathTest {
         assertEquals("2.605", adjustedAudioLead.startTimeInput)
         assertEquals("122.605", adjustedAudioLead.endTimeInput)
 
-        // Case 3: Corrupt demuxer seek index (duration off by > 3.5s) -> returns null for safe full-source fallback
+        // Case 3: Exotic Open-GOP landed on prior keyframe (4193.0 -> span = 130.180s) -> auto-recovers
+        // exact offset relative to 4193.0 ([7.000, 127.000]) instead of falling back to the full movie!
+        val recoveredPrior = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+            originalTargetConfig = targetCfg,
+            bracket = bracket,
+            preparedDurationSec = 130.250,
+            preparedFirstVideoPtsSec = 0.083
+        )!!
+        assertEquals("7.083", recoveredPrior.startTimeInput)
+        assertEquals("127.083", recoveredPrior.endTimeInput)
+
+        // Case 4: Truly corrupt demuxer seek index (duration off from every keyframe) -> returns null
         val corruptFallback = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
             originalTargetConfig = targetCfg,
             bracket = bracket,
-            preparedDurationSec = 140.0,
+            preparedDurationSec = 160.0,
             preparedFirstVideoPtsSec = 0.0
         )
         assertEquals(null, corruptFallback)
 
-        // Case 4: Trim from 00:00 to 00:30 of a 2-hour movie -> no -ss seek needed, only -to!
+        // Case 5: Trim from 00:00 to 00:30 of a 2-hour movie -> no -ss seek needed, only -to!
         val frontOnlyCfg = targetCfg.copy(startTimeInput = "0", endTimeInput = "30")
         assertTrue(FfmpegMath.shouldPreCutTrimForTurboPrep(frontOnlyCfg, movieDur))
         val end30Scan = endScan.copy(targetSec = 30.0, nextKf = 32.5, nearbyKeyframes = listOf(28.0, 32.5, 36.0))

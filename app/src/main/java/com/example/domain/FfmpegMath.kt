@@ -549,7 +549,7 @@ object FfmpegMath {
         val nearby = nearbySet.values.sorted()
 
         val recommendedRaw = if (isStart) {
-            prevKf?.let { it + 0.005 }
+            prevKf?.let { computeSafeNoAccurateSeekSec(it, nearby, endBoundSec = null) }
         } else {
             nextKf
         }
@@ -567,6 +567,38 @@ object FfmpegMath {
             recommendedDisplay = recommendedDisplay,
             nearbyKeyframes = nearby
         )
+    }
+
+    /**
+     * Computes a safe `-noaccurate_seek -ss` probe timestamp inside `[startKfSec, nextKfAfter)`
+     * so FFmpeg's `avformat_seek_file(..., AVSEEK_FLAG_BACKWARD)` ALWAYS lands on [startKfSec]
+     * and NEVER jumps back to the previous keyframe on MKV/MP4 files with B-frame reorder delay
+     * (125–250ms PTS-DTS delta + negative audio priming `format.start_time`).
+     *
+     * Because `-noaccurate_seek` always snaps backward to the nearest keyframe `<= ss`, any value
+     * safely past `startKfSec + reorderMargin` and strictly before `nextKfAfter` starts cleanly
+     * on `startKfSec` with zero audio/video frames dropped.
+     */
+    fun computeSafeNoAccurateSeekSec(
+        startKfSec: Double,
+        nearbyKeyframes: List<Double> = emptyList(),
+        endBoundSec: Double? = null
+    ): Double {
+        if (startKfSec <= 0.001) return 0.0
+        val nextKfAfter = nearbyKeyframes.firstOrNull { it > startKfSec + 0.05 }
+        val rawOffset = when {
+            nextKfAfter != null -> minOf(0.45, (nextKfAfter - startKfSec) * 0.48)
+            endBoundSec != null && endBoundSec > startKfSec + 0.05 ->
+                minOf(0.35, (endBoundSec - startKfSec) * 0.25)
+            else -> 0.35
+        }
+        val safeOffset = rawOffset.coerceAtLeast(0.005)
+        val bounded = if (endBoundSec != null && endBoundSec > startKfSec + 0.02) {
+            minOf(startKfSec + safeOffset, endBoundSec - 0.01)
+        } else {
+            startKfSec + safeOffset
+        }
+        return bounded.coerceAtLeast(startKfSec + 0.005)
     }
 
     /**
@@ -718,9 +750,12 @@ object FfmpegMath {
     }
 
     /**
-     * Computes effective FFmpeg start/end strings and clip duration for Mode 5 (Trim).
+     * Computes effective FFmpeg start/end strings and exact clip duration for Mode 5 (Trim).
      * Explicit user-selected keyframes (`selectedStartKfSec` / `selectedEndKfSec`) ALWAYS take
-     * final authority; start keyframes include the +0.005s (+5ms) GOP guard for `-noaccurate_seek`.
+     * final authority; lossless start keyframes use [computeSafeNoAccurateSeekSec] so FFmpeg's
+     * `-noaccurate_seek` lands cleanly on the exact chosen keyframe even on MKV/HEVC B-frame
+     * files (never jumping backward to the previous keyframe), while `clipDur` reflects the exact
+     * keyframe-to-keyframe duration.
      */
     fun resolveTrimRange(
         config: ModeConfigState,
@@ -732,33 +767,57 @@ object FfmpegMath {
         val useKeyframes = config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
             config.trimTimeChoice == TrimTimeChoice.SNAP_KEYFRAMES
 
+        val resolvedEndKfSec: Double? = when {
+            !useKeyframes -> null
+            config.selectedEndKfSec != null -> config.selectedEndKfSec
+            endRaw.isEmpty() -> null
+            config.trimScan.endScan?.nextKf != null -> config.trimScan.endScan.nextKf
+            config.trimScan.endScan?.recommendedRawSec != null -> config.trimScan.endScan.recommendedRawSec
+            else -> null
+        }
+
+        val resolvedStartKfSec: Double? = when {
+            !useKeyframes -> null
+            config.selectedStartKfSec != null -> config.selectedStartKfSec
+            startRaw.isEmpty() -> null
+            config.trimScan.startScan?.prevKf != null -> config.trimScan.startScan.prevKf
+            else -> null
+        }
+
+        val effectiveEnd = when {
+            resolvedEndKfSec != null -> formatRawSeconds(resolvedEndKfSec)
+            endRaw.isEmpty() -> null
+            else -> endRaw
+        }
+        val endBoundSec = resolvedEndKfSec ?: effectiveEnd?.let { parseTimestampToSeconds(it) } ?: mediaDurationSec
+
         val effectiveStart = when {
-            useKeyframes && config.selectedStartKfSec != null ->
-                formatRawSeconds(config.selectedStartKfSec + 0.005)
+            resolvedStartKfSec != null -> {
+                val seekSec = computeSafeNoAccurateSeekSec(
+                    startKfSec = resolvedStartKfSec,
+                    nearbyKeyframes = config.trimScan.startScan?.nearbyKeyframes.orEmpty(),
+                    endBoundSec = endBoundSec
+                )
+                formatRawSeconds(seekSec)
+            }
             startRaw.isEmpty() -> null
             useKeyframes && config.trimScan.startScan?.recommendedRawSec != null ->
                 formatRawSeconds(config.trimScan.startScan.recommendedRawSec)
             else -> startRaw
         }
-        val effectiveEnd = when {
-            useKeyframes && config.selectedEndKfSec != null ->
-                formatRawSeconds(config.selectedEndKfSec)
-            endRaw.isEmpty() -> null
-            useKeyframes && config.trimScan.endScan?.recommendedRawSec != null ->
-                formatRawSeconds(config.trimScan.endScan.recommendedRawSec)
-            else -> endRaw
-        }
 
-        val ss = if (effectiveStart == null) 0.0 else parseTimestampToSeconds(effectiveStart)
-        val ee = if (effectiveEnd == null) mediaDurationSec else parseTimestampToSeconds(effectiveEnd)
+        val ss = resolvedStartKfSec
+            ?: if (effectiveStart == null) 0.0 else parseTimestampToSeconds(effectiveStart)
+        val ee = resolvedEndKfSec
+            ?: if (effectiveEnd == null) mediaDurationSec else parseTimestampToSeconds(effectiveEnd)
         val clipDur = if (ss != null && ee != null && ee > ss) ee - ss else null
         return Triple(effectiveStart, effectiveEnd, clipDur)
     }
 
     /**
-     * Exact UI/preview timestamps WITHOUT FFmpeg's +5ms `-noaccurate_seek` GOP guard so that
+     * Exact UI/preview timestamps WITHOUT FFmpeg's `-noaccurate_seek` probe offset so that
      * selected keyframe chips, time text boxes, slider handles, summary bar, and frame preview
-     * thumbnails always agree 1:1 (preventing 0.1s rounding mismatches such as 18.447 + 0.005 -> 18.5).
+     * thumbnails always agree 1:1.
      */
     fun resolveTrimPreviewSeconds(
         config: ModeConfigState,
@@ -799,7 +858,9 @@ object FfmpegMath {
         val origEndSec: Double?,
         val safeStartKfSec: Double,
         val safeEndKfSec: Double?,
-        val expectedSpanSec: Double?
+        val expectedSpanSec: Double?,
+        val nextKfAfterStartSec: Double? = null,
+        val priorStartCandidates: List<Double> = emptyList()
     )
 
     /**
@@ -811,9 +872,9 @@ object FfmpegMath {
         mediaDurationSec: Double?
     ): Boolean {
         if (config.mode != ProcessingMode.TRIM_VIDEO) return false
-        val (startStr, endStr, _) = resolveTrimRange(config, mediaDurationSec)
-        val origStart = startStr?.let { parseTimestampToSeconds(it) }?.coerceAtLeast(0.0) ?: 0.0
-        val origEnd = endStr?.let { parseTimestampToSeconds(it) }?.let { endVal ->
+        val (startSec, endSec, _) = resolveTrimPreviewSeconds(config, mediaDurationSec)
+        val origStart = startSec?.coerceAtLeast(0.0) ?: 0.0
+        val origEnd = endSec?.let { endVal ->
             if (mediaDurationSec != null && mediaDurationSec > 0.0) endVal.coerceAtMost(mediaDurationSec) else endVal
         }
         if (origEnd != null && origEnd <= origStart + 0.05) return false
@@ -840,18 +901,6 @@ object FfmpegMath {
         }
         if (safeOrigEnd != null && safeOrigEnd <= safeOrigStart + 0.05) return null
 
-        val safeStartKf: Double = if (safeOrigStart <= 0.05) {
-            0.0
-        } else {
-            val strictBefore = startScan?.nearbyKeyframes?.lastOrNull { it <= safeOrigStart + 0.001 }
-            val candidate = strictBefore ?: startScan?.prevKf?.takeIf { it <= safeOrigStart + 0.001 }
-            if (candidate == null || !candidate.isFinite() || candidate < 0.0 || candidate > safeOrigStart + 0.5) {
-                // Keyframe probe returned unusable or non-zero-based clock PTS; cannot guarantee millimetric offset.
-                return null
-            }
-            candidate
-        }
-
         val safeEndKf: Double? = when {
             safeOrigEnd == null -> null
             mediaDurationSec != null && safeOrigEnd >= mediaDurationSec - 0.5 -> null
@@ -863,12 +912,31 @@ object FfmpegMath {
                 val candidate = comfortableAfter ?: fallbackAfter
                 when {
                     candidate == null || !candidate.isFinite() -> null
-                    candidate <= safeStartKf + 0.1 -> null
+                    candidate <= safeOrigStart + 0.05 -> null
                     mediaDurationSec != null && candidate >= mediaDurationSec - 0.1 -> null
                     else -> candidate
                 }
             }
         }
+
+        val safeStartKf: Double = if (safeOrigStart <= 0.05) {
+            0.0
+        } else {
+            val strictBefore = startScan?.nearbyKeyframes?.lastOrNull { it <= safeOrigStart + 0.001 }
+            val candidate = strictBefore ?: startScan?.prevKf?.takeIf { it <= safeOrigStart + 0.001 }
+            when {
+                candidate != null && candidate.isFinite() && candidate >= 0.0 && candidate <= safeOrigStart + 0.5 ->
+                    candidate
+                // If user starts within the first 2 minutes and no earlier keyframe was reported,
+                // starting at 0.0 still safely trims the tail when safeEndKf is bounded.
+                candidate == null && safeOrigStart <= 120.0 && safeEndKf != null ->
+                    0.0
+                else ->
+                    return null
+            }
+        }
+
+        if (safeEndKf != null && safeEndKf <= safeStartKf + 0.1) return null
 
         // Only worth pre-cutting if the bracket actually skips a meaningful chunk of the source
         val effectiveEnd = safeEndKf ?: mediaDurationSec
@@ -877,19 +945,29 @@ object FfmpegMath {
             return null
         }
 
+        val startNearby = startScan?.nearbyKeyframes.orEmpty()
+        val nextKfAfterStart = startNearby.firstOrNull { it > safeStartKf + 0.05 }
+        val priorCandidates = startNearby
+            .filter { it < safeStartKf - 0.05 && it >= 0.0 }
+            .sortedDescending()
+            .take(3)
+
         return TrimPreCutBracket(
             origStartSec = safeOrigStart,
             origEndSec = safeOrigEnd,
             safeStartKfSec = safeStartKf,
             safeEndKfSec = safeEndKf,
-            expectedSpanSec = expectedSpan
+            expectedSpanSec = expectedSpan,
+            nextKfAfterStartSec = nextKfAfterStart,
+            priorStartCandidates = priorCandidates
         )
     }
 
     /**
      * Builds zero-reencode lossless keyframe slice FFmpeg arguments (`-noaccurate_seek -c copy`)
      * into either `.mkv` (universal lossless intermediate accepting DTS/TrueHD/Vorbis/PCM/Hi10P)
-     * or `.mp4` (direct Remux pre-cut).
+     * or `.mp4` (direct Remux pre-cut), using [computeSafeNoAccurateSeekSec] so Matroska B-frame
+     * files land cleanly on [TrimPreCutBracket.safeStartKfSec] instead of jumping one GOP earlier.
      */
     fun buildTrimPreCutArgs(
         inputPath: String,
@@ -899,10 +977,15 @@ object FfmpegMath {
     ): List<String> {
         val args = mutableListOf("-y")
         if (bracket.safeStartKfSec > 0.001) {
+            val safeSeekSec = computeSafeNoAccurateSeekSec(
+                startKfSec = bracket.safeStartKfSec,
+                nearbyKeyframes = listOfNotNull(bracket.nextKfAfterStartSec),
+                endBoundSec = bracket.safeEndKfSec
+            )
             args.addAll(
                 listOf(
                     "-noaccurate_seek",
-                    "-ss", formatRawSeconds(bracket.safeStartKfSec + 0.005)
+                    "-ss", formatRawSeconds(safeSeekSec)
                 )
             )
         }
@@ -931,15 +1014,17 @@ object FfmpegMath {
     /**
      * Computes the exact millimetric relative trim range inside a pre-cut prepared clip:
      *
-     * `adjustedStart = (origStartSec - safeStartKfSec) + firstVideoPtsSec`
-     * `adjustedEnd   = (origEndSec   - safeStartKfSec) + firstVideoPtsSec`
+     * `adjustedStart = (origStartSec - actualStartKfSec) + firstVideoPtsSec`
+     * `adjustedEnd   = (origEndSec   - actualStartKfSec) + firstVideoPtsSec`
      *
-     * Including `firstVideoPtsSec` accounts for any leading audio packet that preceded
-     * `safeStartKfSec` when `-avoid_negative_ts make_zero` shifted both streams together, keeping
-     * video frames and transcoded AAC samples aligned to 0.000 ms.
+     * Including `firstVideoPtsSec` accounts for any leading audio packet / B-frame reorder shift
+     * after `-avoid_negative_ts make_zero`, keeping video frames and transcoded AAC samples
+     * aligned to 0.000 ms.
      *
-     * Returns `null` if the probed clip duration fails sanity validation (e.g. corrupt seek index),
-     * signaling the caller to fall back cleanly to the full source file.
+     * If an exotic Open-GOP container still jumped back to an earlier keyframe in
+     * [TrimPreCutBracket.priorStartCandidates], automatically matches its span against
+     * [preparedDurationSec] instead of discarding the pre-cut and encoding the entire movie.
+     * Returns `null` only if the probed duration is truly inconsistent with every known keyframe.
      */
     fun computeAdjustedTrimConfigAfterPreCut(
         originalTargetConfig: ModeConfigState,
@@ -948,16 +1033,25 @@ object FfmpegMath {
         preparedFirstVideoPtsSec: Double = 0.0
     ): ModeConfigState? {
         val requestedDur = bracket.origEndSec?.let { it - bracket.origStartSec }
+        var effectiveStartKfSec = bracket.safeStartKfSec
+
         if (preparedDurationSec != null) {
             if (!preparedDurationSec.isFinite() || preparedDurationSec <= 0.05) return null
             if (requestedDur != null && preparedDurationSec < requestedDur - 0.35) return null
-            // If both ends were keyframe-bounded and actual cut duration diverges sharply (>3.5s)
-            // from expected keyframe span, the demuxer seek index was unreliable -> fall back safely.
             if (bracket.safeEndKfSec != null &&
                 bracket.expectedSpanSec != null &&
                 kotlin.math.abs(preparedDurationSec - bracket.expectedSpanSec) > 3.5
             ) {
-                return null
+                // Check if FFmpeg cleanly landed on an earlier known keyframe (e.g. exotic Open-GOP)
+                val matchedPrior = bracket.priorStartCandidates.firstOrNull { priorKf ->
+                    val priorSpan = bracket.safeEndKfSec - priorKf
+                    kotlin.math.abs(preparedDurationSec - priorSpan) <= 2.5
+                }
+                if (matchedPrior != null) {
+                    effectiveStartKfSec = matchedPrior
+                } else {
+                    return null
+                }
             }
         }
 
@@ -966,10 +1060,10 @@ object FfmpegMath {
             ?.coerceAtLeast(0.0)
             ?: 0.0
 
-        val adjustedStart = ((bracket.origStartSec - bracket.safeStartKfSec) + safeV0)
+        val adjustedStart = ((bracket.origStartSec - effectiveStartKfSec) + safeV0)
             .coerceAtLeast(0.0)
         val adjustedEnd = bracket.origEndSec?.let { endOrig ->
-            val rawEnd = (endOrig - bracket.safeStartKfSec) + safeV0
+            val rawEnd = (endOrig - effectiveStartKfSec) + safeV0
             if (preparedDurationSec != null) rawEnd.coerceAtMost(preparedDurationSec) else rawEnd
         }
 

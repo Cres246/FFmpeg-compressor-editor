@@ -642,8 +642,10 @@ class EncodingForegroundService : Service() {
                     listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${kbps}k", audioPart)
                 }
                 ProcessingMode.TRIM_VIDEO -> {
-                    val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                    listOf("${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}", "${config.codec.tag} ${kbps}k", audioPart)
+                    val (startSec, endSec, _) = FfmpegMath.resolveTrimPreviewSeconds(config, media.durationSec)
+                    val startLabel = startSec?.let { FfmpegMath.formatKeyframeTime(it, s) } ?: "00:00"
+                    val endLabel = endSec?.let { FfmpegMath.formatKeyframeTime(it, s) } ?: s.trimEndPlaceholder
+                    listOf("$startLabel→$endLabel", "${config.codec.tag} ${kbps}k", audioPart)
                 }
                 else -> listOf("${config.codec.tag} ${kbps}k", audioPart)
             }
@@ -699,8 +701,10 @@ class EncodingForegroundService : Service() {
                     listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${plan.videoBitrateKbps}k", audioPart)
                 }
                 ProcessingMode.TRIM_VIDEO -> {
-                    val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                    val range = "${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}"
+                    val (startSec, endSec, _) = FfmpegMath.resolveTrimPreviewSeconds(config, media.durationSec)
+                    val startLabel = startSec?.let { FfmpegMath.formatKeyframeTime(it, s) } ?: "00:00"
+                    val endLabel = endSec?.let { FfmpegMath.formatKeyframeTime(it, s) } ?: s.trimEndPlaceholder
+                    val range = "$startLabel→$endLabel"
                     when (config.trimSubMode) {
                         TrimSubMode.CRF_AUDIO_COPY -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
                         TrimSubMode.CRF_AUDIO_AAC -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioPart)
@@ -1382,9 +1386,9 @@ class EncodingForegroundService : Service() {
         if (!media.hasVideo || !FfmpegMath.shouldPreCutTrimForTurboPrep(targetConfig, media.durationSec)) {
             return null
         }
-        val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(targetConfig, media.durationSec)
-        val origStart = startStr?.let { FfmpegMath.parseTimestampToSeconds(it) }?.coerceAtLeast(0.0) ?: 0.0
-        val origEnd = endStr?.let { FfmpegMath.parseTimestampToSeconds(it) }?.let { endVal ->
+        val (previewStart, previewEnd, _) = FfmpegMath.resolveTrimPreviewSeconds(targetConfig, media.durationSec)
+        val origStart = previewStart?.coerceAtLeast(0.0) ?: 0.0
+        val origEnd = previewEnd?.let { endVal ->
             if (media.durationSec != null && media.durationSec > 0.0) endVal.coerceAtMost(media.durationSec) else endVal
         }
         if (origEnd != null && origEnd <= origStart + 0.05) return null
@@ -1401,37 +1405,32 @@ class EncodingForegroundService : Service() {
         }
 
         return try {
-            coroutineScope {
-                val startDef = if (needStartScan) {
-                    async {
-                        FfmpegEngine.scanKeyframes(
-                            context = applicationContext,
-                            uri = media.uri,
-                            targetSec = origStart,
-                            isStart = true,
-                            durationSec = media.durationSec
-                        )
-                    }
-                } else null
-                val endDef = if (endTargetForScan != null) {
-                    async {
-                        FfmpegEngine.scanKeyframes(
-                            context = applicationContext,
-                            uri = media.uri,
-                            targetSec = endTargetForScan,
-                            isStart = false,
-                            durationSec = media.durationSec
-                        )
-                    }
-                } else null
-                FfmpegMath.resolveTrimPreCutBracket(
-                    origStartSec = origStart,
-                    origEndSec = origEnd,
-                    mediaDurationSec = media.durationSec,
-                    startScan = cachedStartScan ?: startDef?.await(),
-                    endScan = cachedEndScan ?: endDef?.await()
+            // Run start/end FFprobe scans sequentially to avoid concurrent SAF FD contention on Android 16.
+            val startScanResult = cachedStartScan ?: if (needStartScan) {
+                FfmpegEngine.scanKeyframes(
+                    context = applicationContext,
+                    uri = media.uri,
+                    targetSec = origStart,
+                    isStart = true,
+                    durationSec = media.durationSec
                 )
-            }
+            } else null
+            val endScanResult = cachedEndScan ?: if (endTargetForScan != null) {
+                FfmpegEngine.scanKeyframes(
+                    context = applicationContext,
+                    uri = media.uri,
+                    targetSec = endTargetForScan,
+                    isStart = false,
+                    durationSec = media.durationSec
+                )
+            } else null
+            FfmpegMath.resolveTrimPreCutBracket(
+                origStartSec = origStart,
+                origEndSec = origEnd,
+                mediaDurationSec = media.durationSec,
+                startScan = startScanResult,
+                endScan = endScanResult
+            )
         } catch (ce: CancellationException) {
             throw ce
         } catch (_: Throwable) {
