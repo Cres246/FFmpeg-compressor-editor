@@ -27,6 +27,7 @@ import com.example.data.TurboBitratePlan
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
 import com.example.domain.CompletedOutput
+import com.example.domain.CustomCommandTool
 import com.example.domain.CustomFfmpegParser
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
@@ -1281,16 +1282,32 @@ class EncodingForegroundService : Service() {
 
                 if (!stepResult.success) {
                     val curS = AppLanguageController.currentStrings()
-                    appendLog("${curS.logTagError} ${curS.errFfmpegExitCode(stepResult.returnCode)}")
+                    val errMsg = curS.errFfmpegExitCode(stepResult.returnCode)
+                    appendLog("${curS.logTagError} $errMsg")
                     val hint = resolveContextualHint(config, curS)
+                    val snapLogs = currentLogs()
                     EncodingJobController.updateStateIfActive(
                         runId,
                         EncodingState.Failed(
                             modeTitle = modeTitle,
-                            errorMessage = curS.errFfmpegExitCode(stepResult.returnCode),
+                            errorMessage = errMsg,
                             hint = hint,
-                            logs = currentLogs(),
-                            wasCancelled = false
+                            logs = snapLogs,
+                            wasCancelled = false,
+                            rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
+                                modeTitle = modeTitle,
+                                errorMessage = errMsg,
+                                mediaFileName = media.fileName,
+                                mediaSummary = describeMediaForErrorReport(media),
+                                executedCommand = FfmpegMath.formatCommandForErrorReport(
+                                    toolBinary = "ffmpeg",
+                                    args = step.args,
+                                    mediaExtension = media.extension
+                                ),
+                                returnCode = stepResult.returnCode,
+                                rawOutput = stepResult.rawOutput,
+                                logs = snapLogs
+                            )
                         )
                     )
                     return
@@ -1302,13 +1319,24 @@ class EncodingForegroundService : Service() {
             if (!tempOutFile.exists() || tempOutFile.length() == 0L) {
                 val curS = AppLanguageController.currentStrings()
                 appendLog("${curS.logTagError} ${curS.errOutputNotCreated}")
+                val snapLogs = currentLogs()
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
                         errorMessage = curS.errOutputNotCreated,
                         hint = resolveContextualHint(config, curS),
-                        logs = currentLogs()
+                        logs = snapLogs,
+                        rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
+                            modeTitle = modeTitle,
+                            errorMessage = curS.errOutputNotCreated,
+                            mediaFileName = media.fileName,
+                            mediaSummary = describeMediaForErrorReport(media),
+                            executedCommand = steps.lastOrNull()?.let {
+                                FfmpegMath.formatCommandForErrorReport("ffmpeg", it.args, media.extension)
+                            },
+                            logs = snapLogs
+                        )
                     )
                 )
                 return
@@ -1349,14 +1377,24 @@ class EncodingForegroundService : Service() {
         } catch (t: Throwable) {
             if (EncodingJobController.isRunActive(runId)) {
                 val curS = AppLanguageController.currentStrings()
-                appendLog("${curS.logTagError} ${t.message ?: curS.errUnexpected}")
+                val errMsg = t.message ?: curS.errUnexpected
+                appendLog("${curS.logTagError} $errMsg")
+                val snapLogs = currentLogs()
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
-                        errorMessage = t.message ?: curS.errUnexpected,
+                        errorMessage = errMsg,
                         hint = resolveContextualHint(config, curS),
-                        logs = currentLogs()
+                        logs = snapLogs,
+                        rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
+                            modeTitle = modeTitle,
+                            errorMessage = errMsg,
+                            mediaFileName = media.fileName,
+                            mediaSummary = describeMediaForErrorReport(media),
+                            rawOutput = t.stackTraceToString().take(4_000),
+                            logs = snapLogs
+                        )
                     )
                 )
             }
@@ -3087,22 +3125,35 @@ class EncodingForegroundService : Service() {
         )
         if (plan.steps.isEmpty()) {
             appendLog("${s.logTagError} ${s.errCustomCmdEmpty}")
+            val snapLogs = currentLogs()
             EncodingJobController.updateStateIfActive(
                 runId,
                 EncodingState.Failed(
                     modeTitle = modeTitle,
                     errorMessage = s.errCustomCmdEmpty,
                     hint = s.hintCustomCmdExample,
-                    logs = currentLogs()
+                    logs = snapLogs,
+                    rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
+                        modeTitle = modeTitle,
+                        errorMessage = s.errCustomCmdEmpty,
+                        mediaFileName = media.fileName,
+                        mediaSummary = describeMediaForErrorReport(media),
+                        executedCommand = config.customCommandInput.trim().ifBlank { null },
+                        logs = snapLogs
+                    )
                 )
             )
             return
         }
 
         val totalSteps = plan.steps.size
-        val displayOutName = plan.primaryFinalOutputName ?: s.customCmdOutputLabel
+        val displayOutName = plan.primaryFinalOutputName
+            ?: if (plan.isProbeOnly) s.customCmdProbeOutputPlaceholder else s.customCmdOutputLabel
+        val collectedCommandOutputs = mutableListOf<String>()
+
         for ((idx, step) in plan.steps.withIndex()) {
             if (!EncodingJobController.isRunActive(runId)) return
+            val isProbeStep = step.tool == CustomCommandTool.FFPROBE
             val resolvedArgs = step.args.map { arg ->
                 if (arg == inputPlaceholder) {
                     FfmpegEngine.resolveInputPath(applicationContext, media.uri)
@@ -3111,8 +3162,13 @@ class EncodingForegroundService : Service() {
                 }
             }
             val passNum = idx + 1
-            val label = if (totalSteps > 1) s.customCmdStepMulti(passNum, totalSteps) else s.customCmdStepSingle
-            val stepExpectedDur = step.expectedDurationSec ?: media.durationSec
+            val label = when {
+                isProbeStep && totalSteps > 1 -> s.customCmdStepProbeMulti(passNum, totalSteps)
+                isProbeStep -> s.customCmdStepProbeSingle
+                totalSteps > 1 -> s.customCmdStepMulti(passNum, totalSteps)
+                else -> s.customCmdStepSingle
+            }
+            val stepExpectedDur = if (isProbeStep) null else (step.expectedDurationSec ?: media.durationSec)
             if (totalSteps > 1) {
                 appendLog("${s.logTagStep(passNum, totalSteps)} $label")
             }
@@ -3138,7 +3194,7 @@ class EncodingForegroundService : Service() {
                 runId = runId,
                 title = if (totalSteps > 1) "FFmpeg · ($passNum/$totalSteps) ${s.customCmdOutputLabel}" else "FFmpeg · ${s.customCmdOutputLabel}",
                 text = label,
-                percent = 0,
+                percent = if (stepExpectedDur != null) 0 else null,
                 passIndex = passNum,
                 totalPasses = totalSteps,
                 force = true
@@ -3150,86 +3206,118 @@ class EncodingForegroundService : Service() {
             var lastEmittedTenthMb = -1L
             var lastLogEmitMs = 0L
 
-            val res = FfmpegEngine.executeStep(
-                args = resolvedArgs,
-                expectedDurationSec = stepExpectedDur,
-                onProgress = { curSec, pct, spd, kb ->
-                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                    cpuBooster.pulseIfDue()
-                    val liveS = AppLanguageController.currentStrings()
-                    val nowMs = SystemClock.elapsedRealtime()
-                    val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
-                    val tenthMb = (kb * 10L) / 1024L
-                    val pctChanged = pct != lastEmittedPct
-                    val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                    if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
-                        lastUiEmitMs = nowMs
-                        lastEmittedPct = pct
-                        lastEmittedWholeSec = wholeSec
-                        lastEmittedTenthMb = tenthMb
-                        EncodingJobController.updateStateIfActive(
-                            runId,
-                            EncodingState.Running(
-                                modeTitle = modeTitle,
-                                outputFileName = displayOutName,
-                                passIndex = passNum,
-                                totalPasses = totalSteps,
-                                statusMessage = label,
-                                currentTimeSec = wholeSec.toDouble(),
-                                totalDurationSec = stepExpectedDur,
-                                percent = pct,
-                                speed = spd,
-                                sizeKb = kb,
-                                logs = currentLogs(),
-                                summaryBanner = summaryBanner
-                            )
-                        )
+            val res = if (isProbeStep) {
+                FfmpegEngine.executeProbeStep(
+                    args = resolvedArgs,
+                    onLogLine = { line ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeProbeStep
+                        appendLog(line)
                     }
-                    val titlePrefix = if (totalSteps > 1) "($passNum/$totalSteps) " else ""
-                    updateNotificationThrottled(
-                        runId = runId,
-                        title = "FFmpeg · $titlePrefix${liveS.customCmdOutputLabel}",
-                        text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), stepExpectedDur, pct, spd, kb, includePercent = false, strings = liveS),
-                        percent = pct,
-                        passIndex = passNum,
-                        totalPasses = totalSteps,
-                        force = false
-                    )
-                },
-                onLogLine = { line ->
-                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                    appendLog(line)
-                    val nowMs = SystemClock.elapsedRealtime()
-                    if (nowMs - lastLogEmitMs >= 320L) {
-                        lastLogEmitMs = nowMs
-                        val snapshot = currentLogs()
-                        val cur = EncodingJobController.state.value
-                        if (cur is EncodingState.Running && cur.logs !== snapshot) {
+                )
+            } else {
+                FfmpegEngine.executeStep(
+                    args = resolvedArgs,
+                    expectedDurationSec = stepExpectedDur,
+                    captureRawOutput = step.isNullOutputOnly && step.passNumber == null,
+                    onProgress = { curSec, pct, spd, kb ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        cpuBooster.pulseIfDue()
+                        val liveS = AppLanguageController.currentStrings()
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
+                        val tenthMb = (kb * 10L) / 1024L
+                        val pctChanged = pct != lastEmittedPct
+                        val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
+                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                            lastUiEmitMs = nowMs
+                            lastEmittedPct = pct
+                            lastEmittedWholeSec = wholeSec
+                            lastEmittedTenthMb = tenthMb
                             EncodingJobController.updateStateIfActive(
                                 runId,
-                                cur.copy(logs = snapshot)
+                                EncodingState.Running(
+                                    modeTitle = modeTitle,
+                                    outputFileName = displayOutName,
+                                    passIndex = passNum,
+                                    totalPasses = totalSteps,
+                                    statusMessage = label,
+                                    currentTimeSec = wholeSec.toDouble(),
+                                    totalDurationSec = stepExpectedDur,
+                                    percent = pct,
+                                    speed = spd,
+                                    sizeKb = kb,
+                                    logs = currentLogs(),
+                                    summaryBanner = summaryBanner
+                                )
                             )
                         }
+                        val titlePrefix = if (totalSteps > 1) "($passNum/$totalSteps) " else ""
+                        updateNotificationThrottled(
+                            runId = runId,
+                            title = "FFmpeg · $titlePrefix${liveS.customCmdOutputLabel}",
+                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), stepExpectedDur, pct, spd, kb, includePercent = false, strings = liveS),
+                            percent = pct,
+                            passIndex = passNum,
+                            totalPasses = totalSteps,
+                            force = false
+                        )
+                    },
+                    onLogLine = { line ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        appendLog(line)
+                        val nowMs = SystemClock.elapsedRealtime()
+                        if (nowMs - lastLogEmitMs >= 320L) {
+                            lastLogEmitMs = nowMs
+                            val snapshot = currentLogs()
+                            val cur = EncodingJobController.state.value
+                            if (cur is EncodingState.Running && cur.logs !== snapshot) {
+                                EncodingJobController.updateStateIfActive(
+                                    runId,
+                                    cur.copy(logs = snapshot)
+                                )
+                            }
+                        }
                     }
-                }
-            )
+                )
+            }
 
             if (!EncodingJobController.isRunActive(runId) || res.cancelled) {
                 return
             }
             if (!res.success) {
                 val curS = AppLanguageController.currentStrings()
-                appendLog("${curS.logTagError} ${curS.errCustomCmdFailed(res.returnCode)}")
+                val errMsg = curS.errCustomCmdFailed(res.returnCode)
+                appendLog("${curS.logTagError} $errMsg")
+                val snapLogs = currentLogs()
+                val toolBin = if (isProbeStep) "ffprobe" else "ffmpeg"
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
-                        errorMessage = curS.errCustomCmdFailed(res.returnCode),
+                        errorMessage = errMsg,
                         hint = curS.hintCustomCmdSyntax(media.extension),
-                        logs = currentLogs()
+                        logs = snapLogs,
+                        rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
+                            modeTitle = modeTitle,
+                            errorMessage = errMsg,
+                            mediaFileName = media.fileName,
+                            mediaSummary = describeMediaForErrorReport(media),
+                            executedCommand = FfmpegMath.formatCommandForErrorReport(
+                                toolBinary = toolBin,
+                                args = resolvedArgs,
+                                mediaExtension = media.extension
+                            ),
+                            returnCode = res.returnCode,
+                            rawOutput = res.rawOutput,
+                            logs = snapLogs
+                        )
                     )
                 )
                 return
+            }
+
+            if ((isProbeStep || (step.isNullOutputOnly && step.passNumber == null)) && res.rawOutput.isNotBlank()) {
+                collectedCommandOutputs.add(res.rawOutput.trim())
             }
         }
 
@@ -3288,11 +3376,14 @@ class EncodingForegroundService : Service() {
             runCatching { PreferencesRepository(applicationContext).appendHistory(savedOutputs) }
         }
 
-        val summary = if (savedOutputs.isEmpty()) {
-            curS.successCustomCmdDoneNoFiles
-        } else {
-            val totalBytes = savedOutputs.sumOf { it.outputSizeBytes }
-            curS.successCustomCmdSavedFiles(savedOutputs.size, FfmpegMath.formatSizeBytes(totalBytes))
+        val commandOutputText = collectedCommandOutputs.joinToString("\n\n").ifBlank { null }
+        val summary = when {
+            savedOutputs.isNotEmpty() -> {
+                val totalBytes = savedOutputs.sumOf { it.outputSizeBytes }
+                curS.successCustomCmdSavedFiles(savedOutputs.size, FfmpegMath.formatSizeBytes(totalBytes))
+            }
+            commandOutputText != null -> curS.successCustomCmdOutputReady
+            else -> curS.successCustomCmdDoneNoFiles
         }
 
         appendLog("${curS.logTagCompleted} $summary")
@@ -3302,10 +3393,23 @@ class EncodingForegroundService : Service() {
                 outputs = savedOutputs,
                 modeTitle = modeTitle,
                 summaryMessage = summary,
-                logs = currentLogs()
+                logs = currentLogs(),
+                commandOutput = commandOutputText
             )
         )
     }
+
+    private fun describeMediaForErrorReport(media: MediaInfo): String = buildList {
+        media.videoCodec?.takeIf { it.isNotBlank() }?.let { add(it) }
+        if (media.width != null && media.height != null) add("${media.width}x${media.height}")
+        media.pixFmt?.takeIf { it.isNotBlank() }?.let { add(it) }
+        media.videoProfile?.takeIf { it.isNotBlank() }?.let { add(it) }
+        media.audioCodec?.takeIf { it.isNotBlank() }?.let { ac ->
+            val br = media.audioBitrateKbps?.let { " ${it}k" }.orEmpty()
+            add("$ac$br")
+        }
+        media.durationSec?.let { add(String.format(java.util.Locale.US, "%.1fs", it)) }
+    }.joinToString(", ")
 
     /**
      * Silently snaps lossless trim start -> previous keyframe (+5ms) and end -> next keyframe

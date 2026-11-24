@@ -34,7 +34,8 @@ data class FfmpegStepResult(
     val success: Boolean,
     val cancelled: Boolean,
     val returnCode: Int,
-    val logs: List<String>
+    val logs: List<String>,
+    val rawOutput: String = ""
 )
 
 object FfmpegEngine {
@@ -751,15 +752,19 @@ object FfmpegEngine {
         args: List<String>,
         expectedDurationSec: Double?,
         onProgress: (currentSec: Double, percent: Int?, speed: String, sizeKb: Long) -> Unit,
-        onLogLine: (String) -> Unit
+        onLogLine: (String) -> Unit,
+        captureRawOutput: Boolean = false
     ): FfmpegStepResult = suspendCancellableCoroutine { cont ->
         ensureSilentLogcat()
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
         val logsBuffer = mutableListOf<String>()
+        val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
         val fullArgs = buildList {
             add("-hide_banner")
-            add("-loglevel")
-            add("warning")
+            if (!hasExplicitLogLevel) {
+                add("-loglevel")
+                add(if (captureRawOutput) "info" else "warning")
+            }
             add("-stats")
             if (!args.contains("-filter_threads")) {
                 add("-filter_threads")
@@ -781,13 +786,19 @@ object FfmpegEngine {
                     val isSuccess = ReturnCode.isSuccess(rc)
                     val isCancelled = ReturnCode.isCancel(rc)
                     val codeVal = rc?.value ?: -1
+                    val rawOut = if (!isSuccess || captureRawOutput) {
+                        sanitizeRawFfmpegOutput(completedSession.allLogsAsString.orEmpty())
+                    } else {
+                        ""
+                    }
                     if (cont.isActive) {
                         cont.resume(
                             FfmpegStepResult(
                                 success = isSuccess,
                                 cancelled = isCancelled,
                                 returnCode = codeVal,
-                                logs = synchronized(logsBuffer) { logsBuffer.toList() }
+                                logs = synchronized(logsBuffer) { logsBuffer.toList() },
+                                rawOutput = rawOut
                             )
                         )
                     }
@@ -830,6 +841,71 @@ object FfmpegEngine {
 
         cont.invokeOnCancellation {
             runCatching { FFmpegKit.cancel(session.sessionId) }
+        }
+    }
+
+    /**
+     * Executes a native `ffprobe` command via bundled FFprobeKit without injecting FFmpeg-only
+     * flags (`-stats`, `-filter_threads`), returning both exit status and the exact raw output.
+     */
+    suspend fun executeProbeStep(
+        args: List<String>,
+        onLogLine: (String) -> Unit
+    ): FfmpegStepResult = withContext(Dispatchers.IO) {
+        ensureSilentLogcat()
+        val hasBannerOrVerbosity = args.any {
+            it.equals("-hide_banner", ignoreCase = true) ||
+                it.equals("-v", ignoreCase = true) ||
+                it.equals("-loglevel", ignoreCase = true)
+        }
+        val fullArgs = buildList {
+            if (!hasBannerOrVerbosity) {
+                add("-hide_banner")
+            }
+            addAll(args)
+        }.toTypedArray()
+
+        val session = FFprobeKit.executeWithArguments(fullArgs)
+        val rc = session.returnCode
+        val isSuccess = ReturnCode.isSuccess(rc)
+        val isCancelled = ReturnCode.isCancel(rc)
+        val codeVal = rc?.value ?: -1
+
+        val rawOut = session.output.orEmpty().trim()
+            .ifBlank { session.allLogsAsString.orEmpty().trim() }
+            .let { if (it.length > 24_000) it.takeLast(24_000) else it }
+
+        val lines = rawOut.lineSequence()
+            .map { it.trimEnd() }
+            .filter { it.isNotBlank() }
+            .take(120)
+            .toList()
+        lines.forEach { onLogLine(it) }
+
+        FfmpegStepResult(
+            success = isSuccess,
+            cancelled = isCancelled,
+            returnCode = codeVal,
+            logs = lines,
+            rawOutput = rawOut
+        )
+    }
+
+    private fun sanitizeRawFfmpegOutput(raw: String): String {
+        if (raw.isBlank()) return ""
+        val filtered = raw.lineSequence()
+            .map { it.trimEnd() }
+            .filter { line ->
+                val lower = line.trimStart().lowercase(Locale.US)
+                line.isNotBlank() && !lower.startsWith("frame=") && !lower.startsWith("size=")
+            }
+            .joinToString("\n")
+            .trim()
+        val result = filtered.ifBlank { raw.trim() }
+        return if (result.length > 12_000) {
+            "...\n" + result.takeLast(12_000)
+        } else {
+            result
         }
     }
 

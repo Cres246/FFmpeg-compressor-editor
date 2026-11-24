@@ -15,12 +15,18 @@ data class CustomCommandAdaptations(
     val adaptedDesktopCodecCount: Int = 0
 )
 
+enum class CustomCommandTool {
+    FFMPEG,
+    FFPROBE
+}
+
 data class CustomCommandStep(
     val args: List<String>,
     val outputFileNames: List<String>,
     val isNullOutputOnly: Boolean,
     val expectedDurationSec: Double?,
-    val passNumber: Int? = null
+    val passNumber: Int? = null,
+    val tool: CustomCommandTool = CustomCommandTool.FFMPEG
 )
 
 data class CustomCommandPlan(
@@ -33,6 +39,12 @@ data class CustomCommandPlan(
             .flatMap { it.outputFileNames }
             .lastOrNull { it !in consumedIntermediateFiles }
             ?: steps.flatMap { it.outputFileNames }.lastOrNull()
+
+    val isProbeOnly: Boolean
+        get() = steps.isNotEmpty() && steps.all { it.tool == CustomCommandTool.FFPROBE }
+
+    val hasProbeStep: Boolean
+        get() = steps.any { it.tool == CustomCommandTool.FFPROBE }
 }
 
 /**
@@ -129,7 +141,7 @@ object CustomFfmpegParser {
         "-profile:", "-frames:", "-metadata:", "-disposition:", "-pass:", "-r:", "-ar:", "-ac:", "-t:", "-to:"
     )
 
-    /** Common human / AI flag typos & friendly aliases mapped to canonical FFmpeg flags. */
+    /** Common human / AI flag typos & friendly aliases mapped to canonical FFmpeg / FFprobe flags. */
     private val FLAG_TYPO_ALIASES = mapOf(
         "-v:c" to "-c:v",
         "-a:c" to "-c:a",
@@ -153,7 +165,55 @@ object CustomFfmpegParser {
         "-presest" to "-preset",
         "-passlog" to "-passlogfile",
         "-x265_params" to "-x265-params",
-        "-x264_params" to "-x264-params"
+        "-x264_params" to "-x264-params",
+        "-select-streams" to "-select_streams",
+        "-show-entries" to "-show_entries",
+        "-show-streams" to "-show_streams",
+        "-show-format" to "-show_format",
+        "-show-packets" to "-show_packets",
+        "-show-frames" to "-show_frames",
+        "-print-format" to "-print_format",
+        "-output-format" to "-output_format",
+        "-read-intervals" to "-read_intervals",
+        "-count-frames" to "-count_frames",
+        "-count-packets" to "-count_packets"
+    )
+
+    /** Known FFprobe 0-argument boolean flags so a trailing input file is never swallowed as a flag value. */
+    private val FFPROBE_ZERO_ARG_FLAGS = setOf(
+        "-show_format", "-show_streams", "-show_packets", "-show_frames",
+        "-show_programs", "-show_chapters", "-show_error", "-show_data",
+        "-show_private_data", "-noprivate", "-show_versions", "-show_program_version",
+        "-show_library_versions", "-show_pixel_formats", "-count_frames", "-count_packets",
+        "-pretty", "-unit", "-prefix", "-byte_binary_prefix", "-sexagesimal",
+        "-bitexact", "-hide_banner", "-find_stream_info", "-nofind_stream_info",
+        "-sections", "-report"
+    )
+
+    /** Known FFprobe 1-argument value flags so flag values are never mistaken for positional input files. */
+    private val FFPROBE_VALUE_FLAGS = setOf(
+        "-v", "-loglevel", "-f", "-i", "-o",
+        "-select_streams", "-show_entries", "-of", "-print_format", "-output_format",
+        "-read_intervals", "-show_format_entry", "-show_optional_fields",
+        "-show_data_hash", "-show_log", "-analyzeduration", "-probesize", "-fpsprobesize",
+        "-fflags", "-flags", "-err_detect", "-threads", "-max_probe_packets",
+        "-rw_timeout", "-user_agent", "-headers", "-protocol_whitelist",
+        "-c", "-c:v", "-c:a", "-vcodec", "-acodec", "-ss", "-t", "-to", "-export_side_data"
+    )
+
+    /** Unambiguously FFprobe-only flags used to recognize flags-only FFprobe pastes. */
+    private val FFPROBE_ONLY_FLAGS = setOf(
+        "-select_streams", "-show_entries", "-show_streams", "-show_format",
+        "-show_packets", "-show_frames", "-show_programs", "-show_chapters",
+        "-show_format_entry", "-print_format", "-of", "-output_format",
+        "-read_intervals", "-count_frames", "-count_packets",
+        "-pretty", "-sexagesimal", "-show_pixel_formats", "-show_private_data", "-noprivate"
+    )
+
+    /** Shell post-processing commands stripped when piped after an ffmpeg/ffprobe command (e.g. `| grep ...`). */
+    private val SHELL_PIPE_FILTERS = setOf(
+        "grep", "egrep", "fgrep", "rg", "awk", "gawk", "sed", "head", "tail",
+        "jq", "cut", "tr", "wc", "sort", "uniq", "tee", "less", "more", "cat", "findstr", "select-string"
     )
 
     /** Stream-specifier base flags where mobile keyboards often insert spaces around `:` (`-c: v`, `-b :a`). */
@@ -259,6 +319,7 @@ object CustomFfmpegParser {
         "^(?:(?:PS\\s+)?[A-Za-z]:\\\\[^>]*>|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\\$#>]*[\\$#>]|PS>|\\\$|>)\\s+"
     )
     private val FFMPEG_BIN_REGEX = Regex("^(?:.*/|.*\\\\)?ffmpeg(?:\\.exe)?$", RegexOption.IGNORE_CASE)
+    private val FFPROBE_BIN_REGEX = Regex("^(?:.*/|.*\\\\)?ffprobe(?:\\.exe)?$", RegexOption.IGNORE_CASE)
     private val RESERVED_INPUT_VARS = setOf("IN", "INPUT", "INPUT_FILE", "SRC", "SOURCE", "VIDEO", "FILE", "1")
     private val INLINE_ENV_VAR_REGEX = Regex("^[A-Za-z_][A-Za-z0-9_]*=.*$")
     private val STEM_PLACEHOLDER_REGEX = Regex(
@@ -270,7 +331,7 @@ object CustomFfmpegParser {
         RegexOption.IGNORE_CASE
     )
     private val PROSE_PREFIX_BEFORE_FFMPEG_REGEX = Regex(
-        "^(?:(?:[-•*▶►→]|\\d+[.)]|\\*\\*[^*]+\\*\\*|[A-Za-zÇĞİÖŞÜçğıöşü0-9 _()-]{1,28}:)\\s+)+(?:\\*\\*)?(?=(?:sudo\\s+|time\\s+|nohup\\s+|&\\s+)?(?:\\./|\\.\\\\|/|\\w:\\\\)?ffmpeg(?:\\.exe)?\\b)",
+        "^(?:(?:[-•*▶►→]|\\d+[.)]|\\*\\*[^*]+\\*\\*|[A-Za-zÇĞİÖŞÜçğıöşü0-9 _()-]{1,28}:)\\s+)+(?:\\*\\*)?(?=(?:sudo\\s+|time\\s+|nohup\\s+|&\\s+)?(?:\\./|\\.\\\\|/|\\w:\\\\)?(?:ffmpeg|ffprobe)(?:\\.exe)?\\b)",
         RegexOption.IGNORE_CASE
     )
     private val BITRATE_UNIT_REGEX = Regex(
@@ -356,13 +417,42 @@ object CustomFfmpegParser {
             if (strippedTokens.isEmpty()) continue
 
             // Strip leading shell wrappers (`sudo`, `time`, `nohup`, `do`, `then`, `&`, `nice -n 10`, inline `KEY=VAL`)
-            stripLeadingWrappersAndBinary(strippedTokens)
-            if (strippedTokens.isEmpty()) continue
+            // and detect whether this segment invokes `ffmpeg` or `ffprobe`.
+            val explicitTool = stripLeadingWrappersAndBinary(strippedTokens)
+            if (strippedTokens.isEmpty() && explicitTool != CustomCommandTool.FFPROBE) continue
+
+            val preliminaryIsProbe = explicitTool == CustomCommandTool.FFPROBE ||
+                (explicitTool == null && strippedTokens.any {
+                    val low = it.lowercase(Locale.US).removePrefix("-").substringBefore('=')
+                    "-$low" in FFPROBE_ONLY_FLAGS || FLAG_TYPO_ALIASES["-$low"] in FFPROBE_ONLY_FLAGS
+                })
 
             // Normalize spacing/casing/punctuation/alias typos on tokens before semantic planning
-            val (cleanedTokens, tokenFixes) = normalizeStepTokens(strippedTokens)
+            val (cleanedTokens, tokenFixes) = normalizeStepTokens(strippedTokens, isProbe = preliminaryIsProbe)
             fixedSyntaxCount += tokenFixes
-            if (cleanedTokens.isEmpty()) continue
+            if (cleanedTokens.isEmpty() && !preliminaryIsProbe) continue
+
+            val stepTool = explicitTool ?: if (cleanedTokens.any { it.lowercase(Locale.US) in FFPROBE_ONLY_FLAGS }) {
+                CustomCommandTool.FFPROBE
+            } else {
+                CustomCommandTool.FFMPEG
+            }
+
+            if (stepTool == CustomCommandTool.FFPROBE) {
+                val (probeStep, probeBoundInputs, probeSyntaxFixes) = planFfprobeStep(
+                    cleanedTokens = cleanedTokens,
+                    mediaFileName = mediaFileName,
+                    inputAlias = inputAlias,
+                    workDirPath = workDirPath,
+                    producedFiles = producedFiles,
+                    inputTokenProvider = inputTokenProvider,
+                    isPreview = isPreview
+                )
+                autoBoundInputs += probeBoundInputs
+                fixedSyntaxCount += probeSyntaxFixes
+                resolvedSteps.add(probeStep)
+                continue
+            }
 
             // Pre-scan flags & codecs for smart injection, null-sink, extension, and GPU adaptation decisions
             var sawAnyInputFlag = false
@@ -924,10 +1014,208 @@ object CustomFfmpegParser {
         )
     }
 
+    /**
+     * Plans an `ffprobe` inspection step without injecting `-y` or a dummy output filename:
+     * - Recognizes both positional input paths (`ffprobe ... video.mp4`) and `-i <file>`
+     * - Merges accidental unquoted multi-word input filenames (`my holiday video.mp4`)
+     * - Auto-binds missing inputs (`ffprobe -show_streams`) to the user's selected file
+     * - Inspects outputs created by earlier `ffmpeg` steps in the same chain without marking them consumed
+     * - Strips `-o <file>` so probe output always renders cleanly on screen
+     */
+    private fun planFfprobeStep(
+        cleanedTokens: List<String>,
+        mediaFileName: String,
+        inputAlias: String,
+        workDirPath: String,
+        producedFiles: Set<String>,
+        inputTokenProvider: () -> String,
+        isPreview: Boolean
+    ): Triple<CustomCommandStep, Int, Int> {
+        val outArgs = mutableListOf<String>()
+        var autoBoundInputs = 0
+        var fixedSyntax = 0
+        var hasBoundInput = false
+        var pendingInputFormat: String? = null
+
+        fun resolveProbeInputToken(rawIn: String): String {
+            val isSynthetic = pendingInputFormat.equals("lavfi", ignoreCase = true) ||
+                pendingInputFormat.equals("rawvideo", ignoreCase = true) ||
+                isVirtualOrNetworkInput(rawIn)
+            if (isSynthetic) return rawIn
+            val inBaseName = extractSafeFileName(rawIn)
+            if (inBaseName != null && inBaseName in producedFiles) {
+                return formatWorkPath(workDirPath, inBaseName, isPreview)
+            }
+            val isExplicitPlaceholder = rawIn == "\$IN" ||
+                rawIn == "\${IN}" ||
+                rawIn == mediaFileName ||
+                rawIn.equals(inputAlias, ignoreCase = true)
+            if (!isExplicitPlaceholder) {
+                autoBoundInputs++
+            }
+            return inputTokenProvider()
+        }
+
+        var i = 0
+        while (i < cleanedTokens.size) {
+            val tok = cleanedTokens[i]
+            val lower = tok.lowercase(Locale.US)
+
+            // Drop stray standalone `-` in the middle of a probe command
+            if (tok == "-") {
+                fixedSyntax++
+                i++
+                continue
+            }
+
+            // Skip `-o <file>` so FFprobe output prints to stdout and displays directly in the UI
+            if (lower == "-o") {
+                fixedSyntax++
+                i += if (i + 1 < cleanedTokens.size && !isKnownFlagToken(cleanedTokens[i + 1])) 2 else 1
+                continue
+            }
+
+            // Handle explicit `-i <input>` (tolerant of missing filename or unquoted spaces)
+            if (lower == "-i") {
+                val nextTok = cleanedTokens.getOrNull(i + 1)
+                if (nextTok == null || isKnownFlagToken(nextTok)) {
+                    outArgs.add("-i")
+                    outArgs.add(inputTokenProvider())
+                    autoBoundInputs++
+                    fixedSyntax++
+                    hasBoundInput = true
+                    pendingInputFormat = null
+                    i += 1
+                    continue
+                }
+                var endIdx = i + 1
+                val rawIn = if (!looksLikeCompleteInputPath(nextTok) && !isVirtualOrNetworkInput(nextTok) &&
+                    !pendingInputFormat.equals("lavfi", ignoreCase = true)
+                ) {
+                    val merged = StringBuilder(nextTok)
+                    var look = i + 2
+                    while (look < cleanedTokens.size && !cleanedTokens[look].startsWith("-")) {
+                        merged.append(' ').append(cleanedTokens[look])
+                        endIdx = look
+                        look++
+                        if (looksLikeCompleteInputPath(cleanedTokens[endIdx])) break
+                    }
+                    if (endIdx > i + 1) fixedSyntax++
+                    merged.toString()
+                } else {
+                    nextTok
+                }
+                outArgs.add("-i")
+                outArgs.add(resolveProbeInputToken(rawIn))
+                hasBoundInput = true
+                pendingInputFormat = null
+                i = endIdx + 1
+                continue
+            }
+
+            // Track `-f <format>` for lavfi/synthetic input detection
+            if (lower == "-f" && i + 1 < cleanedTokens.size) {
+                val fmt = cleanedTokens[i + 1]
+                pendingInputFormat = fmt
+                outArgs.add("-f")
+                outArgs.add(fmt)
+                i += 2
+                continue
+            }
+
+            // Known 0-argument FFprobe boolean flags (never swallow trailing input filename!)
+            if (lower in FFPROBE_ZERO_ARG_FLAGS || lower in ZERO_ARG_FLAGS) {
+                outArgs.add(lower)
+                i += 1
+                continue
+            }
+
+            // Known 1-argument FFprobe value flags (never mistake value like `error`, `v:0`, `default=...` for input!)
+            if (lower in FFPROBE_VALUE_FLAGS || isNonOutputValueFlag(lower)) {
+                val nextTok = cleanedTokens.getOrNull(i + 1)
+                if (nextTok == null || isKnownFlagToken(nextTok)) {
+                    if (nextTok == null && i == cleanedTokens.lastIndex) {
+                        fixedSyntax++
+                    } else {
+                        outArgs.add(lower)
+                    }
+                    i += 1
+                } else {
+                    outArgs.add(lower)
+                    outArgs.add(nextTok)
+                    i += 2
+                }
+                continue
+            }
+
+            // Any other unknown `-flag`
+            if (tok.startsWith("-") && tok.length > 1) {
+                val nextTok = cleanedTokens.getOrNull(i + 1)
+                val nextIsOption = nextTok != null && nextTok.startsWith("-") && nextTok.length > 1 && nextTok.toDoubleOrNull() == null
+                val nextIsTrailingInput = nextTok != null && i + 1 == cleanedTokens.lastIndex &&
+                    (looksLikeCompleteInputPath(nextTok) || looksLikeInputPlaceholder(nextTok))
+                if (nextTok == null || nextIsOption || nextIsTrailingInput) {
+                    outArgs.add(tok)
+                    i += 1
+                } else {
+                    outArgs.add(tok)
+                    outArgs.add(nextTok)
+                    i += 2
+                }
+                continue
+            }
+
+            // Positional non-flag token -> FFprobe input target (e.g. `video.mp4`, `my clip.mkv`, `$IN`)
+            var endIdx = i
+            val rawIn = if (!looksLikeCompleteInputPath(tok) && !isVirtualOrNetworkInput(tok) &&
+                !looksLikeInputPlaceholder(tok)
+            ) {
+                val merged = StringBuilder(tok)
+                var look = i + 1
+                while (look < cleanedTokens.size && !cleanedTokens[look].startsWith("-")) {
+                    merged.append(' ').append(cleanedTokens[look])
+                    endIdx = look
+                    look++
+                    if (looksLikeCompleteInputPath(cleanedTokens[endIdx])) break
+                }
+                if (endIdx > i) fixedSyntax++
+                merged.toString()
+            } else {
+                tok
+            }
+
+            if (!hasBoundInput) {
+                outArgs.add(resolveProbeInputToken(rawIn))
+                hasBoundInput = true
+                pendingInputFormat = null
+            } else {
+                // FFprobe only accepts one input; drop accidental duplicate trailing tokens gracefully
+                fixedSyntax++
+            }
+            i = endIdx + 1
+        }
+
+        if (!hasBoundInput) {
+            outArgs.add(inputTokenProvider())
+            autoBoundInputs++
+        }
+
+        val step = CustomCommandStep(
+            args = outArgs,
+            outputFileNames = emptyList(),
+            isNullOutputOnly = true,
+            expectedDurationSec = null,
+            passNumber = null,
+            tool = CustomCommandTool.FFPROBE
+        )
+        return Triple(step, autoBoundInputs, fixedSyntax)
+    }
+
     fun formatPreview(plan: CustomCommandPlan): String {
         if (plan.steps.isEmpty()) return ""
         return plan.steps.joinToString("\n&& ") { step ->
-            "ffmpeg " + step.args.joinToString(" ") { arg ->
+            val binName = if (step.tool == CustomCommandTool.FFPROBE) "ffprobe" else "ffmpeg"
+            "$binName " + step.args.joinToString(" ") { arg ->
                 if (arg.any { it.isWhitespace() } || arg.contains(';') || arg.contains('&')) {
                     "\"$arg\""
                 } else {
@@ -1174,10 +1462,6 @@ object CustomFfmpegParser {
                     ignoredShellCleanup++
                     continue
                 }
-                if (firstLower == "ffprobe" || firstLower == "ffprobe.exe") {
-                    ignoredShellCleanup++
-                    continue
-                }
                 // Drop `sudo apt ...` / `sudo brew ...` installation lines
                 if (firstLower == "sudo" && tokens.size > 1 &&
                     tokens[1].lowercase(Locale.US) in IGNORED_SHELL_COMMANDS
@@ -1202,20 +1486,23 @@ object CustomFfmpegParser {
     private fun isDashChar(ch: Char): Boolean =
         ch == '-' || ch == '–' || ch == '—' || ch == '−' || ch == '‒' || ch == '‑' || ch == '－'
 
-    /** Strips prose labels/numbering/bullets right before `ffmpeg` (e.g. `1. ffmpeg ...`, `Komut: ffmpeg ...`, `**ffmpeg**`). */
+    /** Strips prose labels/numbering/bullets right before `ffmpeg`/`ffprobe` (e.g. `1. ffprobe ...`, `Komut: ffmpeg ...`, `**ffprobe**`). */
     private fun stripProsePrefixBeforeFfmpeg(line: String): String {
         var result = PROSE_PREFIX_BEFORE_FFMPEG_REGEX.replace(line, "")
-        // Unwrap Markdown bold `**ffmpeg**` at the start
+        // Unwrap Markdown bold `**ffmpeg**` or `**ffprobe**` at the start
         if (result.startsWith("**")) {
             val endBold = result.indexOf("**", 2)
-            if (endBold > 2 && FFMPEG_BIN_REGEX.matches(result.substring(2, endBold).trim())) {
-                result = result.substring(2, endBold).trim() + result.substring(endBold + 2)
+            if (endBold > 2) {
+                val boldWord = result.substring(2, endBold).trim()
+                if (FFMPEG_BIN_REGEX.matches(boldWord) || FFPROBE_BIN_REGEX.matches(boldWord)) {
+                    result = boldWord + result.substring(endBold + 2)
+                }
             }
         }
         return result.trim()
     }
 
-    /** Returns true if a line starts with `ffmpeg` or contains a `&&`/`do`/`{` segment invoking `ffmpeg`. */
+    /** Returns true if a line starts with `ffmpeg`/`ffprobe` or contains a `&&`/`do`/`{` segment invoking either tool. */
     private fun containsExplicitFfmpegInvocation(line: String): Boolean {
         if (isExplicitFfmpegCommandLine(line)) return true
         return splitShellCommandLine(line).any { seg ->
@@ -1226,7 +1513,7 @@ object CustomFfmpegParser {
     }
 
     /**
-     * Returns true only when a line genuinely invokes `ffmpeg` (directly, after a wrapper like
+     * Returns true only when a line genuinely invokes `ffmpeg` or `ffprobe` (directly, after a wrapper like
      * `sudo`/`time`/`nohup`/`call`/`&`, or after inline `KEY=VAL` env vars) — preventing plain AI prose
      * such as "İşte FFmpeg komutu:" from ever being mistaken for an executable command.
      */
@@ -1236,7 +1523,7 @@ object CustomFfmpegParser {
         while (idx < parts.size) {
             val token = parts[idx].trim('"', '\'', '`', '*')
             val lower = token.lowercase(Locale.US)
-            if (FFMPEG_BIN_REGEX.matches(token)) return true
+            if (FFMPEG_BIN_REGEX.matches(token) || FFPROBE_BIN_REGEX.matches(token)) return true
             if (lower in SHELL_WRAPPERS || token == "&" || token == "{" || INLINE_ENV_VAR_REGEX.matches(token)) {
                 idx++
                 continue
@@ -1255,13 +1542,13 @@ object CustomFfmpegParser {
         return false
     }
 
-    /** Heuristic for flags-only pastes (without the `ffmpeg` binary name). */
+    /** Heuristic for flags-only pastes (without the `ffmpeg`/`ffprobe` binary name). */
     private fun looksLikeFlagsOnlyCommand(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.isEmpty()) return false
         if (isDashChar(trimmed[0]) && trimmed.length > 1 && !trimmed[1].isWhitespace()) return true
         return Regex("(?:^|\\s)(?:--?[a-zA-Z][a-zA-Z0-9_:-]*)(?:=|\\s)").containsMatchIn(trimmed) &&
-            Regex("-(?:i|c:v|c:a|vcodec|acodec|vf|af|crf|preset|b:v|b:a|ss|to|t|vn|an|r|s|f|map|filter_complex)\\b", RegexOption.IGNORE_CASE)
+            Regex("-(?:i|c:v|c:a|vcodec|acodec|vf|af|crf|preset|b:v|b:a|ss|to|t|vn|an|r|s|f|map|filter_complex|select_streams|show_entries|show_streams|show_format|show_packets|show_frames|print_format|of|read_intervals|count_frames|count_packets)\\b", RegexOption.IGNORE_CASE)
                 .containsMatchIn(trimmed)
     }
 
@@ -1421,7 +1708,7 @@ object CustomFfmpegParser {
 
         val afterOpen = line.substring(openIdx + 1)
         // Prefer closing right before the next ` -knownFlag` or ` && ` or ` ; `
-        val boundaryRegex = Regex("\\s+(?:&&|\\|\\||-(?:i|f|c|c:[vas]|vcodec|acodec|vf|af|filter_complex|crf|qp|cq|preset|b:[va]|r|s|ss|to|t|an|vn|sn|dn|y|pass|passlogfile|pix_fmt|movflags|map|threads|x264-params|x265-params|tag:[va]|profile:[va]|level|ar|ac|q:[va]|frames:[va])(?:\\b|=))", RegexOption.IGNORE_CASE)
+        val boundaryRegex = Regex("\\s+(?:&&|\\|\\||-(?:i|f|c|c:[vas]|vcodec|acodec|vf|af|filter_complex|crf|qp|cq|preset|b:[va]|r|s|ss|to|t|an|vn|sn|dn|y|pass|passlogfile|pix_fmt|movflags|map|threads|x264-params|x265-params|tag:[va]|profile:[va]|level|ar|ac|q:[va]|frames:[va]|select_streams|show_entries|show_streams|show_format|print_format|of|read_intervals)(?:\\b|=))", RegexOption.IGNORE_CASE)
         val flagMatch = boundaryRegex.find(afterOpen)
         if (flagMatch != null) {
             val insertPos = openIdx + 1 + flagMatch.range.first
@@ -1522,9 +1809,9 @@ object CustomFfmpegParser {
         if (!hasFilterFlag) return false
         val firstRightWord = right.substringBefore(' ').trim().lowercase(Locale.US)
         val rightStartsNewCommand = FFMPEG_BIN_REGEX.matches(firstRightWord) ||
+            FFPROBE_BIN_REGEX.matches(firstRightWord) ||
             firstRightWord in IGNORED_SHELL_COMMANDS ||
-            firstRightWord in SHELL_WRAPPERS ||
-            firstRightWord == "ffprobe"
+            firstRightWord in SHELL_WRAPPERS
         return !rightStartsNewCommand
     }
 
@@ -1533,7 +1820,7 @@ object CustomFfmpegParser {
         return segment
             .replace(Regex("(^|\\s)[–—−‒‑－]+([A-Za-z])"), "$1-$2")
             .replace(Regex("(^|\\s)[–—−‒‑－]+(?=\\s)"), "$1-")
-            .replace(Regex("(^|\\s)(-(?:i|vf|af|filter_complex|lavfi|c:[vas]|vcodec|acodec|x264-params|x265-params|metadata))([\"'])", RegexOption.IGNORE_CASE), "$1$2 $3")
+            .replace(Regex("(^|\\s)(-(?:i|vf|af|filter_complex|lavfi|c:[vas]|vcodec|acodec|x264-params|x265-params|metadata|show_entries|of|print_format))([\"'])", RegexOption.IGNORE_CASE), "$1$2 $3")
     }
 
     /** Strips trailing `# comment` and ` // comment` outside quotes only when preceded by whitespace. */
@@ -1624,8 +1911,11 @@ object CustomFfmpegParser {
         return result
     }
 
-    /** Strips shell wrappers (`sudo`, `time`, `nice`, `nohup`, `&`, inline `KEY=VAL`) and `ffmpeg` binary name(s). */
-    private fun stripLeadingWrappersAndBinary(tokens: MutableList<String>) {
+    /**
+     * Strips shell wrappers (`sudo`, `time`, `nice`, `nohup`, `&`, inline `KEY=VAL`) and `ffmpeg`/`ffprobe`
+     * binary name(s), returning the detected tool if an explicit binary was present.
+     */
+    private fun stripLeadingWrappersAndBinary(tokens: MutableList<String>): CustomCommandTool? {
         while (tokens.isNotEmpty()) {
             val first = tokens.first()
             val lower = first.lowercase(Locale.US)
@@ -1652,21 +1942,34 @@ object CustomFfmpegParser {
                 else -> break
             }
         }
-        // `while` handles accidental double paste `ffmpeg ffmpeg -i ...`
-        while (tokens.isNotEmpty() && FFMPEG_BIN_REGEX.matches(tokens.first())) {
-            tokens.removeAt(0)
+        var detected: CustomCommandTool? = null
+        // `while` handles accidental double paste `ffmpeg ffmpeg -i ...` or `ffprobe ffprobe ...`
+        while (tokens.isNotEmpty()) {
+            val head = tokens.first()
+            when {
+                FFPROBE_BIN_REGEX.matches(head) -> {
+                    detected = CustomCommandTool.FFPROBE
+                    tokens.removeAt(0)
+                }
+                FFMPEG_BIN_REGEX.matches(head) -> {
+                    detected = CustomCommandTool.FFMPEG
+                    tokens.removeAt(0)
+                }
+                else -> break
+            }
         }
+        return detected
     }
 
     /**
      * Forgiving token normalizer fixing common human & AI spacing/casing/punctuation typos:
      * - `- i` -> `-i`, `- crf` -> `-crf`
      * - `-c: v` / `-c :v` / `-c : v` -> `-c:v`
-     * - `--crf` -> `-crf`, `-CRF` -> `-crf`
-     * - `-crf=23` -> `-crf`, `23`
+     * - `--crf` -> `-crf`, `-CRF` -> `-crf`, `--show_entries` -> `-show_entries`
+     * - `-crf=23` -> `-crf`, `23`, `-of=default=...` -> `-of`, `default=...`
      * - `-fps` -> `-r`, `-v:c` -> `-c:v`, `-faststart` -> `-movflags +faststart`, `-o out.mp4` -> `out.mp4`
      */
-    private fun normalizeStepTokens(raw: List<String>): Pair<List<String>, Int> {
+    private fun normalizeStepTokens(raw: List<String>, isProbe: Boolean = false): Pair<List<String>, Int> {
         val out = mutableListOf<String>()
         var fixes = 0
         var i = 0
@@ -1680,6 +1983,7 @@ object CustomFfmpegParser {
                 if (isKnownFlagToken(candidate) || candLower in FLAG_TYPO_ALIASES ||
                     candLower == "-faststart" || candLower == "-o" || candLower == "-output" ||
                     candLower.substringBefore('=') in NON_OUTPUT_VALUE_FLAGS ||
+                    candLower.substringBefore('=') in FFPROBE_VALUE_FLAGS ||
                     candLower.substringBefore(':') in STREAM_SPEC_BASE_FLAGS
                 ) {
                     tok = candidate
@@ -1688,7 +1992,7 @@ object CustomFfmpegParser {
                 }
             }
 
-            // 2. Accidental double dash on FFmpeg flags (`--crf`, `--c:v`, `--preset=fast`)
+            // 2. Accidental double dash on FFmpeg/FFprobe flags (`--crf`, `--c:v`, `--preset=fast`, `--show_entries`)
             if (tok.startsWith("--") && tok.length > 2 && tok[2].isLetter()) {
                 tok = tok.substring(1)
                 fixes++
@@ -1718,7 +2022,7 @@ object CustomFfmpegParser {
                 }
             }
 
-            // 4. Split `-flag=value` into `["-flag", "value"]` on known FFmpeg flags
+            // 4. Split `-flag=value` into `["-flag", "value"]` on known FFmpeg/FFprobe flags
             if (tok.startsWith("-") && tok.contains('=')) {
                 val eqIdx = tok.indexOf('=')
                 val flagPart = tok.substring(0, eqIdx)
@@ -1727,7 +2031,7 @@ object CustomFfmpegParser {
                 val mappedFlag = FLAG_TYPO_ALIASES[flagLower] ?: flagLower
                 if (isKnownFlagToken(mappedFlag) || flagLower == "-o" || flagLower == "-output") {
                     fixes++
-                    if (flagLower == "-o" || flagLower == "-output") {
+                    if (!isProbe && (flagLower == "-o" || flagLower == "-output")) {
                         if (valPart.isNotEmpty()) out.add(valPart)
                     } else {
                         out.add(mappedFlag)
@@ -1742,7 +2046,7 @@ object CustomFfmpegParser {
 
             // 5. Standalone `-faststart` typo -> `-movflags +faststart`
             // (Skip when immediately following `-movflags` so `-movflags -faststart` stays intact!)
-            if (finalLower == "-faststart" && !out.lastOrNull().equals("-movflags", ignoreCase = true)) {
+            if (!isProbe && finalLower == "-faststart" && !out.lastOrNull().equals("-movflags", ignoreCase = true)) {
                 out.add("-movflags")
                 out.add("+faststart")
                 fixes++
@@ -1751,7 +2055,8 @@ object CustomFfmpegParser {
             }
 
             // 6. Beginner `-o out.mp4` / `-output out.mp4` -> drop the `-o` flag so `out.mp4` is the output
-            if (finalLower == "-o" || finalLower == "-output") {
+            // (Keep `-o` on FFprobe so planFfprobeStep can strip both `-o` and its output file cleanly.)
+            if (!isProbe && (finalLower == "-o" || finalLower == "-output")) {
                 fixes++
                 i++
                 continue
@@ -1766,7 +2071,7 @@ object CustomFfmpegParser {
                 continue
             }
 
-            // 8. Uppercase/mixed-case known FFmpeg flags (`-I` -> `-i`, `-CRF` -> `-crf`, `-C:V` -> `-c:v`)
+            // 8. Uppercase/mixed-case known FFmpeg/FFprobe flags (`-I` -> `-i`, `-CRF` -> `-crf`, `-V` -> `-v`)
             if (tok.startsWith("-") && tok != finalLower && isKnownFlagToken(finalLower)) {
                 out.add(finalLower)
                 fixes++
@@ -2097,16 +2402,29 @@ object CustomFfmpegParser {
     private fun isKnownFlagToken(token: String): Boolean {
         if (!token.startsWith("-") || token.length < 2) return false
         val lower = token.lowercase(Locale.US)
-        return lower in ZERO_ARG_FLAGS || isNonOutputValueFlag(lower) || lower in FLAG_TYPO_ALIASES
+        return lower in ZERO_ARG_FLAGS ||
+            isNonOutputValueFlag(lower) ||
+            lower in FFPROBE_ZERO_ARG_FLAGS ||
+            lower in FFPROBE_VALUE_FLAGS ||
+            lower in FLAG_TYPO_ALIASES
     }
 
-    /** Strips shell redirections (`2>&1`, `>/dev/null`, `2>NUL`, `> log.txt`) which are invalid in argv[]. */
+    /**
+     * Strips shell redirections (`2>&1`, `>/dev/null`, `2>NUL`, `> log.txt`) and trailing shell
+     * pipes (`| grep ...`, `| jq ...`, `| head ...`) which are invalid in native `argv[]`.
+     */
     private fun stripShellRedirections(tokens: List<String>): List<String> {
         val result = mutableListOf<String>()
         var i = 0
         while (i < tokens.size) {
             val tok = tokens[i]
             val lower = tok.lowercase(Locale.US)
+            if (tok == "|" && i + 1 < tokens.size) {
+                val pipeCmd = tokens[i + 1].lowercase(Locale.US).substringAfterLast('/').substringAfterLast('\\')
+                if (pipeCmd in SHELL_PIPE_FILTERS || pipeCmd in IGNORED_SHELL_COMMANDS) {
+                    break
+                }
+            }
             when {
                 lower == "2>&1" || lower == "1>&2" ||
                     lower.startsWith("2>/dev/null") || lower.startsWith(">/dev/null") ||

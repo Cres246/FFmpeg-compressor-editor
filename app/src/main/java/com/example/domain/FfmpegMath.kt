@@ -1729,4 +1729,70 @@ object FfmpegMath {
         val pct = ((currentSec / totalDurationSec) * 100.0).roundToInt()
         return pct.coerceIn(0, 100)
     }
+
+    /**
+     * Formats an argv list into a readable shell command string while replacing opaque Android
+     * `saf:<fd>.<ext>` tokens with `input.<ext>` so an AI assistant immediately understands it.
+     */
+    fun formatCommandForErrorReport(
+        toolBinary: String,
+        args: List<String>,
+        mediaExtension: String = "mp4"
+    ): String {
+        val safeAlias = if (mediaExtension.isNotBlank()) "input.$mediaExtension" else "input.mp4"
+        return "$toolBinary " + args.joinToString(" ") { rawArg ->
+            val sanitized = if (rawArg.startsWith("saf:")) safeAlias else rawArg
+            if (sanitized.any { it.isWhitespace() } || sanitized.contains(';') || sanitized.contains('&')) {
+                "\"$sanitized\""
+            } else {
+                sanitized
+            }
+        }
+    }
+
+    /**
+     * Builds a complete, raw, copy-paste-ready diagnostic report containing environment details,
+     * source media metadata, exact executed command, exit code, and raw FFmpeg/FFprobe/Media3 output
+     * so users can paste it straight into ChatGPT/Gemini/Claude to get a fixed compatible command.
+     */
+    fun buildAiRawErrorReport(
+        modeTitle: String,
+        errorMessage: String,
+        engineLabel: String = "Android FFmpegKit GPL 8.1.9 (ffmpeg + ffprobe; libx264, libx265, aac, libmp3lame)",
+        mediaFileName: String? = null,
+        mediaSummary: String? = null,
+        executedCommand: String? = null,
+        returnCode: Int? = null,
+        rawOutput: String? = null,
+        logs: List<String> = emptyList()
+    ): String {
+        val sb = StringBuilder()
+        sb.appendLine("=== FFmpeg Android Raw Error Report ===")
+        sb.appendLine("Mode: $modeTitle")
+        sb.appendLine("Engine: $engineLabel")
+        if (!mediaFileName.isNullOrBlank()) {
+            val detail = mediaSummary?.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+            sb.appendLine("Input: $mediaFileName$detail")
+        }
+        if (returnCode != null) {
+            sb.appendLine("Exit Code: $returnCode")
+        }
+        sb.appendLine("Error: $errorMessage")
+        if (!executedCommand.isNullOrBlank()) {
+            sb.appendLine()
+            sb.appendLine("Command:")
+            sb.appendLine(executedCommand.trim())
+        }
+        val cleanedRaw = rawOutput?.trim().orEmpty()
+        val fallbackLogs = logs.filter { it.isNotBlank() }.joinToString("\n").trim()
+        val rawBody = when {
+            cleanedRaw.isNotEmpty() -> cleanedRaw
+            fallbackLogs.isNotEmpty() -> fallbackLogs
+            else -> errorMessage
+        }
+        sb.appendLine()
+        sb.appendLine("--- Raw Output / Log ---")
+        sb.append(rawBody)
+        return sb.toString().trim()
+    }
 }

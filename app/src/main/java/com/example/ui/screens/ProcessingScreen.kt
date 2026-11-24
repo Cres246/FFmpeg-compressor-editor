@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -37,10 +39,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -98,6 +104,7 @@ import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
+import kotlinx.coroutines.delay
 
 private enum class ProcessingPhase { RUNNING, SUCCESS, FAILED, IDLE }
 
@@ -328,7 +335,15 @@ fun ProcessingScreen(
                         val success = (state as? EncodingState.Success) ?: stateCache.lastSuccess
                         if (success != null) {
                             item {
-                                SuccessSummaryBanner(summary = success.summaryMessage)
+                                SuccessSummaryBanner(
+                                    summary = success.summaryMessage,
+                                    hasFileOutputs = success.outputs.isNotEmpty()
+                                )
+                            }
+                            if (!success.commandOutput.isNullOrBlank()) {
+                                item {
+                                    CommandOutputCard(outputText = success.commandOutput)
+                                }
                             }
                             items(success.outputs, key = { it.id }) { output ->
                                 CompletedOutputCard(
@@ -357,7 +372,9 @@ fun ProcessingScreen(
                                 FailureBannerCard(
                                     errorMessage = failed.errorMessage,
                                     hint = failed.hint,
-                                    wasCancelled = failed.wasCancelled
+                                    wasCancelled = failed.wasCancelled,
+                                    rawErrorDetails = failed.rawErrorDetails,
+                                    logs = failed.logs
                                 )
                             }
                             if (failed.logs.isNotEmpty()) {
@@ -678,7 +695,10 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
 }
 
 @Composable
-private fun SuccessSummaryBanner(summary: String) {
+private fun SuccessSummaryBanner(
+    summary: String,
+    hasFileOutputs: Boolean = true
+) {
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     Surface(
@@ -717,12 +737,106 @@ private fun SuccessSummaryBanner(summary: String) {
                     style = MonoLabelStyle,
                     color = extColors.onLosslessContainer.copy(alpha = 0.85f)
                 )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = strings.successMediaStoreNote,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = extColors.onLosslessContainer.copy(alpha = 0.78f)
-                )
+                if (hasFileOutputs) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = strings.successMediaStoreNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = extColors.onLosslessContainer.copy(alpha = 0.78f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommandOutputCard(outputText: String) {
+    val context = LocalContext.current
+    val extColors = LocalExtendedColors.current
+    val strings = LocalAppStrings.current
+    var copied by remember(outputText) { mutableStateOf(false) }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(2_200L)
+            copied = false
+        }
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("command_output_card"),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, extColors.subtleBorder),
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Terminal,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = strings.successCommandOutputTitle,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                FilledTonalButton(
+                    onClick = {
+                        copyTextToClipboard(context, "FFmpeg Output", outputText)
+                        copied = true
+                    },
+                    modifier = Modifier
+                        .height(36.dp)
+                        .testTag("copy_command_output_button"),
+                    shape = MaterialTheme.shapes.small,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Icon(
+                        imageVector = if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (copied) strings.actionCopied else strings.actionCopyOutput,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            val outScroll = rememberScrollState()
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(1.dp, extColors.subtleBorder)
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = outputText,
+                        style = MonoCodeStyle.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 64.dp, max = 340.dp)
+                            .verticalScroll(outScroll)
+                            .padding(12.dp)
+                    )
+                }
             }
         }
     }
@@ -868,9 +982,31 @@ private fun CompletedOutputCard(
 private fun FailureBannerCard(
     errorMessage: String,
     hint: String?,
-    wasCancelled: Boolean
+    wasCancelled: Boolean,
+    rawErrorDetails: String? = null,
+    logs: List<String> = emptyList()
 ) {
+    val context = LocalContext.current
+    val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
+    val fullRawErrorText = remember(errorMessage, rawErrorDetails, logs) {
+        rawErrorDetails?.trim()?.takeIf { it.isNotBlank() } ?: buildString {
+            appendLine(errorMessage)
+            if (logs.isNotEmpty()) {
+                appendLine()
+                append(logs.joinToString("\n"))
+            }
+        }.trim()
+    }
+    var copiedRawError by remember(fullRawErrorText) { mutableStateOf(false) }
+
+    LaunchedEffect(copiedRawError) {
+        if (copiedRawError) {
+            delay(2_200L)
+            copiedRawError = false
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -926,6 +1062,83 @@ private fun FailureBannerCard(
                     }
                 }
             }
+            if (!wasCancelled && fullRawErrorText.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    border = BorderStroke(1.dp, extColors.subtleBorder)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(top = 1.dp)
+                                    .size(17.dp)
+                            )
+                            Text(
+                                text = strings.aiErrorCopyGuidance,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        val rawScroll = rememberScrollState()
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.background,
+                            border = BorderStroke(1.dp, extColors.subtleBorder)
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = fullRawErrorText,
+                                    style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 56.dp, max = 180.dp)
+                                        .verticalScroll(rawScroll)
+                                        .padding(10.dp)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                copyTextToClipboard(context, strings.rawErrorBoxTitle, fullRawErrorText)
+                                copiedRawError = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("copy_raw_error_button"),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(
+                                imageVector = if (copiedRawError) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (copiedRawError) strings.actionCopied else strings.actionCopyRawError,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -936,12 +1149,22 @@ private fun LogConsoleCard(
     expanded: Boolean,
     onToggle: () -> Unit
 ) {
+    val context = LocalContext.current
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val lastLine = logs.lastOrNull()
     val formattedLogs = remember(logs) {
         if (logs.isEmpty()) "" else logs.takeLast(80).joinToString("\n")
     }
+    var copiedLogs by remember(formattedLogs) { mutableStateOf(false) }
+
+    LaunchedEffect(copiedLogs) {
+        if (copiedLogs) {
+            delay(2_000L)
+            copiedLogs = false
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -969,6 +1192,27 @@ private fun LogConsoleCard(
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.weight(1f)
                 )
+                if (formattedLogs.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            copyTextToClipboard(context, "FFmpeg Logs", logs.joinToString("\n"))
+                            copiedLogs = true
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (copiedLogs) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = if (copiedLogs) strings.actionCopied else strings.actionCopyOutput,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
                 Icon(
                     imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = null,
@@ -989,18 +1233,25 @@ private fun LogConsoleCard(
                     color = MaterialTheme.colorScheme.background,
                     border = BorderStroke(1.dp, extColors.subtleBorder)
                 ) {
-                    Text(
-                        text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
-                        style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 96.dp, max = 260.dp)
-                            .verticalScroll(consoleScroll)
-                            .padding(10.dp)
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
+                            style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 96.dp, max = 260.dp)
+                                .verticalScroll(consoleScroll)
+                                .padding(10.dp)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+internal fun copyTextToClipboard(context: Context, label: String, text: String) {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    cm.setPrimaryClip(ClipData.newPlainText(label, text))
 }

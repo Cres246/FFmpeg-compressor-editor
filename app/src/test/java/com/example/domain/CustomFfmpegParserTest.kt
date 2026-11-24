@@ -466,4 +466,122 @@ class CustomFfmpegParserTest {
         assertEquals("/cache/work/final_win.mp4", args.last())
         assertEquals("final_win.mp4", plan.primaryFinalOutputName)
     }
+
+    @Test
+    fun parsesExactUserFfprobeStreamProfileAndPixFmtCommand() {
+        val paste = "ffprobe -v error -select_streams v:0 -show_entries stream=profile,pix_fmt -of default=noprint_wrappers=1 video.mp4"
+        val plan = buildSamplePlan(paste) { "saf_probe_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.isProbeOnly)
+        assertTrue(plan.hasProbeStep)
+        assertEquals(null, plan.primaryFinalOutputName)
+        assertEquals(1, plan.adaptations.autoBoundInputsCount)
+
+        val step = plan.steps[0]
+        assertEquals(CustomCommandTool.FFPROBE, step.tool)
+        assertTrue(step.isNullOutputOnly)
+        assertTrue(step.outputFileNames.isEmpty())
+        assertEquals(
+            listOf(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=profile,pix_fmt",
+                "-of", "default=noprint_wrappers=1",
+                "saf_probe_1"
+            ),
+            step.args
+        )
+
+        val preview = CustomFfmpegParser.formatPreview(
+            CustomFfmpegParser.buildPlan(
+                rawCommand = paste,
+                mediaFileName = "VID_20260627_201153.mp4",
+                mediaExtension = "mp4",
+                mediaDurationSec = 60.0,
+                workDirPath = "",
+                defaultOutputFileName = "cikti.mp4",
+                inputTokenProvider = { "\$IN" },
+                isPreview = true
+            )
+        )
+        assertEquals(
+            "ffprobe -v error -select_streams v:0 -show_entries stream=profile,pix_fmt -of default=noprint_wrappers=1 \$IN",
+            preview
+        )
+    }
+
+    @Test
+    fun handlesFfprobeWithMarkdownMissingInputExplicitInputAndShellPipes() {
+        val markdownPaste = """
+            Videonun 10-bit olup olmadığını şu komutla kontrol edebilirsin:
+            ```bash
+            $ ffprobe -v quiet --show-streams -print_format json "C:\Users\Ali\my video.mkv" 2>&1 | grep -i pix_fmt
+            ```
+        """.trimIndent()
+        val plan1 = buildSamplePlan(markdownPaste) { "saf_1" }
+        assertEquals(1, plan1.steps.size)
+        assertEquals(CustomCommandTool.FFPROBE, plan1.steps[0].tool)
+        assertEquals(
+            listOf("-v", "quiet", "-show_streams", "-print_format", "json", "saf_1"),
+            plan1.steps[0].args
+        )
+
+        // Flags-only ffprobe without binary name or input file -> still detected & auto-bound
+        val flagsOnly = "-v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt"
+        val plan2 = buildSamplePlan(flagsOnly) { "saf_2" }
+        assertEquals(1, plan2.steps.size)
+        assertEquals(CustomCommandTool.FFPROBE, plan2.steps[0].tool)
+        assertEquals("saf_2", plan2.steps[0].args.last())
+
+        // Explicit `-i` and `-o report.txt` (stripped so probe output displays on screen)
+        val explicitInput = "ffprobe -i input.mp4 -show_format -o report.txt"
+        val plan3 = buildSamplePlan(explicitInput) { "saf_3" }
+        assertEquals(1, plan3.steps.size)
+        assertEquals(listOf("-i", "saf_3", "-show_format"), plan3.steps[0].args)
+    }
+
+    @Test
+    fun chainsFfmpegEncodeFollowedByFfprobeInspectionWithoutConsumingOutput() {
+        val chain = """
+            ffmpeg -i raw.mkv -c:v libx265 -crf 20 encoded.mp4 && \
+            ffprobe -v error -select_streams v:0 -show_entries stream=profile,pix_fmt encoded.mp4
+        """.trimIndent()
+
+        val plan = buildSamplePlan(chain) { "saf_chain" }
+
+        assertEquals(2, plan.steps.size)
+        assertEquals(CustomCommandTool.FFMPEG, plan.steps[0].tool)
+        assertEquals(CustomCommandTool.FFPROBE, plan.steps[1].tool)
+        assertEquals(false, plan.isProbeOnly)
+        assertTrue(plan.hasProbeStep)
+        // `encoded.mp4` is inspected by ffprobe, NOT consumed as a disposable intermediate
+        assertEquals("encoded.mp4", plan.primaryFinalOutputName)
+        assertTrue("encoded.mp4" !in plan.consumedIntermediateFiles)
+        assertEquals("/cache/work/encoded.mp4", plan.steps[1].args.last())
+    }
+
+    @Test
+    fun buildsAiFriendlyRawErrorReportWithSanitizedSafPaths() {
+        val cmd = FfmpegMath.formatCommandForErrorReport(
+            toolBinary = "ffprobe",
+            args = listOf("-v", "error", "-bad_flag", "saf:42.mp4"),
+            mediaExtension = "mp4"
+        )
+        assertEquals("ffprobe -v error -bad_flag input.mp4", cmd)
+
+        val report = FfmpegMath.buildAiRawErrorReport(
+            modeTitle = "11 · Özel FFmpeg Komutu",
+            errorMessage = "Özel FFmpeg komutu başarısız oldu (kod: 1).",
+            mediaFileName = "VID_20260627_201153.mp4",
+            mediaSummary = "hevc, 3840x2160, yuv420p10le, aac 128k",
+            executedCommand = cmd,
+            returnCode = 1,
+            rawOutput = "Unrecognized option 'bad_flag'.\nError splitting the argument list: Option not found"
+        )
+        assertTrue(report.contains("Exit Code: 1"))
+        assertTrue(report.contains("ffprobe -v error -bad_flag input.mp4"))
+        assertTrue(report.contains("Unrecognized option 'bad_flag'"))
+        assertTrue(!report.contains("saf:42.mp4"))
+    }
 }

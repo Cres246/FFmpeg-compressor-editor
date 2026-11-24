@@ -319,6 +319,8 @@ interface AppStrings {
     val customCmdBadgeOutputAutoAdded: String
     val customCmdBadgeSyntaxFixed: String
     val customCmdBadgeAndroidCodecAdapted: String
+    val customCmdBadgeFfprobeDetected: String
+    val customCmdProbeOutputPlaceholder: String
     val customCmdNoValidCommandWarning: String
 
     // Processing screen
@@ -332,6 +334,13 @@ interface AppStrings {
     val successCd: String
     val successTitle: String
     val successMediaStoreNote: String
+    val successCommandOutputTitle: String
+    val successCustomCmdOutputReady: String
+    val actionCopyOutput: String
+    val actionCopyRawError: String
+    val actionCopied: String
+    val rawErrorBoxTitle: String
+    val aiErrorCopyGuidance: String
     val smallerPercentBadge: (percent: Int) -> String
     val failedCancelledTitle: String
     val failedErrorTitle: String
@@ -371,6 +380,8 @@ interface AppStrings {
     val hintCustomCmdExample: String
     val customCmdStepMulti: (passNum: Int, totalSteps: Int) -> String
     val customCmdStepSingle: String
+    val customCmdStepProbeMulti: (passNum: Int, totalSteps: Int) -> String
+    val customCmdStepProbeSingle: String
     val customCmdOutputLabel: String
     val errCustomCmdFailed: (code: Int) -> String
     val hintCustomCmdSyntax: (ext: String) -> String
@@ -669,7 +680,7 @@ object TurkishStrings : AppStrings {
     override val audioExtractOriginalLabel = "Orijinal Kodek"
     override val customCmdTitle = "Özel FFmpeg Komutu (Yapıştır & Çalıştır)"
     override val customCmdSub = "ChatGPT, Gemini veya herhangi bir yapay zekâdan aldığınız FFmpeg kodunu hiç düzenlemeden doğrudan yapıştırın."
-    override val customCmdAiTip = "2-pass, çok satırlı (\\ veya ^), Markdown ``` bloklu, Windows NUL veya farklı girdi dosya adlı (input.mp4, video.mkv vb.) kodlar seçili dosyanıza otomatik uyarlanır."
+    override val customCmdAiTip = "ffmpeg ve ffprobe komutları, 2-pass, çok satırlı (\\ veya ^), Markdown ``` bloklu, Windows NUL veya farklı girdi dosya adlı (input.mp4, video.mkv vb.) kodlar seçili dosyanıza otomatik uyarlanır."
     override val customCmdPasteButton = "Panodan Yapıştır"
     override val customCmdClearButton = "Temizle"
     override val customCmdShortcutsLabel = "Hazır örnekler (dokunarak dene):"
@@ -678,10 +689,10 @@ object TurkishStrings : AppStrings {
     override val customCmdQuickGifChip = "GIF (Paletli)"
     override val customCmdQuickMuteChip = "Sesi Kaldır"
     override val customCmdDefaultOutput = "cikti.mp4"
-    override val customCmdInputLabel = "FFmpeg Kodunu Buraya Yapıştırın"
-    override val customCmdPlaceholder = "Örn. yapay zekâdan kopyalanan tek veya çoklu (2-pass) FFmpeg komutu..."
+    override val customCmdInputLabel = "FFmpeg / FFprobe Kodunu Buraya Yapıştırın"
+    override val customCmdPlaceholder = "Örn. yapay zekâdan kopyalanan tek/çoklu ffmpeg veya ffprobe komutu..."
     override val customCmdStepsDetected: (Int) -> String = { count ->
-        if (count > 1) "$count aşamalı zincir komut algılandı" else "1 FFmpeg komutu hazır"
+        if (count > 1) "$count aşamalı zincir komut algılandı" else "1 komut hazır"
     }
     override val customCmdBadgeInputAutoBound = "Seçili dosya otomatik bağlandı"
     override val customCmdBadgeTwoPassReady = "2-Pass log & null yolu ayarlandı"
@@ -690,7 +701,9 @@ object TurkishStrings : AppStrings {
     override val customCmdBadgeOutputAutoAdded = "Çıktı adı otomatik eklendi"
     override val customCmdBadgeSyntaxFixed = "Yazım / boşluk düzeltildi"
     override val customCmdBadgeAndroidCodecAdapted = "Android kodeğine uyarlandı"
-    override val customCmdNoValidCommandWarning = "Metinde çalıştırılabilir FFmpeg komutu bulunamadı."
+    override val customCmdBadgeFfprobeDetected = "FFprobe analizi"
+    override val customCmdProbeOutputPlaceholder = "Analiz çıktısı (ekranda gösterilir)"
+    override val customCmdNoValidCommandWarning = "Metinde çalıştırılabilir FFmpeg / FFprobe komutu bulunamadı."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "GEÇİŞ $p/$t" }
     override val processingBadge = "İŞLENİYOR"
@@ -702,6 +715,13 @@ object TurkishStrings : AppStrings {
     override val successCd = "Başarılı"
     override val successTitle = "İşlem Tamamlandı"
     override val successMediaStoreNote = "Galeri ve Son Dosyalar için MediaStore anında güncellendi."
+    override val successCommandOutputTitle = "Komut Çıktısı"
+    override val successCustomCmdOutputReady = "Komut çıktısı hazır (ekrandan kopyalayabilirsiniz)."
+    override val actionCopyOutput = "Çıktıyı Kopyala"
+    override val actionCopyRawError = "Ham Hatayı Kopyala"
+    override val actionCopied = "Kopyalandı"
+    override val rawErrorBoxTitle = "Ham Hata Metni"
+    override val aiErrorCopyGuidance = "Bu ham hata metnini kopyalayıp yapay zekâna (ChatGPT, Gemini, Claude) atarsan, Android FFmpegKit ile tam uyumlu kodu sana verecektir."
     override val smallerPercentBadge: (Int) -> String = { pct -> "%$pct daha küçük" }
     override val failedCancelledTitle = "İşlem İptal Edildi"
     override val failedErrorTitle = "Hata Oluştu"
@@ -722,7 +742,7 @@ object TurkishStrings : AppStrings {
     override val errEnterManualDuration = "Video süresi okunamadı, lütfen süreyi saniye olarak girin."
     override val errNoTrimRangeEntered = "Başlangıç veya bitiş zamanı girmediniz!"
     override val errInvalidTimeFormat = "Zaman formatı hatalı (Örn: 01:30 veya 00:01:30)."
-    override val errEnterCustomCommand = "Çalıştırmak için bir FFmpeg komutu girin."
+    override val errEnterCustomCommand = "Çalıştırmak için bir FFmpeg veya FFprobe komutu girin."
 
     override val notifChannelName = "Medya İşleme"
     override val notifChannelDesc = "FFmpeg dönüştürme ve kesim ilerleme bildirimi"
@@ -735,10 +755,12 @@ object TurkishStrings : AppStrings {
     override val errOutputNotCreated = "Çıktı dosyası oluşturulamadı."
     override val errUnexpected = "Beklenmeyen bir hata oluştu."
     override val successOutputSize: (String) -> String = { size -> "Başarılı! Çıktı Boyutu: $size" }
-    override val errCustomCmdEmpty = "Geçerli bir FFmpeg komutu girilmedi."
-    override val hintCustomCmdExample = "Örnek: ffmpeg -i \"\$IN\" -c:v libx264 -crf 20 cikti.mp4"
+    override val errCustomCmdEmpty = "Geçerli bir FFmpeg veya FFprobe komutu girilmedi."
+    override val hintCustomCmdExample = "Örnek: ffmpeg -i \"\$IN\" -c:v libx264 -crf 20 cikti.mp4 veya ffprobe -v error -show_streams video.mp4"
     override val customCmdStepMulti: (Int, Int) -> String = { p, t -> "Komut $p/$t çalıştırılıyor" }
     override val customCmdStepSingle = "Özel FFmpeg komutu çalıştırılıyor"
+    override val customCmdStepProbeMulti: (Int, Int) -> String = { p, t -> "FFprobe komutu $p/$t çalıştırılıyor" }
+    override val customCmdStepProbeSingle = "FFprobe analizi çalıştırılıyor"
     override val customCmdOutputLabel = "Özel Komut"
     override val errCustomCmdFailed: (Int) -> String = { code -> "Özel FFmpeg komutu başarısız oldu (kod: $code)." }
     override val hintCustomCmdSyntax: (String) -> String = { _ -> "Hata günlüğündeki FFmpeg mesajına göz atın; desteklenmeyen kodek veya filtre yazım hatası olabilir." }
@@ -1067,7 +1089,7 @@ object EnglishStrings : AppStrings {
     override val audioExtractOriginalLabel = "Original Codec"
     override val customCmdTitle = "Custom FFmpeg Command (Paste & Run)"
     override val customCmdSub = "Paste any FFmpeg snippet straight from ChatGPT, Gemini, or any AI without manual editing."
-    override val customCmdAiTip = "2-pass chains, multi-line (\\ or ^), Markdown ``` blocks, Windows NUL, and any placeholder filename (input.mp4, video.mkv, etc.) are auto-adapted to your selected file."
+    override val customCmdAiTip = "ffmpeg & ffprobe commands, 2-pass chains, multi-line (\\ or ^), Markdown ``` blocks, Windows NUL, and any placeholder filename (input.mp4, video.mkv, etc.) are auto-adapted to your selected file."
     override val customCmdPasteButton = "Paste from Clipboard"
     override val customCmdClearButton = "Clear"
     override val customCmdShortcutsLabel = "Quick templates (tap to insert):"
@@ -1076,10 +1098,10 @@ object EnglishStrings : AppStrings {
     override val customCmdQuickGifChip = "Palette GIF"
     override val customCmdQuickMuteChip = "Remove Audio"
     override val customCmdDefaultOutput = "output.mp4"
-    override val customCmdInputLabel = "Paste FFmpeg Code Here"
-    override val customCmdPlaceholder = "e.g., any single or multi-step (2-pass) FFmpeg snippet copied from an AI..."
+    override val customCmdInputLabel = "Paste FFmpeg / FFprobe Code Here"
+    override val customCmdPlaceholder = "e.g., any single/multi-step ffmpeg or ffprobe snippet copied from an AI..."
     override val customCmdStepsDetected: (Int) -> String = { count ->
-        if (count > 1) "$count-step command chain detected" else "1 FFmpeg command ready"
+        if (count > 1) "$count-step command chain detected" else "1 command ready"
     }
     override val customCmdBadgeInputAutoBound = "Selected file auto-linked"
     override val customCmdBadgeTwoPassReady = "2-Pass log & null path ready"
@@ -1088,7 +1110,9 @@ object EnglishStrings : AppStrings {
     override val customCmdBadgeOutputAutoAdded = "Output filename auto-added"
     override val customCmdBadgeSyntaxFixed = "Syntax / spacing auto-fixed"
     override val customCmdBadgeAndroidCodecAdapted = "Adapted to Android codec"
-    override val customCmdNoValidCommandWarning = "No runnable FFmpeg command found in this text."
+    override val customCmdBadgeFfprobeDetected = "FFprobe analysis"
+    override val customCmdProbeOutputPlaceholder = "Analysis output (shown on screen)"
+    override val customCmdNoValidCommandWarning = "No runnable FFmpeg / FFprobe command found in this text."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "PASS $p/$t" }
     override val processingBadge = "PROCESSING"
@@ -1100,6 +1124,13 @@ object EnglishStrings : AppStrings {
     override val successCd = "Success"
     override val successTitle = "Processing Complete"
     override val successMediaStoreNote = "MediaStore updated immediately for Gallery and Recent Files."
+    override val successCommandOutputTitle = "Command Output"
+    override val successCustomCmdOutputReady = "Command output ready (copy directly from screen)."
+    override val actionCopyOutput = "Copy Output"
+    override val actionCopyRawError = "Copy Raw Error"
+    override val actionCopied = "Copied"
+    override val rawErrorBoxTitle = "Raw Error Text"
+    override val aiErrorCopyGuidance = "Copy this raw error text and send it to your AI (ChatGPT, Gemini, Claude) so it can give you a fully compatible Android FFmpegKit command."
     override val smallerPercentBadge: (Int) -> String = { pct -> "$pct% smaller" }
     override val failedCancelledTitle = "Task Cancelled"
     override val failedErrorTitle = "Encoding Failed"
@@ -1120,7 +1151,7 @@ object EnglishStrings : AppStrings {
     override val errEnterManualDuration = "Could not detect video duration. Please enter duration in seconds."
     override val errNoTrimRangeEntered = "Please enter a start or end time."
     override val errInvalidTimeFormat = "Invalid timestamp format (e.g., 01:30 or 00:01:30)."
-    override val errEnterCustomCommand = "Enter an FFmpeg command to run."
+    override val errEnterCustomCommand = "Enter an FFmpeg or FFprobe command to run."
 
     override val notifChannelName = "Media Processing"
     override val notifChannelDesc = "FFmpeg transcoding and trimming progress notification"
@@ -1133,10 +1164,12 @@ object EnglishStrings : AppStrings {
     override val errOutputNotCreated = "Output file was not created."
     override val errUnexpected = "An unexpected error occurred."
     override val successOutputSize: (String) -> String = { size -> "Done! Output size: $size" }
-    override val errCustomCmdEmpty = "No valid FFmpeg command entered."
-    override val hintCustomCmdExample = "Example: ffmpeg -i \"\$IN\" -c:v libx264 -crf 20 output.mp4"
+    override val errCustomCmdEmpty = "No valid FFmpeg or FFprobe command entered."
+    override val hintCustomCmdExample = "Example: ffmpeg -i \"\$IN\" -c:v libx264 -crf 20 output.mp4 or ffprobe -v error -show_streams video.mp4"
     override val customCmdStepMulti: (Int, Int) -> String = { p, t -> "Running command $p/$t" }
     override val customCmdStepSingle = "Running custom FFmpeg command"
+    override val customCmdStepProbeMulti: (Int, Int) -> String = { p, t -> "Running FFprobe $p/$t" }
+    override val customCmdStepProbeSingle = "Running FFprobe analysis"
     override val customCmdOutputLabel = "Custom Command"
     override val errCustomCmdFailed: (Int) -> String = { code -> "Custom FFmpeg command failed (code: $code)." }
     override val hintCustomCmdSyntax: (String) -> String = { _ -> "Check the FFmpeg message in the error log; an unsupported codec or filter syntax error may be present." }

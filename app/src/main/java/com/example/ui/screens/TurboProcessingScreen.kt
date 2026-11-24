@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,12 +39,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -90,6 +95,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
@@ -110,6 +116,7 @@ import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
 import com.example.ui.theme.SpaceGroteskFontFamily
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -1627,6 +1634,8 @@ private fun TurboDiagnosisBannerChip(text: String) {
 private fun TurboFailureWarningCard(
     failed: EncodingState.Failed
 ) {
+    val context = LocalContext.current
+    val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val titleText = when {
         failed.diagnosisSummary == strings.turbo10BitNotPreservedTitle -> strings.turbo10BitNotPreservedTitle
@@ -1635,6 +1644,24 @@ private fun TurboFailureWarningCard(
         failed.isUnsupportedFormat -> strings.turboUnsupportedTitle
         else -> strings.failedErrorTitle
     }
+    val fullRawErrorText = remember(failed) {
+        failed.rawErrorDetails?.trim()?.takeIf { it.isNotBlank() } ?: FfmpegMath.buildAiRawErrorReport(
+            modeTitle = failed.modeTitle,
+            errorMessage = failed.errorMessage,
+            engineLabel = "Android Media3 / DirectMediaCodec Turbo",
+            rawOutput = failed.diagnosisSummary,
+            logs = failed.logs
+        )
+    }
+    var copiedRawError by remember(fullRawErrorText) { mutableStateOf(false) }
+
+    LaunchedEffect(copiedRawError) {
+        if (copiedRawError) {
+            delay(2_200L)
+            copiedRawError = false
+        }
+    }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1732,6 +1759,83 @@ private fun TurboFailureWarningCard(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                    }
+                }
+            }
+            if (!failed.wasCancelled && fullRawErrorText.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    border = BorderStroke(1.dp, extColors.subtleBorder)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(top = 1.dp)
+                                    .size(17.dp)
+                            )
+                            Text(
+                                text = strings.aiErrorCopyGuidance,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        val rawScroll = rememberScrollState()
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.background,
+                            border = BorderStroke(1.dp, extColors.subtleBorder)
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = fullRawErrorText,
+                                    style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 56.dp, max = 160.dp)
+                                        .verticalScroll(rawScroll)
+                                        .padding(10.dp)
+                                )
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                copyTextToClipboard(context, strings.rawErrorBoxTitle, fullRawErrorText)
+                                copiedRawError = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .testTag("turbo_copy_raw_error_button"),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(
+                                imageVector = if (copiedRawError) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (copiedRawError) strings.actionCopied else strings.actionCopyRawError,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
                     }
                 }
             }

@@ -126,7 +126,12 @@ fun ModeConfigScreen(
     }
     val outputFileName = remember(media, config, strings, customCommandPreviewPlan) {
         if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
-            customCommandPreviewPlan?.primaryFinalOutputName ?: strings.customCommandOutputPlaceholder
+            customCommandPreviewPlan?.primaryFinalOutputName
+                ?: if (customCommandPreviewPlan?.isProbeOnly == true) {
+                    strings.customCmdProbeOutputPlaceholder
+                } else {
+                    strings.customCommandOutputPlaceholder
+                }
         } else {
             FfmpegMath.computeOutputFileName(media, config, strings)
         }
@@ -967,6 +972,7 @@ private fun CustomCommandSection(
             } else {
                 val adapt = previewPlan.adaptations
                 val statusBadges = buildList {
+                    if (previewPlan.hasProbeStep) add(strings.customCmdBadgeFfprobeDetected)
                     if (adapt.autoBoundInputsCount > 0) add(strings.customCmdBadgeInputAutoBound)
                     if (adapt.autoConfiguredTwoPassLogs) add(strings.customCmdBadgeTwoPassReady)
                     if (adapt.strippedMarkdownOrProse) add(strings.customCmdBadgeMarkdownCleaned)

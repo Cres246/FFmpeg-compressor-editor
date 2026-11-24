@@ -419,7 +419,8 @@ sealed interface EncodingState {
         val summaryMessage: String,
         val logs: List<String>,
         val isHardwareTurbo: Boolean = false,
-        val elapsedSec: Double = 0.0
+        val elapsedSec: Double = 0.0,
+        val commandOutput: String? = null
     ) : EncodingState
 
     data class Failed(
@@ -440,7 +441,8 @@ sealed interface EncodingState {
         val hasSourceAudio: Boolean = true,
         val hasTriedAudioConvert: Boolean = false,
         val hasTriedVideoOnlyConvert: Boolean = false,
-        val hasTriedVideoAudioConvert: Boolean = false
+        val hasTriedVideoAudioConvert: Boolean = false,
+        val rawErrorDetails: String? = null
     ) : EncodingState
 }
 
