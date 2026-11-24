@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import androidx.annotation.OptIn
+import androidx.media3.common.ColorInfo
 import androidx.media3.common.Effect
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -67,7 +68,9 @@ data class Media3TurboResult(
     val isUnsupportedFormat: Boolean = false,
     val errorCodeName: String? = null,
     val errorDetail: String? = null,
-    val elapsedSec: Double = 0.0
+    val elapsedSec: Double = 0.0,
+    val outputHasAudio: Boolean? = null,
+    val outputIs10Bit: Boolean? = null
 )
 
 data class TurboBitratePlan(
@@ -90,7 +93,11 @@ internal data class HardwareVideoEncoderCaps(
     val supportsVbr: Boolean,
     val supportsAvcHighLevel52: Boolean,
     val supportsHevc10Bit: Boolean,
-    val videoCapabilities: MediaCodecInfo.VideoCapabilities?
+    val videoCapabilities: MediaCodecInfo.VideoCapabilities?,
+    val hdrCodecName: String? = null,
+    val supportsHdrEditing: Boolean = false,
+    val supportsAbgr2101010: Boolean = false,
+    val highestHevc10Level: Int = -1
 ) {
     fun maxFpsForSize(width: Int, height: Int): Double? {
         val vc = videoCapabilities ?: return null
@@ -142,7 +149,8 @@ internal data class SourceTrackProbe(
     val sourceAudioMime: String?,
     val sourceAudioChannels: Int?,
     val sourceAudioSampleRate: Int?,
-    val sourceVideoFps: Double?
+    val sourceVideoFps: Double?,
+    val sourceIsHdr: Boolean = false
 )
 
 private enum class EncoderAttemptMode {
@@ -512,8 +520,44 @@ object Media3TurboEngine {
         // before the hardware decoder/encoder allocates DMA-BUF surfaces.
         delay(120L)
 
-        // Tier 1: Optimized Media3 hardware pipeline (CBR for target-size, 2s GOP, safe 4K negotiation)
-        val attempt1 = executeSingleAttempt(
+        val wants10BitHevc = config.codec == VideoCodecOption.H265 &&
+            config.bitDepth == BitDepthOption.BIT_10
+        if (wants10BitHevc && !hwCaps.supportsHevc10Bit) {
+            return Media3TurboResult(
+                success = false,
+                cancelled = false,
+                isUnsupportedFormat = false,
+                errorCodeName = "ERROR_CODE_10BIT_NOT_PRESERVED",
+                errorDetail = "Device hardware HEVC encoder does not support 10-bit Main10 encoding",
+                elapsedSec = 0.0,
+                outputIs10Bit = false
+            )
+        }
+
+        suspend fun verifyTenBitSatisfied(attempt: Media3TurboResult): Media3TurboResult {
+            if (!attempt.success || !wants10BitHevc) return attempt
+            val probed = runCatching { FfmpegEngine.probeEncodedOutput(outputFile) }.getOrNull()
+            val actually10Bit = probed?.is10Bit ?: (attempt.outputIs10Bit == true)
+            return if (actually10Bit) {
+                attempt.copy(
+                    outputIs10Bit = true,
+                    outputHasAudio = probed?.hasReadableAudioSamples ?: attempt.outputHasAudio
+                )
+            } else {
+                Media3TurboResult(
+                    success = false,
+                    cancelled = false,
+                    isUnsupportedFormat = false,
+                    errorCodeName = "ERROR_CODE_10BIT_NOT_PRESERVED",
+                    errorDetail = "Hardware encoder silently output ${probed?.pixFmt ?: "8-bit"} instead of 10-bit HEVC",
+                    elapsedSec = attempt.elapsedSec,
+                    outputIs10Bit = false
+                )
+            }
+        }
+
+        // Tier 1: Optimized Media3 hardware pipeline (CBR for target-size, 2s GOP, safe 4K & 10-bit negotiation)
+        val rawAttempt1 = executeSingleAttempt(
             context = context,
             media = media,
             sourceUri = sourceUri,
@@ -526,7 +570,11 @@ object Media3TurboEngine {
             attemptMode = EncoderAttemptMode.OPTIMIZED_HW,
             onProgress = onProgress
         )
-        if (attempt1.success || attempt1.cancelled || !isRecoverableAttemptError(attempt1)) {
+        val attempt1 = verifyTenBitSatisfied(rawAttempt1)
+        if (attempt1.success || attempt1.cancelled) {
+            return attempt1
+        }
+        if (attempt1.errorCodeName != "ERROR_CODE_10BIT_NOT_PRESERVED" && !isRecoverableAttemptError(attempt1)) {
             return attempt1
         }
 
@@ -536,11 +584,9 @@ object Media3TurboEngine {
         runCatching { if (outputFile.exists()) outputFile.delete() }
         delay(450L)
 
-        // Tier 2: Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0 Surface ->
-        // MediaCodec HW Encoder -> MediaMuxer with strict monotonic PTS sanitization.
-        // Mirrors standalone MediaCodec compressor apps and bypasses Media3 Transformer's edit-list /
-        // lossless-cut timestamp / DefaultCodec quirks on Qualcomm c2.qti.avc.encoder at full HW speed.
-        val attempt2 = executeDirectAttempt(
+        // Tier 2: Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0/3.0 Surface ->
+        // MediaCodec HW Encoder -> MediaMuxer with strict monotonic PTS sanitization + 10-bit HEVC Main10 support.
+        val rawAttempt2 = executeDirectAttempt(
             context = context,
             media = media,
             sourceUri = sourceUri,
@@ -554,13 +600,14 @@ object Media3TurboEngine {
             dropTo30Fps = false,
             onProgress = onProgress
         )
+        val attempt2 = verifyTenBitSatisfied(rawAttempt2)
         if (attempt2.success || attempt2.cancelled) {
             return attempt2
         }
 
         val needsOpenGlHdrPipeline = attempt2.errorCodeName == DirectMediaCodecTranscoder.ERROR_HDR_NEEDS_OPENGL
 
-        // Tier 3: Try either Media3 OpenGL HDR->SDR tone-mapping (for 10-bit HDR10/HLG/Dolby Vision)
+        // Tier 3: Try either Media3 OpenGL pipeline (keeping HDR/10-bit if 10-bit was selected!)
         // or Direct MediaCodec 30 FPS VBR fallback (if 4K60 exceeded the VPU rate ceiling).
         val (outW, outH) = if (probe.displayDims != null) {
             resolveTargetDimensionsForDisplay(probe.displayDims.first, probe.displayDims.second, config)
@@ -578,7 +625,7 @@ object Media3TurboEngine {
         delay(if (needsOpenGlHdrPipeline) 200L else 450L)
 
         if (canTryFpsFallback && !needsOpenGlHdrPipeline) {
-            val attempt3Direct30 = executeDirectAttempt(
+            val rawAttempt3Direct30 = executeDirectAttempt(
                 context = context,
                 media = media,
                 sourceUri = sourceUri,
@@ -592,6 +639,7 @@ object Media3TurboEngine {
                 dropTo30Fps = true,
                 onProgress = onProgress
             )
+            val attempt3Direct30 = verifyTenBitSatisfied(rawAttempt3Direct30)
             if (attempt3Direct30.success || attempt3Direct30.cancelled) {
                 return attempt3Direct30
             }
@@ -600,7 +648,7 @@ object Media3TurboEngine {
             delay(400L)
         }
 
-        val attemptMedia3OpenGl = executeSingleAttempt(
+        val rawAttemptMedia3OpenGl = executeSingleAttempt(
             context = context,
             media = media,
             sourceUri = sourceUri,
@@ -613,11 +661,26 @@ object Media3TurboEngine {
             attemptMode = if (canTryFpsFallback) EncoderAttemptMode.SAFE_FPS_FALLBACK else EncoderAttemptMode.CLEAN_MINIMAL_HW,
             onProgress = onProgress
         )
-        return if (attemptMedia3OpenGl.success || attemptMedia3OpenGl.cancelled) {
-            attemptMedia3OpenGl
-        } else {
-            attempt1
+        val attemptMedia3OpenGl = verifyTenBitSatisfied(rawAttemptMedia3OpenGl)
+        if (attemptMedia3OpenGl.success || attemptMedia3OpenGl.cancelled) {
+            return attemptMedia3OpenGl
         }
+        if (wants10BitHevc && (attempt1.errorCodeName == "ERROR_CODE_10BIT_NOT_PRESERVED" ||
+                attempt2.errorCodeName == "ERROR_CODE_10BIT_NOT_PRESERVED" ||
+                attemptMedia3OpenGl.errorCodeName == "ERROR_CODE_10BIT_NOT_PRESERVED")
+        ) {
+            runCatching { if (outputFile.exists()) outputFile.delete() }
+            return Media3TurboResult(
+                success = false,
+                cancelled = false,
+                isUnsupportedFormat = false,
+                errorCodeName = "ERROR_CODE_10BIT_NOT_PRESERVED",
+                errorDetail = attemptMedia3OpenGl.errorDetail ?: attempt1.errorDetail,
+                elapsedSec = attemptMedia3OpenGl.elapsedSec,
+                outputIs10Bit = false
+            )
+        }
+        return attempt1
     }
 
     private suspend fun executeDirectAttempt(
@@ -672,17 +735,19 @@ object Media3TurboEngine {
                     ?.let { (it * 1_000_000.0).toLong() }
             }
 
-            // If VBR fallback is used in target-size mode, apply the 0.93x safety margin so
+            // If VBR fallback is used in target-size mode, apply the safety margin so
             // hardware VBR stays strictly below the user's MB limit (e.g. <20 MB).
+            val vbrFactor = if (plan.stressTier >= 2) 0.90 else 0.93
             val effectiveVideoBps = if (plan.isTargetSizeMode && plan.useCbr && !useCbr) {
-                (plan.videoBitrateBps * 0.93).roundToInt().coerceAtLeast(100_000)
+                (plan.videoBitrateBps * vbrFactor).roundToInt().coerceAtLeast(64_000)
             } else {
                 plan.videoBitrateBps
             }
 
-            val wantsSdrToneMap = !(config.codec == VideoCodecOption.H265 &&
+            val wants10BitHevc = config.codec == VideoCodecOption.H265 &&
                 config.bitDepth == BitDepthOption.BIT_10 &&
-                hwCaps.supportsHevc10Bit)
+                hwCaps.supportsHevc10Bit
+            val wantsSdrToneMap = !wants10BitHevc
 
             val request = DirectTranscodeRequest(
                 sourceUri = sourceUri,
@@ -702,7 +767,10 @@ object Media3TurboEngine {
                 clipStartUs = clipStartUs,
                 clipEndUs = clipEndUs,
                 effectiveDurationSec = plan.effectiveDurationSec,
-                requestSdrToneMap = wantsSdrToneMap
+                requestSdrToneMap = wantsSdrToneMap,
+                wants10BitHevc = wants10BitHevc,
+                supportsAbgr2101010 = hwCaps.supportsAbgr2101010,
+                hdrEncoderName = hwCaps.hdrCodecName
             )
 
             DirectMediaCodecTranscoder.transcode(
@@ -864,18 +932,20 @@ object Media3TurboEngine {
                     .setEffects(effects)
                     .build()
 
-                // 3. Configure Composition with resilient HDR / 8-bit / 10-bit handling:
-                // - Tier 1 keeps 10-bit HDR only if H.265 10-bit was chosen AND device HEVC encoder supports it.
-                // - On Android 12+ Tier 1 uses MediaCodec tone-mapping for HDR->SDR (zero-cost no-op on SDR).
-                // - On Android <=11 or Tier 2/3, uses universal OpenGL ES 3.0 GPU tone-mapping so iPhone/Samsung/
-                //   Honor HDR10/HLG/Dolby Vision clips never crash due to OEM decoder tone-map quirks.
+                // 3. Configure Composition with strict 10-bit preservation & resilient HDR->SDR handling:
+                // - Whenever H.265 10-bit was chosen AND the device supports 10-bit HEVC, ALWAYS keep
+                //   HDR_MODE_KEEP_HDR across every Media3 tier (never silently downgrade 10-bit to 8-bit!).
+                // - When 8-bit was chosen: Tier 1 uses MediaCodec tone-mapping on Android 12+, fallback
+                //   tiers use universal OpenGL ES 3.0 GPU tone-mapping.
+                val wants10BitHevc = config.codec == VideoCodecOption.H265 &&
+                    config.bitDepth == BitDepthOption.BIT_10 &&
+                    hwCaps.supportsHevc10Bit
+                val sourceIsHdr = probe.sourceIsHdr || media.isHdrVideo
                 val hdrMode = when {
+                    wants10BitHevc ->
+                        Composition.HDR_MODE_KEEP_HDR
                     attemptMode != EncoderAttemptMode.OPTIMIZED_HW ->
                         Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL
-                    config.codec == VideoCodecOption.H265 &&
-                        config.bitDepth == BitDepthOption.BIT_10 &&
-                        hwCaps.supportsHevc10Bit ->
-                        Composition.HDR_MODE_KEEP_HDR
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
                         Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC
                     else ->
@@ -903,8 +973,43 @@ object Media3TurboEngine {
                 val isHighResStream = outPixels > 1920L * 1080L
                 val encoderFactory: Codec.EncoderFactory = when (attemptMode) {
                     EncoderAttemptMode.OPTIMIZED_HW -> {
-                        if (isHighResStream && hwCaps.codecName != null) {
-                            // On >1080p (1440p / 4K / 4K60), strict Qualcomm C2 drivers reject
+                        if (wants10BitHevc) {
+                            // 10-bit HEVC (4K or <=1080p, HDR or 10-bit SDR):
+                            // Always use Media3's DefaultEncoderFactory with a finite operatingRate so
+                            // COLOR_Format32bitABGR2101010, FEATURE_HdrEditing, KEY_COLOR_*, KEY_HDR_STATIC_INFO,
+                            // and HEVCProfileMain10/Main10HDR10 are preserved cleanly (never stripped to 8-bit!).
+                            val chipMaxFps = hwCaps.maxFpsForSize(outW, outH)
+                            val safeOpRate = (chipMaxFps ?: effectiveFps).roundToInt().coerceIn(30, 120)
+                            val settingsBuilder = VideoEncoderSettings.Builder()
+                                .setBitrate(plan.videoBitrateBps)
+                                .setiFrameIntervalSeconds(2f)
+                                .setEncoderPerformanceParameters(safeOpRate, 0)
+                            if (plan.useCbr && hwCaps.supportsCbr) {
+                                settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                            } else if (hwCaps.supportsVbr) {
+                                settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                            }
+                            // For 10-bit SDR sources (or 8-bit sources targeting 10-bit HEVC), explicitly
+                            // request HEVCProfileMain10 so DefaultEncoderFactory does not stay on 8-bit Main.
+                            // For HDR sources, let DefaultEncoderFactory select Main10HDR10 (PQ) / Main10 (HLG)
+                            // automatically alongside COLOR_Format32bitABGR2101010!
+                            if (!sourceIsHdr && hwCaps.highestHevc10Level > 0) {
+                                settingsBuilder.setEncodingProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                                    hwCaps.highestHevc10Level
+                                )
+                            }
+                            val default10BitFactory = DefaultEncoderFactory.Builder(context)
+                                .setRequestedVideoEncoderSettings(settingsBuilder.build())
+                                .setEnableFallback(false)
+                                .build()
+                            AudioBitrateWrapperEncoderFactory(
+                                delegate = default10BitFactory,
+                                targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
+                                aacCaps = aacCaps
+                            )
+                        } else if (isHighResStream && hwCaps.codecName != null) {
+                            // On >1080p 8-bit (1440p / 4K / 4K60), strict Qualcomm C2 drivers reject
                             // Media3 DefaultEncoderFactory's operating-rate=INT_MAX & Level 5.1 locks.
                             // Use our minimal raw-style MediaFormat directly at full VPU clock speed
                             // (keeping CBR for strict target-size accuracy), while ensuring any portrait
@@ -949,7 +1054,8 @@ object Media3TurboEngine {
                                 targetVideoBitrateBps = plan.videoBitrateBps,
                                 targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
                                 useCbrIfSupported = plan.useCbr && hwCaps.supportsCbr,
-                                maxSupportedFpsForSize = hwCaps.maxFpsForSize(outW, outH)
+                                maxSupportedFpsForSize = hwCaps.maxFpsForSize(outW, outH),
+                                wants10BitHevc = false
                             )
                         } else {
                             val settingsBuilder = VideoEncoderSettings.Builder()
@@ -1010,6 +1116,12 @@ object Media3TurboEngine {
                             .setiFrameIntervalSeconds(2f)
                             .setEncoderPerformanceParameters(delegateOpRate, 1)
                             .apply {
+                                if (wants10BitHevc && !sourceIsHdr && hwCaps.highestHevc10Level > 0) {
+                                    setEncodingProfileLevel(
+                                        MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                                        hwCaps.highestHevc10Level
+                                    )
+                                }
                                 if (videoMime == MimeTypes.VIDEO_H264 &&
                                     attemptMode != EncoderAttemptMode.SAFE_FPS_FALLBACK &&
                                     outPixels >= 3840L * 2160L &&
@@ -1025,25 +1137,34 @@ object Media3TurboEngine {
                             .build()
                         val audioAndFallbackDelegate = DefaultEncoderFactory.Builder(context)
                             .setRequestedVideoEncoderSettings(fallbackVideoSettings)
-                            .setEnableFallback(true)
+                            .setEnableFallback(!wants10BitHevc)
                             .build()
 
-                        CleanHardwareEncoderFactory(
-                            context = context,
-                            delegate = audioAndFallbackDelegate,
-                            preferredCodecName = hwCaps.codecName,
-                            videoCapabilities = hwCaps.videoCapabilities,
-                            aacCaps = aacCaps,
-                            targetVideoMime = videoMime,
-                            targetVideoBitrateBps = cappedBitrate,
-                            targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
-                            useCbrIfSupported = false,
-                            maxSupportedFpsForSize = if (attemptMode == EncoderAttemptMode.SAFE_FPS_FALLBACK) {
-                                30.0
-                            } else {
-                                hwCaps.maxFpsForSize(outW, outH)
-                            }
-                        )
+                        if (wants10BitHevc) {
+                            AudioBitrateWrapperEncoderFactory(
+                                delegate = audioAndFallbackDelegate,
+                                targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
+                                aacCaps = aacCaps
+                            )
+                        } else {
+                            CleanHardwareEncoderFactory(
+                                context = context,
+                                delegate = audioAndFallbackDelegate,
+                                preferredCodecName = hwCaps.codecName,
+                                videoCapabilities = hwCaps.videoCapabilities,
+                                aacCaps = aacCaps,
+                                targetVideoMime = videoMime,
+                                targetVideoBitrateBps = cappedBitrate,
+                                targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
+                                useCbrIfSupported = false,
+                                maxSupportedFpsForSize = if (attemptMode == EncoderAttemptMode.SAFE_FPS_FALLBACK) {
+                                    30.0
+                                } else {
+                                    hwCaps.maxFpsForSize(outW, outH)
+                                },
+                                wants10BitHevc = false
+                            )
+                        }
                     }
                 }
 
@@ -1064,11 +1185,16 @@ object Media3TurboEngine {
                         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                             stopPolling()
                             val elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                            val hasOutAudio = !media.hasAudio ||
+                                (!exportResult.audioMimeType.isNullOrBlank() && exportResult.channelCount > 0)
+                            val out10Bit = exportResult.colorInfo?.lumaBitdepth == 10
                             onProgress(100, elapsedSec, plan.effectiveDurationSec)
                             completeOnce(
                                 Media3TurboResult(
                                     success = true,
-                                    elapsedSec = elapsedSec
+                                    elapsedSec = elapsedSec,
+                                    outputHasAudio = hasOutAudio,
+                                    outputIs10Bit = if (out10Bit) true else null
                                 )
                             )
                         }
@@ -1212,7 +1338,7 @@ object Media3TurboEngine {
 
     /**
      * Probes real post-rotation display dimensions, exact duration, source total bitrate,
-     * and source audio track MIME/bitrate/channels/sample-rate via MediaMetadataRetriever + MediaExtractor.
+     * HDR transfer/color metadata, and source audio track MIME/bitrate/channels/sample-rate.
      */
     private fun probeSourceTracks(
         context: Context,
@@ -1229,6 +1355,7 @@ object Media3TurboEngine {
         var audioChannels: Int? = fallbackMedia.audioChannels
         var audioSampleRate: Int? = null
         var videoFps: Double? = fallbackMedia.fps
+        var sourceIsHdr: Boolean = fallbackMedia.isHdrVideo
 
         val retriever = MediaMetadataRetriever()
         try {
@@ -1302,11 +1429,15 @@ object Media3TurboEngine {
                         if (sr != null && sr > 0) audioSampleRate = sr
                     }
                 } else if (mime.startsWith("video/")) {
+                    if (DirectTranscodeMath.isMediaFormatHdr(trackFormat)) {
+                        sourceIsHdr = true
+                    }
                     if (trackFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                         val fps = runCatching { trackFormat.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
                             .getOrElse { runCatching { trackFormat.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrNull() }
                         if (fps != null && fps in 1.0..240.0) {
-                            if (videoFps == null || fps > videoFps!! + 1.0) {
+                            val currentFps = videoFps
+                            if (currentFps == null || fps > currentFps + 1.0) {
                                 videoFps = fps
                             }
                         }
@@ -1327,33 +1458,78 @@ object Media3TurboEngine {
             sourceAudioMime = audioMime,
             sourceAudioChannels = audioChannels,
             sourceAudioSampleRate = audioSampleRate,
-            sourceVideoFps = videoFps
+            sourceVideoFps = videoFps,
+            sourceIsHdr = sourceIsHdr
         )
     }
 
     /**
-     * Queries and caches the device's real hardware video encoder capabilities for [mimeType].
+     * Queries and caches the device's real hardware video encoder capabilities for [mimeType],
+     * including Android 13+ `FEATURE_HdrEditing`, `COLOR_Format32bitABGR2101010`, and highest
+     * `HEVCProfileMain10` encoding level.
      */
     private fun queryHardwareVideoEncoderCaps(mimeType: String): HardwareVideoEncoderCaps {
         videoCapsCache[mimeType]?.let { return it }
         val resolved = runCatching {
             val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
-            val hwEncoder = codecList.codecInfos.firstOrNull { info ->
-                if (!info.isEncoder) return@firstOrNull false
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info.isSoftwareOnly) return@firstOrNull false
+            val hwEncoders = codecList.codecInfos.filter { info ->
+                if (!info.isEncoder) return@filter false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info.isSoftwareOnly) return@filter false
                 if (info.name.startsWith("OMX.google.", ignoreCase = true) ||
                     info.name.startsWith("c2.android.", ignoreCase = true)
-                ) return@firstOrNull false
+                ) return@filter false
                 info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }
-            } ?: codecList.codecInfos.firstOrNull { info ->
-                info.isEncoder && info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }
             }
+            val fallbackEncoder = if (hwEncoders.isEmpty()) {
+                codecList.codecInfos.firstOrNull { info ->
+                    info.isEncoder && info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }
+                }
+            } else null
+            val primaryEncoder = hwEncoders.firstOrNull() ?: fallbackEncoder
 
-            if (hwEncoder == null) {
+            if (primaryEncoder == null) {
                 return@runCatching HardwareVideoEncoderCaps(null, 100_000, 32_000_000, false, false, false, false, null)
             }
 
-            val caps = hwEncoder.getCapabilitiesForType(mimeType)
+            // On Snapdragon/Android 13+, devices may expose a dedicated HDR-capable HEVC encoder entry.
+            var hdrCodecName: String? = null
+            var supportsHdrEdit = false
+            var supportsAbgr10 = false
+            var highestHevc10Level = -1
+            var anyHevc10 = false
+
+            if (mimeType == MimeTypes.VIDEO_H265) {
+                for (enc in (hwEncoders.ifEmpty { listOf(primaryEncoder) })) {
+                    val encCaps = runCatching { enc.getCapabilitiesForType(mimeType) }.getOrNull() ?: continue
+                    val main10Levels = encCaps.profileLevels.orEmpty().filter {
+                        it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
+                            it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
+                            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
+                    }
+                    if (main10Levels.isNotEmpty()) {
+                        anyHevc10 = true
+                        val maxLvl = encCaps.profileLevels.orEmpty()
+                            .filter { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 }
+                            .maxOfOrNull { it.level } ?: -1
+                        if (maxLvl > highestHevc10Level) {
+                            highestHevc10Level = maxLvl
+                        }
+                        val hasAbgr = encCaps.colorFormats?.contains(0x7F00AAA2) == true
+                        val hasHdrFeat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            encCaps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_HdrEditing)
+                        if (hasAbgr) supportsAbgr10 = true
+                        if (hasHdrFeat && hasAbgr) {
+                            supportsHdrEdit = true
+                            if (hdrCodecName == null) hdrCodecName = enc.name
+                        } else if (hdrCodecName == null) {
+                            hdrCodecName = enc.name
+                        }
+                    }
+                }
+            }
+
+            val caps = primaryEncoder.getCapabilitiesForType(mimeType)
             val videoCaps = caps?.videoCapabilities
             val encoderCaps = caps?.encoderCapabilities
             val minBr = videoCaps?.bitrateRange?.lower ?: 100_000
@@ -1365,23 +1541,20 @@ object Media3TurboEngine {
                     it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh &&
                         it.level >= MediaCodecInfo.CodecProfileLevel.AVCLevel52
                 } == true)
-            val supportsHevc10 = mimeType == MimeTypes.VIDEO_H265 &&
-                (caps?.profileLevels?.any {
-                    it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
-                        it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
-                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                            it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
-                } == true)
 
             HardwareVideoEncoderCaps(
-                codecName = hwEncoder.name,
+                codecName = primaryEncoder.name,
                 minBitrateBps = minBr.coerceAtLeast(64_000),
                 maxBitrateBps = maxBr.coerceAtLeast(2_000_000),
                 supportsCbr = supportsCbr,
                 supportsVbr = supportsVbr,
                 supportsAvcHighLevel52 = supports52,
-                supportsHevc10Bit = supportsHevc10,
-                videoCapabilities = videoCaps
+                supportsHevc10Bit = anyHevc10,
+                videoCapabilities = videoCaps,
+                hdrCodecName = hdrCodecName ?: primaryEncoder.name,
+                supportsHdrEditing = supportsHdrEdit,
+                supportsAbgr2101010 = supportsAbgr10,
+                highestHevc10Level = highestHevc10Level
             )
         }.getOrElse {
             HardwareVideoEncoderCaps(null, 100_000, 32_000_000, false, false, false, false, null)
@@ -1520,11 +1693,10 @@ object Media3TurboEngine {
     }
 
     /**
-     * Minimal, OEM-safe hardware MediaCodec encoder factory that omits `operating-rate`,
-     * `priority`, `profile`, and `level` overrides — identical to standalone Android MediaCodec
-     * compressor apps so strict Qualcomm/Exynos/MTK C2 drivers accept lossless-cut and 4K60 streams.
-     * Validates macroblock alignment & portrait size support before configuring `DefaultCodec`,
-     * falling back seamlessly to Media3's `DefaultEncoderFactory` if needed.
+     * Minimal, OEM-safe hardware MediaCodec encoder factory for 8-bit >1080p streams that omits
+     * `operating-rate`, `priority`, `profile`, and `level` overrides so strict Qualcomm/Exynos/MTK
+     * C2 drivers accept lossless-cut and 4K60 streams. Always delegates 10-bit/HDR streams directly
+     * to [delegate] so 10-bit color formats and Main10 profiles are never stripped.
      */
     private class CleanHardwareEncoderFactory(
         private val context: Context,
@@ -1536,7 +1708,8 @@ object Media3TurboEngine {
         private val targetVideoBitrateBps: Int,
         private val targetAudioBitrateBps: Int?,
         private val useCbrIfSupported: Boolean,
-        private val maxSupportedFpsForSize: Double?
+        private val maxSupportedFpsForSize: Double?,
+        private val wants10BitHevc: Boolean = false
     ) : Codec.EncoderFactory {
 
         override fun createForAudioEncoding(format: Format, logSessionId: LogSessionId?): Codec {
@@ -1545,6 +1718,10 @@ object Media3TurboEngine {
         }
 
         override fun createForVideoEncoding(format: Format, logSessionId: LogSessionId?): Codec {
+            // Never strip 10-bit or HDR metadata down to bare 8-bit COLOR_FormatSurface
+            if (wants10BitHevc || ColorInfo.isTransferHdr(format.colorInfo)) {
+                return delegate.createForVideoEncoding(format, logSessionId)
+            }
             val mime = format.sampleMimeType ?: targetVideoMime
             val codecName = preferredCodecName ?: return delegate.createForVideoEncoding(format, logSessionId)
             val vc = videoCapabilities

@@ -469,6 +469,8 @@ private fun FFLabAppRoot(
                             onShareOutput = onShareOutput,
                             onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },
                             onTryRemuxAndRetry = viewModel::tryRemuxThenRetryTurbo,
+                            onTryAudioConvertAndRetry = viewModel::tryAudioConvertThenRetryTurbo,
+                            onOpenVideoAudioPrep = viewModel::openVideoAudioPrepForTurbo,
                             onFallbackToFfmpeg = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = false) },
                             onFallbackToFfmpegFast = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = true) }
                         )
@@ -503,6 +505,7 @@ private fun FFLabAppRoot(
                                 capabilities = uiState.capabilities,
                                 validationError = uiState.validationError,
                                 viewModel = viewModel,
+                                pendingTurboContinuation = uiState.pendingTurboContinuation,
                                 isActiveStage = currentStage == AppScreenStage.CONFIG,
                                 onPlaySourceMedia = { onPlaySourceMedia(media) },
                                 onStartClick = { launchEncodingWithNotifCheck() }

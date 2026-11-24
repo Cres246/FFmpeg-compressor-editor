@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -53,6 +56,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -66,6 +70,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -93,6 +98,7 @@ import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
+import com.example.domain.TurboRecoveryStep
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -138,7 +144,7 @@ private val SPEEDOMETER_TICKS: List<GaugeTickSpec> = List(51) { step ->
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TurboProcessingScreen(
     state: EncodingState,
@@ -149,6 +155,8 @@ fun TurboProcessingScreen(
     onShareOutput: (CompletedOutput) -> Unit,
     onDoneReturnHome: () -> Unit,
     onTryRemuxAndRetry: () -> Unit = {},
+    onTryAudioConvertAndRetry: (Int) -> Unit = {},
+    onOpenVideoAudioPrep: () -> Unit = {},
     onFallbackToFfmpeg: () -> Unit,
     onFallbackToFfmpegFast: () -> Unit = onFallbackToFfmpeg
 ) {
@@ -160,11 +168,36 @@ fun TurboProcessingScreen(
 
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    val canOfferRemux = state is EncodingState.Failed &&
-        state.isHardwareTurbo &&
-        state.isUnsupportedFormat &&
-        !state.hasTriedRemux
+    val failedState = state as? EncodingState.Failed
+    val effectiveRecoveryStep = if (failedState != null && failedState.isHardwareTurbo) {
+        when {
+            failedState.recoveryStep != TurboRecoveryStep.NONE -> failedState.recoveryStep
+            failedState.isUnsupportedFormat && !failedState.hasTriedRemux -> TurboRecoveryStep.OFFER_REMUX
+            else -> TurboRecoveryStep.NONE
+        }
+    } else {
+        TurboRecoveryStep.NONE
+    }
+    val canOfferRemux = effectiveRecoveryStep == TurboRecoveryStep.OFFER_REMUX
+    val canOfferAudioConvert = effectiveRecoveryStep == TurboRecoveryStep.OFFER_AUDIO_CONVERT
+    val canOfferVideoAndAudio = effectiveRecoveryStep == TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
+
     var showRemuxPromptDialog by remember(state) { mutableStateOf(canOfferRemux) }
+    var showAudioConvertDialog by remember(state) { mutableStateOf(canOfferAudioConvert) }
+    var showVideoAudioDialog by remember(state) { mutableStateOf(canOfferVideoAndAudio) }
+    var selectedRecoveryAudioKbps by remember(state) {
+        mutableIntStateOf(failedState?.recommendedAudioBitrateKbps ?: 256)
+    }
+    val audioRecoveryChoices = remember(failedState) {
+        val rec = failedState?.recommendedAudioBitrateKbps ?: 256
+        val src = failedState?.sourceAudioBitrateKbps ?: 0
+        val base = if (rec > 320 || src > 320) {
+            listOf(192, 256, 320, 384, 512)
+        } else {
+            listOf(128, 192, 256, 320)
+        }
+        (base + rec).distinct().sorted()
+    }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state !is EncodingState.Running) {
@@ -245,27 +278,72 @@ fun TurboProcessingScreen(
                         }
 
                         is EncodingState.Failed -> {
+                            val preferFastFfmpeg = state.hasTriedRemux ||
+                                state.hasTriedAudioConvert ||
+                                state.hasTriedVideoAudioConvert
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                if (canOfferRemux) {
-                                    FilledTonalButton(
-                                        onClick = { showRemuxPromptDialog = true },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(48.dp)
-                                            .testTag("turbo_try_remux_button"),
-                                        shape = MaterialTheme.shapes.small,
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
-                                    ) {
-                                        Icon(Icons.Rounded.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = strings.turboTryRemuxButton,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                when {
+                                    canOfferRemux -> {
+                                        FilledTonalButton(
+                                            onClick = { showRemuxPromptDialog = true },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .testTag("turbo_try_remux_button"),
+                                            shape = MaterialTheme.shapes.small,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+                                        ) {
+                                            Icon(Icons.Rounded.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = strings.turboTryRemuxButton,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    canOfferAudioConvert -> {
+                                        FilledTonalButton(
+                                            onClick = { showAudioConvertDialog = true },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .testTag("turbo_try_audio_convert_button"),
+                                            shape = MaterialTheme.shapes.small,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+                                        ) {
+                                            Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = strings.turboTryAudioConvertButton,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    canOfferVideoAndAudio -> {
+                                        FilledTonalButton(
+                                            onClick = { showVideoAudioDialog = true },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .testTag("turbo_try_video_audio_button"),
+                                            shape = MaterialTheme.shapes.small,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+                                        ) {
+                                            Icon(Icons.Rounded.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = strings.turboTryVideoAudioButton,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                                 Row(
@@ -284,7 +362,7 @@ fun TurboProcessingScreen(
                                     }
                                     Button(
                                         onClick = {
-                                            if (state.hasTriedRemux) onFallbackToFfmpegFast()
+                                            if (preferFastFfmpeg) onFallbackToFfmpegFast()
                                             else onFallbackToFfmpeg()
                                         },
                                         modifier = Modifier
@@ -296,7 +374,7 @@ fun TurboProcessingScreen(
                                         Icon(Icons.Rounded.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp))
                                         Text(
-                                            text = if (state.hasTriedRemux) {
+                                            text = if (preferFastFfmpeg) {
                                                 strings.turboFallbackFastFfmpegButton
                                             } else {
                                                 strings.turboFallbackToFfmpegButton
@@ -382,12 +460,7 @@ fun TurboProcessingScreen(
                         val failed = (state as? EncodingState.Failed) ?: stateCache.lastFailed
                         if (failed != null) {
                             item {
-                                TurboFailureWarningCard(
-                                    isUnsupportedFormat = failed.isUnsupportedFormat,
-                                    hasTriedRemux = failed.hasTriedRemux,
-                                    errorMessage = failed.errorMessage,
-                                    hint = failed.hint
-                                )
+                                TurboFailureWarningCard(failed = failed)
                             }
                         }
                     }
@@ -417,11 +490,17 @@ fun TurboProcessingScreen(
                 )
             },
             text = {
-                Text(
-                    text = strings.turboRemuxPromptBody,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val diag = failedState?.diagnosisSummary
+                    if (!diag.isNullOrBlank()) {
+                        TurboDiagnosisBannerChip(text = diag)
+                    }
+                    Text(
+                        text = strings.turboRemuxPromptBody,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             },
             confirmButton = {
                 Button(
@@ -438,6 +517,143 @@ fun TurboProcessingScreen(
                 TextButton(
                     onClick = { showRemuxPromptDialog = false },
                     modifier = Modifier.testTag("turbo_remux_confirm_no")
+                ) {
+                    Text(strings.turboRemuxPromptNo)
+                }
+            }
+        )
+    }
+
+    if (showAudioConvertDialog && canOfferAudioConvert && failedState != null && isActiveStage) {
+        AlertDialog(
+            onDismissRequest = { showAudioConvertDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.GraphicEq,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.turboAudioConvertPromptTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val diag = failedState.diagnosisSummary
+                    if (!diag.isNullOrBlank()) {
+                        TurboDiagnosisBannerChip(text = diag)
+                    }
+                    Text(
+                        text = strings.turboAudioConvertPromptBody(failedState.hasTriedRemux),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = strings.turboAudioConvertBitrateLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = strings.turboAudioConvertSourceHint(
+                            failedState.sourceAudioBitrateKbps,
+                            failedState.isLosslessSourceAudio,
+                            failedState.recommendedAudioBitrateKbps
+                        ),
+                        style = MonoLabelStyle.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        audioRecoveryChoices.forEach { kbps ->
+                            FilterChip(
+                                selected = selectedRecoveryAudioKbps == kbps,
+                                onClick = { selectedRecoveryAudioKbps = kbps },
+                                label = {
+                                    Text(
+                                        text = "${kbps}k",
+                                        style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAudioConvertDialog = false
+                        onTryAudioConvertAndRetry(selectedRecoveryAudioKbps)
+                    },
+                    modifier = Modifier.testTag("turbo_audio_convert_confirm_yes")
+                ) {
+                    Text(strings.turboAudioConvertPromptYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showAudioConvertDialog = false },
+                    modifier = Modifier.testTag("turbo_audio_convert_confirm_no")
+                ) {
+                    Text(strings.turboRemuxPromptNo)
+                }
+            }
+        )
+    }
+
+    if (showVideoAudioDialog && canOfferVideoAndAudio && failedState != null && isActiveStage) {
+        AlertDialog(
+            onDismissRequest = { showVideoAudioDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.AutoFixHigh,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.turboVideoAudioPromptTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val diag = failedState.diagnosisSummary
+                    if (!diag.isNullOrBlank()) {
+                        TurboDiagnosisBannerChip(text = diag)
+                    }
+                    Text(
+                        text = strings.turboVideoAudioPromptBody(failedState.hasTriedAudioConvert),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showVideoAudioDialog = false
+                        onOpenVideoAudioPrep()
+                    },
+                    modifier = Modifier.testTag("turbo_video_audio_confirm_yes")
+                ) {
+                    Text(strings.turboVideoAudioPromptYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showVideoAudioDialog = false },
+                    modifier = Modifier.testTag("turbo_video_audio_confirm_no")
                 ) {
                     Text(strings.turboRemuxPromptNo)
                 }
@@ -1225,16 +1441,51 @@ private fun TurboCompletedOutputCard(
 }
 
 @Composable
+private fun TurboDiagnosisBannerChip(text: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Memory,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(top = 1.dp)
+                    .size(16.dp)
+            )
+            Text(
+                text = text,
+                style = MonoLabelStyle.copy(
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 16.sp
+                ),
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+@Composable
 private fun TurboFailureWarningCard(
-    isUnsupportedFormat: Boolean,
-    hasTriedRemux: Boolean,
-    errorMessage: String,
-    hint: String?
+    failed: EncodingState.Failed
 ) {
     val strings = LocalAppStrings.current
     val titleText = when {
-        hasTriedRemux -> strings.turboAfterRemuxFailedTitle
-        isUnsupportedFormat -> strings.turboUnsupportedTitle
+        failed.diagnosisSummary == strings.turbo10BitNotPreservedTitle -> strings.turbo10BitNotPreservedTitle
+        failed.hasTriedVideoAudioConvert -> strings.turboAfterVideoAudioFailedTitle
+        failed.hasTriedRemux || failed.hasTriedAudioConvert -> strings.turboAfterRemuxFailedTitle
+        failed.isUnsupportedFormat -> strings.turboUnsupportedTitle
         else -> strings.failedErrorTitle
     }
     Surface(
@@ -1268,13 +1519,47 @@ private fun TurboFailureWarningCard(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
+            if (!failed.diagnosisSummary.isNullOrBlank() && failed.diagnosisSummary != titleText) {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Memory,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .size(17.dp)
+                        )
+                        Text(
+                            text = failed.diagnosisSummary,
+                            style = MonoLabelStyle.copy(
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                lineHeight = 16.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Text(
-                text = errorMessage,
+                text = failed.errorMessage,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )
-            if (!hint.isNullOrBlank()) {
+            if (!failed.hint.isNullOrBlank()) {
                 Spacer(Modifier.height(14.dp))
                 Surface(
                     shape = MaterialTheme.shapes.small,
@@ -1296,7 +1581,7 @@ private fun TurboFailureWarningCard(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = hint,
+                            text = failed.hint,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface
                         )

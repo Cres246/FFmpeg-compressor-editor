@@ -21,13 +21,18 @@ data class MediaInfo(
     val audioCodec: String?,
     val fps: Double? = null,
     val audioBitrateKbps: Int? = null,
-    val audioChannels: Int? = null
+    val audioChannels: Int? = null,
+    val videoProfile: String? = null,
+    val colorTransfer: String? = null,
+    val colorSpace: String? = null,
+    val colorPrimaries: String? = null
 ) {
     val bitDepthIn: String
         get() = when {
             pixFmt?.contains("10") == true -> "10bit"
             pixFmt?.contains("12") == true -> "12bit"
             !pixFmt.isNullOrBlank() -> "8bit"
+            videoProfile?.contains("10") == true -> "10bit"
             else -> "8bit"
         }
 
@@ -36,7 +41,21 @@ data class MediaInfo(
             pixFmt?.contains("10") == true -> "10b"
             pixFmt?.contains("12") == true -> "12b"
             !pixFmt.isNullOrBlank() -> "8b"
+            videoProfile?.contains("10") == true -> "10b"
             else -> ""
+        }
+
+    val isHdrVideo: Boolean
+        get() {
+            val tr = colorTransfer?.lowercase(java.util.Locale.US).orEmpty()
+            val sp = colorSpace?.lowercase(java.util.Locale.US).orEmpty()
+            val pr = colorPrimaries?.lowercase(java.util.Locale.US).orEmpty()
+            val prof = videoProfile?.lowercase(java.util.Locale.US).orEmpty()
+            return tr == "smpte2084" ||
+                tr == "arib-std-b67" ||
+                pr.startsWith("bt2020") ||
+                sp.startsWith("bt2020") ||
+                prof.contains("hdr")
         }
 
     val needsEvenScale: Boolean
@@ -356,6 +375,19 @@ data class CompletedOutput(
     val timestampMs: Long
 )
 
+enum class TurboRecoveryStep {
+    NONE,
+    OFFER_REMUX,
+    OFFER_AUDIO_CONVERT,
+    OFFER_VIDEO_AND_AUDIO,
+    EXHAUSTED
+}
+
+data class PendingTurboContinuation(
+    val sourceMedia: MediaInfo,
+    val targetConfig: ModeConfigState
+)
+
 sealed interface EncodingState {
     data object Idle : EncodingState
 
@@ -397,7 +429,14 @@ sealed interface EncodingState {
         val wasCancelled: Boolean = false,
         val isHardwareTurbo: Boolean = false,
         val isUnsupportedFormat: Boolean = false,
-        val hasTriedRemux: Boolean = false
+        val hasTriedRemux: Boolean = false,
+        val recoveryStep: TurboRecoveryStep = TurboRecoveryStep.NONE,
+        val diagnosisSummary: String? = null,
+        val recommendedAudioBitrateKbps: Int = 256,
+        val sourceAudioBitrateKbps: Int? = null,
+        val isLosslessSourceAudio: Boolean = false,
+        val hasTriedAudioConvert: Boolean = false,
+        val hasTriedVideoAudioConvert: Boolean = false
     ) : EncodingState
 }
 

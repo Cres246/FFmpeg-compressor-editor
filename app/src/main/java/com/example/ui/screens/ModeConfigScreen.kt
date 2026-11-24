@@ -71,6 +71,7 @@ import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
+import com.example.domain.PendingTurboContinuation
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
 import com.example.domain.TrimSubMode
@@ -99,6 +100,7 @@ fun ModeConfigScreen(
     capabilities: EncoderCapabilities,
     validationError: String?,
     viewModel: MainViewModel,
+    pendingTurboContinuation: PendingTurboContinuation? = null,
     isActiveStage: Boolean = true,
     onPlaySourceMedia: () -> Unit = {},
     onStartClick: () -> Unit
@@ -251,6 +253,48 @@ fun ModeConfigScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (pendingTurboContinuation != null && config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF) {
+                item {
+                    val targetTitle = pendingTurboContinuation.targetConfig.mode.localizedTitle(strings)
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("turbo_prep_continuation_banner"),
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.30f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Bolt,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(top = 2.dp)
+                                    .size(20.dp)
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = strings.turboVideoAudioPrepBannerTitle,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = strings.turboVideoAudioPrepBannerBody(targetTitle),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.88f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             when (config.mode) {
                 ProcessingMode.DISCORD_20MB,
                 ProcessingMode.WHATSAPP_100MB,

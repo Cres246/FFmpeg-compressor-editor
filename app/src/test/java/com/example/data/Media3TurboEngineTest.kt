@@ -354,4 +354,37 @@ class Media3TurboEngineTest {
         val projectedBytes = ((planTier3.videoBitrateBps + planTier3.audioBitrateBps).toDouble() / 8.0) * 300.0
         assertTrue("Expected Tier 3 projected bytes ($projectedBytes) strictly below 5,000,000", projectedBytes < 5_000_000.0)
     }
+
+    @Test
+    fun turboTenBitAndProgressiveRecoveryStringsExistInBothLanguages() {
+        val hevcMain10NoPixFmt = sampleMedia().copy(
+            videoCodec = "hevc",
+            pixFmt = null,
+            videoProfile = "Main 10",
+            colorTransfer = "arib-std-b67"
+        )
+        assertEquals("10bit", hevcMain10NoPixFmt.bitDepthIn)
+        assertTrue(hevcMain10NoPixFmt.isHdrVideo)
+
+        listOf(TurkishStrings, EnglishStrings).forEach { s ->
+            assertTrue(s.turboStatusRestoringAudio.isNotBlank())
+            assertTrue(s.turbo10BitNotPreservedTitle.isNotBlank())
+            assertTrue(s.turbo10BitNotPreservedBody.isNotBlank())
+            assertTrue(s.turbo10BitNotPreservedHint.isNotBlank())
+            assertTrue(s.turboAudioLostBody.isNotBlank())
+            assertTrue(s.turboDiagAudioIncompatible("DTS").contains("DTS"))
+            assertTrue(s.turboDiagVideoIncompatible("PRORES").contains("PRORES"))
+            assertTrue(s.turboDiagVideoAndAudioIncompatible("MPEG2", "DTS").contains("DTS"))
+            assertTrue(s.turboDiagContainerOnly("VOB").contains("VOB"))
+            assertTrue(s.turboAudioConvertPromptTitle.isNotBlank())
+            assertTrue(s.turboAudioConvertPromptBody(true).isNotBlank())
+            assertTrue(s.turboAudioConvertPromptBody(false).isNotBlank())
+            assertTrue(s.turboAudioConvertSourceHint(256, false, 256).contains("256"))
+            assertTrue(s.turboVideoAudioPromptTitle.isNotBlank())
+            assertTrue(s.turboVideoAudioPromptBody(true).isNotBlank())
+            assertTrue(s.turboVideoAudioPrepBannerBody("Discord").contains("Discord"))
+            assertTrue(s.turboAfterVideoAudioFailedTitle.isNotBlank())
+            assertTrue(s.turboAfterVideoAudioFailedBody.isNotBlank())
+        }
+    }
 }

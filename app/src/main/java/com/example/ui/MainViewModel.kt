@@ -16,9 +16,11 @@ import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.FpsOption
 import com.example.domain.LanguagePreference
+import com.example.domain.Media3CompatibilityAdvisor
 import com.example.domain.MediaInfo
 import com.example.domain.MediaPickSource
 import com.example.domain.ModeConfigState
+import com.example.domain.PendingTurboContinuation
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
 import com.example.domain.ResolutionOption
@@ -48,6 +50,7 @@ data class WorkbenchUiState(
     val probeError: String? = null,
     val capabilities: EncoderCapabilities = EncoderCapabilities(),
     val activeConfig: ModeConfigState? = null,
+    val pendingTurboContinuation: PendingTurboContinuation? = null,
     val validationError: String? = null,
     val audioBitrateTouched: Boolean = false,
     val fpsTouched: Boolean = false,
@@ -101,7 +104,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             EncodingJobController.cancelGeneration.collect { gen ->
                 if (gen != lastGen) {
                     lastGen = gen
-                    _uiState.update { it.copy(activeConfig = null, validationError = null) }
+                    _uiState.update {
+                        it.copy(
+                            activeConfig = null,
+                            pendingTurboContinuation = null,
+                            validationError = null
+                        )
+                    }
                 }
             }
         }
@@ -131,6 +140,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isProbing = true,
                     probeError = null,
                     activeConfig = null,
+                    pendingTurboContinuation = null,
                     validationError = null
                 )
             }
@@ -218,6 +228,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 activeConfig = initialConfig,
+                pendingTurboContinuation = null,
                 validationError = null,
                 audioBitrateTouched = false,
                 fpsTouched = false,
@@ -230,7 +241,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeConfig() {
         keyframeScanJob?.cancel()
         keyframeScanJob = null
-        _uiState.update { it.copy(activeConfig = null, validationError = null) }
+        _uiState.update {
+            it.copy(
+                activeConfig = null,
+                pendingTurboContinuation = null,
+                validationError = null
+            )
+        }
     }
 
     fun updateTargetMb(value: String) {
@@ -891,6 +908,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!validateBeforeLaunch()) return
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
+        val continuation = _uiState.value.pendingTurboContinuation
+        if (continuation != null && cfg.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF) {
+            _uiState.update { it.copy(pendingTurboContinuation = null) }
+            EncodingForegroundService.startVideoAudioPrepThenTurbo(
+                context = appContext,
+                media = media,
+                prepConfig = cfg,
+                turboTargetConfig = continuation.targetConfig
+            )
+            return
+        }
         EncodingForegroundService.startEncoding(appContext, media, cfg)
     }
 
@@ -912,6 +940,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         EncodingForegroundService.startRemuxThenTurbo(appContext, media, cfg)
     }
 
+    fun tryAudioConvertThenRetryTurbo(audioBitrateKbps: Int) {
+        val cur = EncodingJobController.state.value
+        if (cur !is EncodingState.Failed || !cur.isHardwareTurbo || cur.hasTriedAudioConvert) return
+        val snapshot = EncodingJobController.activeJobSnapshot
+        val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
+        val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
+        EncodingForegroundService.startAudioConvertThenTurbo(
+            context = appContext,
+            media = media,
+            config = cfg,
+            audioBitrateKbps = audioBitrateKbps
+        )
+    }
+
+    fun openVideoAudioPrepForTurbo() {
+        val cur = EncodingJobController.state.value
+        if (cur !is EncodingState.Failed || !cur.isHardwareTurbo) return
+        val snapshot = EncodingJobController.activeJobSnapshot
+        val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
+        val targetCfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
+        val caps = _uiState.value.capabilities
+
+        val wants10BitTarget = targetCfg.codec == VideoCodecOption.H265 &&
+            targetCfg.bitDepth == BitDepthOption.BIT_10 &&
+            caps.x265Supports10Bit
+        val prepCodec = if (wants10BitTarget) VideoCodecOption.H265 else VideoCodecOption.H264
+        val prepBitDepth = if (wants10BitTarget) BitDepthOption.BIT_10 else BitDepthOption.BIT_8
+        val recommendedAudio = Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(media)
+
+        val prepConfig = ModeConfigState(
+            mode = ProcessingMode.VIDEO_AND_AUDIO_CRF,
+            codec = prepCodec,
+            bitDepth = prepBitDepth,
+            fps = FpsOption.ORIGINAL,
+            resolution = ResolutionOption.ORIGINAL,
+            preset = PresetOption.FAST,
+            audioBitrateInput = recommendedAudio.toString()
+        )
+
+        // Update activeConfig & pendingTurboContinuation before resetting EncodingJobController
+        // so Compose slides cleanly from Turbo Failed -> Video+Audio Config without flashing Home.
+        _uiState.update {
+            it.copy(
+                mediaInfo = media,
+                activeConfig = prepConfig,
+                pendingTurboContinuation = PendingTurboContinuation(
+                    sourceMedia = media,
+                    targetConfig = targetCfg
+                ),
+                validationError = null,
+                audioBitrateTouched = false,
+                fpsTouched = false,
+                resolutionTouched = false,
+                probeError = null
+            )
+        }
+        EncodingJobController.forceResetToIdle()
+    }
+
     fun fallbackFromTurboToFfmpeg(useFastPreset: Boolean = false) {
         val cur = EncodingJobController.state.value
         if (cur !is EncodingState.Failed || !cur.isHardwareTurbo) return
@@ -919,7 +1006,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
         val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
         val targetCfg = if (useFastPreset) cfg.copy(preset = PresetOption.FAST) else cfg
-        _uiState.update { it.copy(activeConfig = targetCfg, validationError = null) }
+        _uiState.update {
+            it.copy(
+                activeConfig = targetCfg,
+                pendingTurboContinuation = null,
+                validationError = null
+            )
+        }
         EncodingForegroundService.startEncoding(appContext, media, targetCfg)
     }
 
@@ -927,7 +1020,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         keyframeScanJob?.cancel()
         keyframeScanJob = null
         // Return cleanly to the Home screen (Ana Menü) right away
-        _uiState.update { it.copy(activeConfig = null, validationError = null) }
+        _uiState.update {
+            it.copy(
+                activeConfig = null,
+                pendingTurboContinuation = null,
+                validationError = null
+            )
+        }
         // Single atomic cancel: invalidates run ID, cancels native FFmpeg/Media3, and stops ForegroundService
         EncodingForegroundService.cancelEncoding(appContext)
     }
@@ -935,7 +1034,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissEncodingResult(returnToWorkbench: Boolean = true) {
         EncodingJobController.forceResetToIdle()
         if (returnToWorkbench) {
-            _uiState.update { it.copy(activeConfig = null, validationError = null) }
+            _uiState.update {
+                it.copy(
+                    activeConfig = null,
+                    pendingTurboContinuation = null,
+                    validationError = null
+                )
+            }
         }
     }
 

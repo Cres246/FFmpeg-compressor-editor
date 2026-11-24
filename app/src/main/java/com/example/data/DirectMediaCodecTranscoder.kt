@@ -186,22 +186,31 @@ data class DirectTranscodeRequest(
     val clipStartUs: Long?,
     val clipEndUs: Long?,
     val effectiveDurationSec: Double,
-    val requestSdrToneMap: Boolean
+    val requestSdrToneMap: Boolean,
+    val wants10BitHevc: Boolean = false,
+    val supportsAbgr2101010: Boolean = false,
+    val hdrEncoderName: String? = null
 )
 
 /**
- * Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0 Surface ->
+ * Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0/3.0 Surface ->
  * MediaCodec HW Encoder -> MediaMuxer hardware transcoder.
  *
  * Mirrors the exact minimal MediaFormat architecture used by standalone Android MediaCodec
- * compressors while adding strict monotonic PTS sanitization for FFmpeg lossless-cut clips
- * (which often contain edit-list / negative / duplicate timestamps at cut boundaries that
- * cause Media3 Transformer + Qualcomm c2.qti.avc.encoder to throw mid-stream CodecExceptions).
+ * compressors while supporting:
+ * - True 10-bit HEVC Main10 / Main10HDR10 encoding via EGL ES 3.0 RGBA1010102 + COLOR_Format32bitABGR2101010
+ * - Strict monotonic PTS sanitization for FFmpeg lossless-cut clips
+ * - Verified trimmed audio sync (`SEEK_TO_PREVIOUS_SYNC` + written audio sample verification)
  */
 internal object DirectMediaCodecTranscoder {
 
     private const val TIMEOUT_US = 10_000L
     private const val EGL_RECORDABLE_ANDROID = 0x3142
+    private const val EGL_OPENGL_ES3_BIT = 0x0040
+    private const val EGL_GL_COLORSPACE_KHR = 0x309D
+    private const val EGL_GL_COLORSPACE_BT2020_PQ_EXT = 0x3340
+    private const val EGL_GL_COLORSPACE_BT2020_HLG_EXT = 0x3540
+    private const val COLOR_FORMAT_32BIT_ABGR2101010 = 0x7F00AAA2
     const val ERROR_HDR_NEEDS_OPENGL = "DIRECT_HDR_NEEDS_OPENGL"
 
     fun transcode(
@@ -255,11 +264,27 @@ internal object DirectMediaCodecTranscoder {
                     elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                 )
 
-            // Guard HDR color fidelity: this GLES20 8-bit surface pipeline cannot preserve 10-bit HDR
-            // and relies on Android 12+ decoder SDR tone-mapping when SDR is requested. Hand off early
-            // to Media3's OpenGL ES 3.0 HDR pipeline instead of silently outputting washed-out BT.2020.
+            // Guard HDR & 10-bit color fidelity:
+            // - If 10-bit HEVC is requested on HDR content, require Android 13+ RGBA1010102 surface support
+            //   (otherwise hand off to Media3's OpenGL ES 3.0 HDR pipeline).
+            // - If 8-bit SDR is requested on HDR content, require Android 12+ decoder SDR tone-mapping.
             val inputIsHdr = DirectTranscodeMath.isMediaFormatHdr(inVideoFormat)
-            if (inputIsHdr && (!request.requestSdrToneMap || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
+            val wants10BitHevc = request.wants10BitHevc &&
+                request.videoMime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true)
+            val canUse10BitSurface = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                request.supportsAbgr2101010
+
+            if (wants10BitHevc) {
+                if (inputIsHdr && !canUse10BitSurface) {
+                    return Media3TurboResult(
+                        success = false,
+                        isUnsupportedFormat = false,
+                        errorCodeName = ERROR_HDR_NEEDS_OPENGL,
+                        errorDetail = "10-bit HDR source requires 10-bit surface / Media3 OpenGL HDR pipeline",
+                        elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                    )
+                }
+            } else if (inputIsHdr && (!request.requestSdrToneMap || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
                 return Media3TurboResult(
                     success = false,
                     isUnsupportedFormat = false,
@@ -367,7 +392,10 @@ internal object DirectMediaCodecTranscoder {
                             aExt.selectTrack(idx)
                             audioUsesOriginalTimeline = true
                             if (clipStartUs > 0L) {
-                                aExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                                // SEEK_TO_PREVIOUS_SYNC guarantees we never jump past clipEndUs on
+                                // short trims or drop the opening audio samples; pumpAudioUpTo trims
+                                // any pre-roll samples cleanly before clipStartUs.
+                                aExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                                 audioPtsOffsetUs = clipStartUs
                             } else {
                                 val initialAudioPtsUs = aExt.sampleTime.takeIf { it >= 0L }
@@ -390,26 +418,37 @@ internal object DirectMediaCodecTranscoder {
                 )
             }
 
-            // 3. Configure minimal hardware video encoder (zero operating-rate / priority / level overrides)
-            val encoder = createAndConfigureVideoEncoder(
+            // 3. Configure hardware video encoder (with full 10-bit HEVC Main10/HDR10 metadata when requested)
+            val inColorTransfer = if (inVideoFormat.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) {
+                runCatching { inVideoFormat.getInteger(MediaFormat.KEY_COLOR_TRANSFER) }.getOrNull()
+            } else null
+            val (encoder, used10BitSurface) = createAndConfigureVideoEncoder(
                 videoMime = request.videoMime,
-                preferredCodecName = request.preferredEncoderName,
+                preferredCodecName = if (wants10BitHevc) (request.hdrEncoderName ?: request.preferredEncoderName) else request.preferredEncoderName,
                 width = encW,
                 height = encH,
                 bitrateBps = request.videoBitrateBps,
                 fps = safeFps,
-                useCbr = request.useCbr
+                useCbr = request.useCbr,
+                wants10BitHevc = wants10BitHevc,
+                allow10BitSurface = canUse10BitSurface,
+                sourceFormat = inVideoFormat,
+                inputIsHdr = inputIsHdr
             )
             videoEncoder = encoder
 
             val encoderSurface = encoder.createInputSurface()
-            val inSurf = CodecInputSurface(encoderSurface)
+            val inSurf = CodecInputSurface(
+                surface = encoderSurface,
+                use10BitEgl = used10BitSurface,
+                colorTransfer = if (used10BitSurface) inColorTransfer else null
+            )
             inputSurface = inSurf
             inSurf.makeCurrent()
             encoder.start()
 
             // 4. Configure hardware video decoder targeting our OpenGL ES external texture surface
-            val outSurf = CodecOutputSurface(encW, encH)
+            val outSurf = CodecOutputSurface(encW, encH, use10BitEgl = used10BitSurface)
             outputSurface = outSurf
 
             // Clear KEY_ROTATION on decoder input format so SurfaceTexture does NOT auto-rotate
@@ -419,7 +458,7 @@ internal object DirectMediaCodecTranscoder {
                 runCatching { inVideoFormat.setInteger(MediaFormat.KEY_ROTATION, 0) }
             }
 
-            if (request.requestSdrToneMap && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (!wants10BitHevc && request.requestSdrToneMap && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching {
                     inVideoFormat.setInteger(
                         MediaFormat.KEY_COLOR_TRANSFER_REQUEST,
@@ -455,6 +494,7 @@ internal object DirectMediaCodecTranscoder {
             var decoderDone = false
             var encoderDone = false
             var audioDone = (audioExtractor == null || audioMuxFormat == null)
+            var writtenAudioSamples = 0
 
             var firstKeptRawPtsUs = if (clipStartUs <= 0L && sharedAvBaselineUs != null) {
                 sharedAvBaselineUs
@@ -506,6 +546,7 @@ internal object DirectMediaCodecTranscoder {
                     audioBufferInfo.presentationTimeUs = safeAudioPts
                     audioBufferInfo.flags = mapExtractorFlagsToCodecFlags(aExt.sampleFlags)
                     outMuxer.writeSampleData(muxAudioTrack, audioBuffer, audioBufferInfo)
+                    writtenAudioSamples++
                     lastMuxedAudioPtsUs = safeAudioPts
                     aExt.advance()
                 }
@@ -708,7 +749,12 @@ internal object DirectMediaCodecTranscoder {
 
             val elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
             onProgress(100, elapsedSec, request.effectiveDurationSec)
-            return Media3TurboResult(success = true, elapsedSec = elapsedSec)
+            return Media3TurboResult(
+                success = true,
+                elapsedSec = elapsedSec,
+                outputHasAudio = !request.hasAudio || (muxAudioTrack >= 0 && writtenAudioSamples > 0),
+                outputIs10Bit = wants10BitHevc
+            )
         } catch (t: Throwable) {
             val elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
             if (cancelFlag.get()) {
@@ -749,14 +795,49 @@ internal object DirectMediaCodecTranscoder {
         height: Int,
         bitrateBps: Int,
         fps: Int,
-        useCbr: Boolean
-    ): MediaCodec {
-        fun buildFormat(withCbr: Boolean): MediaFormat =
+        useCbr: Boolean,
+        wants10BitHevc: Boolean,
+        allow10BitSurface: Boolean,
+        sourceFormat: MediaFormat,
+        inputIsHdr: Boolean
+    ): Pair<MediaCodec, Boolean> {
+        fun copyColorMetadata(target: MediaFormat) {
+            for (intKey in listOf(
+                MediaFormat.KEY_COLOR_STANDARD,
+                MediaFormat.KEY_COLOR_TRANSFER,
+                MediaFormat.KEY_COLOR_RANGE
+            )) {
+                if (sourceFormat.containsKey(intKey)) {
+                    runCatching { target.setInteger(intKey, sourceFormat.getInteger(intKey)) }
+                }
+            }
+            if (sourceFormat.containsKey(MediaFormat.KEY_HDR_STATIC_INFO)) {
+                runCatching {
+                    sourceFormat.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO)?.let { srcBuf ->
+                        val dup = srcBuf.duplicate()
+                        dup.rewind()
+                        target.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, dup)
+                    }
+                }
+            }
+        }
+
+        fun buildFormat(withCbr: Boolean, profile: Int?, use10BitSurface: Boolean): MediaFormat =
             MediaFormat.createVideoFormat(videoMime, width, height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(
+                    MediaFormat.KEY_COLOR_FORMAT,
+                    if (use10BitSurface) COLOR_FORMAT_32BIT_ABGR2101010
+                    else MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+                )
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrateBps)
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                if (profile != null) {
+                    setInteger(MediaFormat.KEY_PROFILE, profile)
+                }
+                if (wants10BitHevc) {
+                    copyColorMetadata(this)
+                }
                 if (withCbr) {
                     setInteger(
                         MediaFormat.KEY_BITRATE_MODE,
@@ -772,11 +853,48 @@ internal object DirectMediaCodecTranscoder {
             MediaCodec.createEncoderByType(videoMime)
         }
 
+        if (wants10BitHevc) {
+            val inTransfer = if (sourceFormat.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) {
+                runCatching { sourceFormat.getInteger(MediaFormat.KEY_COLOR_TRANSFER) }.getOrNull()
+            } else null
+            val primaryProfile = if (inTransfer == MediaFormat.COLOR_TRANSFER_ST2084) {
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10
+            } else {
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
+            }
+            val attempts = buildList {
+                if (allow10BitSurface) {
+                    if (useCbr) add(Triple(true, primaryProfile, true))
+                    add(Triple(false, primaryProfile, true))
+                    if (primaryProfile != MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) {
+                        add(Triple(false, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10, true))
+                    }
+                }
+                // For 10-bit SDR sources (or devices accepting Main10 with standard Surface), try Main10
+                if (!inputIsHdr) {
+                    if (useCbr) add(Triple(true, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10, false))
+                    add(Triple(false, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10, false))
+                }
+            }
+            var lastErr: Throwable? = null
+            for ((cbr, prof, surf10) in attempts) {
+                val codec = openCodec()
+                try {
+                    codec.configure(buildFormat(cbr, prof, surf10), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    return codec to surf10
+                } catch (t: Throwable) {
+                    lastErr = t
+                    runCatching { codec.release() }
+                }
+            }
+            throw lastErr ?: IllegalStateException("10-bit HEVC hardware encoder configuration failed")
+        }
+
         if (useCbr) {
             val cbrCodec = openCodec()
             try {
-                cbrCodec.configure(buildFormat(withCbr = true), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                return cbrCodec
+                cbrCodec.configure(buildFormat(withCbr = true, profile = null, use10BitSurface = false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                return cbrCodec to false
             } catch (_: Throwable) {
                 runCatching { cbrCodec.release() }
             }
@@ -784,8 +902,8 @@ internal object DirectMediaCodecTranscoder {
 
         val vbrCodec = openCodec()
         try {
-            vbrCodec.configure(buildFormat(withCbr = false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            return vbrCodec
+            vbrCodec.configure(buildFormat(withCbr = false, profile = null, use10BitSurface = false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            return vbrCodec to false
         } catch (t: Throwable) {
             runCatching { vbrCodec.release() }
             throw t
@@ -1122,8 +1240,13 @@ internal object DirectMediaCodecTranscoder {
 
     /**
      * EGL14 window surface wrapping MediaCodec's input Surface for zero-copy GPU frame delivery.
+     * Supports both 8-bit ES 2.0 surfaces and 10-bit ES 3.0 RGBA1010102 (+ BT.2020 PQ/HLG) surfaces.
      */
-    private class CodecInputSurface(private val surface: Surface) {
+    private class CodecInputSurface(
+        private val surface: Surface,
+        private val use10BitEgl: Boolean = false,
+        private val colorTransfer: Int? = null
+    ) {
         private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
         private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
         private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
@@ -1135,16 +1258,25 @@ internal object DirectMediaCodecTranscoder {
                 val version = IntArray(2)
                 require(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "Unable to initialize EGL14" }
 
-                val config = chooseEglConfig(eglDisplay)
+                val config = chooseEglConfig(eglDisplay, use10BitEgl)
                 val contextAttribs = intArrayOf(
-                    EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
+                    EGL14.EGL_CONTEXT_CLIENT_VERSION, if (use10BitEgl) 3 else 2,
                     EGL14.EGL_NONE
                 )
                 eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
                 require(eglContext != EGL14.EGL_NO_CONTEXT) { "Unable to create EGL context" }
 
-                val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
+                val surfaceAttribs = buildWindowSurfaceAttribs(eglDisplay, use10BitEgl, colorTransfer)
                 eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, config, surface, surfaceAttribs, 0)
+                if (eglSurface == EGL14.EGL_NO_SURFACE && surfaceAttribs.size > 1) {
+                    eglSurface = EGL14.eglCreateWindowSurface(
+                        eglDisplay,
+                        config,
+                        surface,
+                        intArrayOf(EGL14.EGL_NONE),
+                        0
+                    )
+                }
                 require(eglSurface != EGL14.EGL_NO_SURFACE) { "Unable to create EGL window surface" }
             } catch (t: Throwable) {
                 runCatching { release() }
@@ -1152,9 +1284,56 @@ internal object DirectMediaCodecTranscoder {
             }
         }
 
-        private fun chooseEglConfig(display: EGLDisplay): EGLConfig {
+        private fun buildWindowSurfaceAttribs(
+            display: EGLDisplay,
+            wants10Bit: Boolean,
+            transfer: Int?
+        ): IntArray {
+            if (!wants10Bit || transfer == null) return intArrayOf(EGL14.EGL_NONE)
+            val extensions = runCatching { EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS) }.getOrNull().orEmpty()
+            return when {
+                transfer == MediaFormat.COLOR_TRANSFER_ST2084 &&
+                    extensions.contains("EGL_EXT_gl_colorspace_bt2020_pq") ->
+                    intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_PQ_EXT, EGL14.EGL_NONE)
+                transfer == MediaFormat.COLOR_TRANSFER_HLG &&
+                    extensions.contains("EGL_EXT_gl_colorspace_bt2020_hlg") ->
+                    intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_HLG_EXT, EGL14.EGL_NONE)
+                else -> intArrayOf(EGL14.EGL_NONE)
+            }
+        }
+
+        private fun chooseEglConfig(display: EGLDisplay, wants10Bit: Boolean): EGLConfig {
             val configs = arrayOfNulls<EGLConfig>(1)
             val numConfigs = IntArray(1)
+            if (wants10Bit) {
+                val tenBitRecordable = intArrayOf(
+                    EGL14.EGL_RED_SIZE, 10,
+                    EGL14.EGL_GREEN_SIZE, 10,
+                    EGL14.EGL_BLUE_SIZE, 10,
+                    EGL14.EGL_ALPHA_SIZE, 2,
+                    EGL14.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+                    EGL_RECORDABLE_ANDROID, 1,
+                    EGL14.EGL_NONE
+                )
+                if (EGL14.eglChooseConfig(display, tenBitRecordable, 0, configs, 0, configs.size, numConfigs, 0) &&
+                    numConfigs[0] > 0 && configs[0] != null
+                ) {
+                    return configs[0]!!
+                }
+                val tenBitPlain = intArrayOf(
+                    EGL14.EGL_RED_SIZE, 10,
+                    EGL14.EGL_GREEN_SIZE, 10,
+                    EGL14.EGL_BLUE_SIZE, 10,
+                    EGL14.EGL_ALPHA_SIZE, 2,
+                    EGL14.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+                    EGL14.EGL_NONE
+                )
+                require(
+                    EGL14.eglChooseConfig(display, tenBitPlain, 0, configs, 0, configs.size, numConfigs, 0) &&
+                        numConfigs[0] > 0 && configs[0] != null
+                ) { "Unable to choose 10-bit RGBA1010102 EGLConfig" }
+                return configs[0]!!
+            }
             val recordableAttribs = intArrayOf(
                 EGL14.EGL_RED_SIZE, 8,
                 EGL14.EGL_GREEN_SIZE, 8,
@@ -1212,10 +1391,15 @@ internal object DirectMediaCodecTranscoder {
     }
 
     /**
-     * External OES SurfaceTexture receiver + OpenGL ES 2.0 quad renderer with dedicated Looper
+     * External OES SurfaceTexture receiver + OpenGL ES 2.0/3.0 quad renderer with dedicated Looper
      * thread so SurfaceTexture.onFrameAvailable never deadlocks the transcode thread.
      */
-    private class CodecOutputSurface(width: Int, height: Int) : SurfaceTexture.OnFrameAvailableListener {
+    private class CodecOutputSurface(
+        width: Int,
+        height: Int,
+        use10BitEgl: Boolean = false
+    ) : SurfaceTexture.OnFrameAvailableListener {
+        @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
         private val frameSyncObject = Object()
         private var frameAvailable = false
         private val callbackThread = HandlerThread(
@@ -1259,7 +1443,12 @@ internal object DirectMediaCodecTranscoder {
             var createdSt: SurfaceTexture? = null
             var createdSurface: Surface? = null
             try {
-                createdProgram = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
+                createdProgram = if (use10BitEgl) {
+                    runCatching { createProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3) }
+                        .getOrElse { createProgram(VERTEX_SHADER, FRAGMENT_SHADER) }
+                } else {
+                    createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
+                }
                 program = createdProgram
                 positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
                 textureHandle = GLES20.glGetAttribLocation(program, "aTextureCoord")
@@ -1364,11 +1553,34 @@ internal object DirectMediaCodecTranscoder {
 
             private const val FRAGMENT_SHADER = """
                 #extension GL_OES_EGL_image_external : require
-                precision mediump float;
+                precision highp float;
                 varying vec2 vTextureCoord;
                 uniform samplerExternalOES sTexture;
                 void main() {
                     gl_FragColor = texture2D(sTexture, vTextureCoord);
+                }
+            """
+
+            private const val VERTEX_SHADER_ES3 = """#version 300 es
+                uniform mat4 uMVPMatrix;
+                uniform mat4 uSTMatrix;
+                in vec4 aPosition;
+                in vec4 aTextureCoord;
+                out vec2 vTextureCoord;
+                void main() {
+                    gl_Position = uMVPMatrix * aPosition;
+                    vTextureCoord = (uSTMatrix * aTextureCoord).xy;
+                }
+            """
+
+            private const val FRAGMENT_SHADER_ES3 = """#version 300 es
+                #extension GL_OES_EGL_image_external_essl3 : require
+                precision highp float;
+                in vec2 vTextureCoord;
+                uniform samplerExternalOES sTexture;
+                out vec4 fragColor;
+                void main() {
+                    fragColor = texture(sTexture, vTextureCoord);
                 }
             """
 

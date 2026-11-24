@@ -197,6 +197,10 @@ object FfmpegEngine {
         var height: Int? = null
         var pixFmt: String? = null
         var fps: Double? = null
+        var vProfile: String? = null
+        var colorTransfer: String? = null
+        var colorSpace: String? = null
+        var colorPrimaries: String? = null
         var aCodec: String? = null
         var aBitrateKbps: Int? = null
         var aChannels: Int? = null
@@ -227,6 +231,10 @@ object FfmpegEngine {
                 }
             }
             pixFmt = primaryVideoStream.getStringProperty("pix_fmt")
+            vProfile = primaryVideoStream.getStringProperty("profile")
+            colorTransfer = primaryVideoStream.getStringProperty("color_transfer")
+            colorSpace = primaryVideoStream.getStringProperty("color_space")
+            colorPrimaries = primaryVideoStream.getStringProperty("color_primaries")
             fps = parseFrameRate(primaryVideoStream.getStringProperty("avg_frame_rate"))
                 ?: parseFrameRate(primaryVideoStream.getStringProperty("r_frame_rate"))
         }
@@ -271,7 +279,120 @@ object FfmpegEngine {
             audioCodec = aCodec,
             fps = fps,
             audioBitrateKbps = aBitrateKbps,
-            audioChannels = aChannels
+            audioChannels = aChannels,
+            videoProfile = vProfile,
+            colorTransfer = colorTransfer,
+            colorSpace = colorSpace,
+            colorPrimaries = colorPrimaries
+        )
+    }
+
+    data class EncodedOutputProbe(
+        val hasVideo: Boolean = false,
+        val hasAudio: Boolean = false,
+        val hasReadableAudioSamples: Boolean = false,
+        val videoCodec: String? = null,
+        val pixFmt: String? = null,
+        val videoProfile: String? = null,
+        val is10Bit: Boolean = false,
+        val isHdr: Boolean = false
+    )
+
+    /**
+     * Fast post-encode integrity verification (~20-40ms) on a local output file:
+     * 1) Checks MediaExtractor for an actual audio track with >= 1 readable sample (catches silent/empty tracks).
+     * 2) Checks FFprobe for real video pixel format & profile (verifies true 10-bit HEVC Main10 output).
+     */
+    suspend fun probeEncodedOutput(file: File): EncodedOutputProbe = withContext(Dispatchers.IO) {
+        if (!file.exists() || file.length() == 0L) {
+            return@withContext EncodedOutputProbe()
+        }
+        var extractorOpened = false
+        var extractorHasVideo = false
+        var extractorHasAudio = false
+        var readableAudioSamples = false
+
+        val extractor = android.media.MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            extractorOpened = true
+            var audioIdx = -1
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/")) extractorHasVideo = true
+                if (mime.startsWith("audio/") && audioIdx < 0) {
+                    audioIdx = i
+                    extractorHasAudio = true
+                }
+            }
+            if (audioIdx >= 0) {
+                extractor.selectTrack(audioIdx)
+                val sampleBuf = java.nio.ByteBuffer.allocate(64 * 1024)
+                val firstSize = runCatching { extractor.readSampleData(sampleBuf, 0) }.getOrDefault(-1)
+                readableAudioSamples = firstSize > 0
+            }
+        } catch (_: Throwable) {
+            // Fall through to FFprobe
+        } finally {
+            runCatching { extractor.release() }
+        }
+
+        val probeInfo = runCatching {
+            ensureSilentLogcat()
+            FFprobeKit.getMediaInformation(file.absolutePath)?.mediaInformation
+        }.getOrNull()
+
+        if (probeInfo == null) {
+            return@withContext EncodedOutputProbe(
+                hasVideo = extractorHasVideo,
+                hasAudio = extractorHasAudio,
+                hasReadableAudioSamples = extractorHasAudio && readableAudioSamples
+            )
+        }
+
+        val streams = probeInfo.streams.orEmpty()
+        val videoStream = streams.firstOrNull { stream ->
+            stream.type?.equals("video", ignoreCase = true) == true &&
+                (runCatching {
+                    stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+                }.getOrNull() ?: 0) != 1
+        }
+        val audioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+
+        val vCodec = videoStream?.codec
+        val pixFmt = videoStream?.getStringProperty("pix_fmt")
+        val vProfile = videoStream?.getStringProperty("profile")
+        val bitsPerSample = videoStream?.getStringProperty("bits_per_raw_sample")?.toIntOrNull() ?: 0
+        val colorTr = videoStream?.getStringProperty("color_transfer")?.lowercase(java.util.Locale.US).orEmpty()
+        val colorPr = videoStream?.getStringProperty("color_primaries")?.lowercase(java.util.Locale.US).orEmpty()
+
+        val actual10Bit = (pixFmt?.contains("10") == true) ||
+            (pixFmt?.contains("12") == true) ||
+            bitsPerSample >= 10 ||
+            (vProfile?.contains("10", ignoreCase = true) == true)
+        val actualHdr = colorTr == "smpte2084" || colorTr == "arib-std-b67" || colorPr.startsWith("bt2020")
+
+        val ffprobeNbFrames = audioStream?.getStringProperty("nb_frames")?.toLongOrNull()
+        val ffprobeAudioHasDur = audioStream?.let { st ->
+            val dur = st.getStringProperty("duration")?.toDoubleOrNull()
+            (dur != null && dur > 0.05) || (ffprobeNbFrames != null && ffprobeNbFrames > 0L)
+        } ?: false
+        val verifiedAudioSamples = when {
+            ffprobeNbFrames == 0L -> false
+            extractorOpened -> extractorHasAudio && readableAudioSamples
+            else -> audioStream != null && ffprobeAudioHasDur
+        }
+
+        EncodedOutputProbe(
+            hasVideo = videoStream != null || extractorHasVideo,
+            hasAudio = audioStream != null || extractorHasAudio,
+            hasReadableAudioSamples = verifiedAudioSamples,
+            videoCodec = vCodec,
+            pixFmt = pixFmt,
+            videoProfile = vProfile,
+            is10Bit = actual10Bit,
+            isHdr = actualHdr
         )
     }
 

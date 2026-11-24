@@ -449,6 +449,32 @@ interface AppStrings {
     val turboAfterRemuxFailedTitle: String
     val turboAfterRemuxFailedBody: String
     val turboAfterRemuxFastHint: String
+    val turboStatusRestoringAudio: String
+    val turbo10BitNotPreservedTitle: String
+    val turbo10BitNotPreservedBody: String
+    val turbo10BitNotPreservedHint: String
+    val turboAudioLostBody: String
+    val turboDiagAudioIncompatible: (codec: String) -> String
+    val turboDiagVideoIncompatible: (codec: String) -> String
+    val turboDiagVideoAndAudioIncompatible: (vCodec: String, aCodec: String) -> String
+    val turboDiagContainerOnly: (container: String) -> String
+    val turboAudioConvertPromptTitle: String
+    val turboAudioConvertPromptBody: (afterRemux: Boolean) -> String
+    val turboAudioConvertBitrateLabel: String
+    val turboAudioConvertSourceHint: (sourceKbps: Int?, isLossless: Boolean, recommendedKbps: Int) -> String
+    val turboAudioConvertPromptYes: String
+    val turboTryAudioConvertButton: String
+    val turboAudioConvertModeTitle: String
+    val turboAudioConvertStepStatus: (kbps: Int) -> String
+    val turboVideoAudioPromptTitle: String
+    val turboVideoAudioPromptBody: (afterAudioConvert: Boolean) -> String
+    val turboVideoAudioPromptYes: String
+    val turboTryVideoAudioButton: String
+    val turboVideoAudioPrepBannerTitle: String
+    val turboVideoAudioPrepBannerBody: (targetModeTitle: String) -> String
+    val turboVideoAudioPrepModeTitle: String
+    val turboAfterVideoAudioFailedTitle: String
+    val turboAfterVideoAudioFailedBody: String
 }
 
 object TurkishStrings : AppStrings {
@@ -782,6 +808,52 @@ object TurkishStrings : AppStrings {
     override val turboAfterRemuxFailedTitle = "Donanım Hızlandırma Bu Dosyada Desteklenmiyor"
     override val turboAfterRemuxFailedBody = "Kayıpsız format değişimi denendi ancak bu dosyanın video veya ses akışı cihazdaki Android MediaCodec donanım motoruyla uyumlu değil.\n\nBu dosya için ya önce yeniden dönüştürme yapılması ya da doğrudan FFmpeg motorunun kullanılması gerekiyor."
     override val turboAfterRemuxFastHint = "Tavsiye: Hızlı ve sorunsuz sonuç için FFmpeg'i 'fast' (hızlı) preset ile doğrudan kullanabilirsiniz; FFmpeg tüm kodek ve formatları kararlı biçimde işler."
+    override val turboStatusRestoringAudio = "Ses akışı senkronlanıyor..."
+    override val turbo10BitNotPreservedTitle = "10-Bit Donanım Kodlama Korunamadı"
+    override val turbo10BitNotPreservedBody = "Seçtiğiniz 10-bit H.265 ayarı bu cihazın MediaCodec donanım kodlayıcısı tarafından gerçek 10-bit olarak korunamadı; sessizce 8-bit'e düşürülmesi engellendi."
+    override val turbo10BitNotPreservedHint = "Tavsiye: Gerçek 10-bit (yuv420p10le) renk derinliğini eksiksiz korumak için FFmpeg yazılım motoruyla devam edebilirsiniz."
+    override val turboAudioLostBody = "MediaCodec donanım motoru bu videonun ses akışını koruyamadı; sessiz çıktı kaydedilmesi engellendi."
+    override val turboDiagAudioIncompatible: (String) -> String = { codec -> "Tespit: Ses akışı ($codec) Media3 / MediaCodec tarafından desteklenmiyor. Görüntü akışı uyumlu." }
+    override val turboDiagVideoIncompatible: (String) -> String = { codec -> "Tespit: Görüntü akışı ($codec) Media3 / MediaCodec donanım motoruyla uyumlu değil." }
+    override val turboDiagVideoAndAudioIncompatible: (String, String) -> String = { v, a -> "Tespit: Hem görüntü ($v) hem ses ($a) akışı Media3 / MediaCodec tarafından desteklenmiyor." }
+    override val turboDiagContainerOnly: (String) -> String = { c -> "Tespit: $c kapsayıcı biçimi Media3 için kayıpsız MP4 kutusuna alınmalı. Görüntü ve ses uyumlu." }
+    override val turboAudioConvertPromptTitle = "Sadece Sesi Dönüştürüp Tekrar Denensin mi?"
+    override val turboAudioConvertPromptBody: (Boolean) -> String = { afterRemux ->
+        if (afterRemux) {
+            "Kayıpsız format değişimi tek başına yetmedi; sorun büyük olasılıkla ses akışından kaynaklanıyor.\n\nGörüntüye hiç dokunmadan (-c:v copy) yalnızca sesi orijinal kaynağa uygun yüksek kalitede AAC'ye çevirip, bitince otomatik olarak hız göstergesi ekranına dönelim mi?"
+        } else {
+            "Görüntü akışı uyumlu ancak ses kodeği Media3 donanım motorunda desteklenmiyor.\n\nGörüntüye hiç dokunmadan (-c:v copy) yalnızca sesi orijinal kaynağa uygun yüksek kalitede AAC'ye çevirip, bitince otomatik olarak hız göstergesi ekranına dönelim mi?"
+        }
+    }
+    override val turboAudioConvertBitrateLabel = "Ses Kalitesi (AAC)"
+    override val turboAudioConvertSourceHint: (Int?, Boolean, Int) -> String = { src, isLossless, rec ->
+        when {
+            isLossless -> "Kaynak ses kayıpsız · Orijinal kalite için ${rec}k seçildi"
+            src != null -> "Kaynak ses: ${src}k · Kaynağa uygun ${rec}k seçildi"
+            else -> "Yüksek kalite varsayılan: ${rec}k"
+        }
+    }
+    override val turboAudioConvertPromptYes = "Sesi Dönüştür & Dene"
+    override val turboTryAudioConvertButton = "Sadece Sesi Dönüştür → Turbo"
+    override val turboAudioConvertModeTitle = "Sesi Dönüştür → Turbo"
+    override val turboAudioConvertStepStatus: (Int) -> String = { kbps -> "Görüntü %100 copy · Ses ${kbps}k AAC'ye çevriliyor" }
+    override val turboVideoAudioPromptTitle = "Görüntü + Sesi Dönüştürmek Gerekiyor"
+    override val turboVideoAudioPromptBody: (Boolean) -> String = { afterAudio ->
+        if (afterAudio) {
+            "Ses dönüştürüldü ancak bu dosyanın görüntü akışı da MediaCodec donanım motoruyla uyumlu değil.\n\nGörüntüyü + Sesi Dönüştür ekranına geçip uyumlu hâle getirelim mi? Kodlama tamamlandığında hiçbir şey sormadan otomatik olarak hız göstergesi ekranına dönüp asıl işleminiz denenecek."
+        } else {
+            "Bu dosyanın görüntü akışı cihazdaki Media3 / MediaCodec donanım motoruyla uyumlu değil.\n\nÖnce Görüntüyü + Sesi Dönüştür ekranında uyumlu hâle getirelim mi? Kodlama tamamlandığında otomatik olarak hız göstergesi ekranına dönüp asıl işleminiz denenecek."
+        }
+    }
+    override val turboVideoAudioPromptYes = "Görüntü + Sesi Dönüştür"
+    override val turboTryVideoAudioButton = "Görüntüyü + Sesi Dönüştür → Turbo"
+    override val turboVideoAudioPrepBannerTitle = "Turbo Ön Hazırlık · Otomatik Devam"
+    override val turboVideoAudioPrepBannerBody: (String) -> String = { target ->
+        "Bu dönüştürme bittiğinde otomatik olarak Turbo (MediaCodec) hız göstergesine dönülecek ve «$target» işlemi bu uyumlu dosya üzerinde çalıştırılacak."
+    }
+    override val turboVideoAudioPrepModeTitle = "Görüntü + Ses Hazırla → Turbo"
+    override val turboAfterVideoAudioFailedTitle = "Donanım Motoru Bu Dosyada Başarısız Oldu"
+    override val turboAfterVideoAudioFailedBody = "Görüntü ve ses uyumlu biçime dönüştürüldü ancak cihazdaki MediaCodec donanım kodlayıcısı yine de işlemi tamamlayamadı.\n\nDoğrudan FFmpeg yazılım motoruyla sorunsuz devam edebilirsiniz."
 }
 
 object EnglishStrings : AppStrings {
@@ -1117,6 +1189,52 @@ object EnglishStrings : AppStrings {
     override val turboAfterRemuxFailedTitle = "Hardware Acceleration Unsupported for This File"
     override val turboAfterRemuxFailedBody = "A lossless format change was tried, but this file's video or audio stream is still incompatible with your device's Android MediaCodec hardware engine.\n\nYou'll need to re-encode the file or use the FFmpeg software engine directly."
     override val turboAfterRemuxFastHint = "Tip: For quick, reliable results, try running FFmpeg directly with the 'fast' preset — FFmpeg handles virtually all codecs and containers."
+    override val turboStatusRestoringAudio = "Syncing audio track..."
+    override val turbo10BitNotPreservedTitle = "10-Bit Hardware Encoding Unavailable"
+    override val turbo10BitNotPreservedBody = "Your selected 10-bit H.265 setting could not be preserved in true 10-bit by this device's MediaCodec hardware encoder; silent 8-bit downgrade was blocked."
+    override val turbo10BitNotPreservedHint = "Tip: Continue with the FFmpeg software engine to preserve genuine 10-bit (yuv420p10le) color depth."
+    override val turboAudioLostBody = "The MediaCodec hardware engine could not preserve this video's audio track; saving a silent output was blocked."
+    override val turboDiagAudioIncompatible: (String) -> String = { codec -> "Detected: Audio track ($codec) is unsupported by Media3 / MediaCodec. Video stream is compatible." }
+    override val turboDiagVideoIncompatible: (String) -> String = { codec -> "Detected: Video stream ($codec) is incompatible with the Media3 / MediaCodec hardware engine." }
+    override val turboDiagVideoAndAudioIncompatible: (String, String) -> String = { v, a -> "Detected: Both video ($v) and audio ($a) tracks are unsupported by Media3 / MediaCodec." }
+    override val turboDiagContainerOnly: (String) -> String = { c -> "Detected: $c container needs a fast lossless MP4 remux for Media3. Video and audio are compatible." }
+    override val turboAudioConvertPromptTitle = "Convert Audio Only and Retry?"
+    override val turboAudioConvertPromptBody: (Boolean) -> String = { afterRemux ->
+        if (afterRemux) {
+            "Lossless format remux alone wasn't enough; the audio track is likely incompatible.\n\nConvert only the audio to high-quality AAC matching your source without touching the video (-c:v copy), then automatically return to the speedometer and retry?"
+        } else {
+            "The video stream is compatible, but the audio codec is unsupported by Media3 hardware acceleration.\n\nConvert only the audio to high-quality AAC matching your source without touching the video (-c:v copy), then automatically return to the speedometer and retry?"
+        }
+    }
+    override val turboAudioConvertBitrateLabel = "Audio Quality (AAC)"
+    override val turboAudioConvertSourceHint: (Int?, Boolean, Int) -> String = { src, isLossless, rec ->
+        when {
+            isLossless -> "Lossless source audio · ${rec}k selected for full fidelity"
+            src != null -> "Source audio: ${src}k · Matched default: ${rec}k"
+            else -> "High-quality default: ${rec}k"
+        }
+    }
+    override val turboAudioConvertPromptYes = "Convert Audio & Retry"
+    override val turboTryAudioConvertButton = "Convert Audio Only → Turbo"
+    override val turboAudioConvertModeTitle = "Convert Audio → Turbo"
+    override val turboAudioConvertStepStatus: (Int) -> String = { kbps -> "Video 100% copy · Converting audio to ${kbps}k AAC" }
+    override val turboVideoAudioPromptTitle = "Video + Audio Conversion Needed"
+    override val turboVideoAudioPromptBody: (Boolean) -> String = { afterAudio ->
+        if (afterAudio) {
+            "Audio was converted, but this file's video stream is also incompatible with MediaCodec hardware encoding.\n\nOpen Video + Audio conversion to prepare a compatible stream? Once finished, the app will automatically return to the speedometer and run your original target."
+        } else {
+            "This file's video stream is incompatible with your device's Media3 / MediaCodec hardware engine.\n\nOpen Video + Audio conversion to prepare a compatible stream first? Once finished, the app will automatically return to the speedometer and run your original target."
+        }
+    }
+    override val turboVideoAudioPromptYes = "Open Video + Audio"
+    override val turboTryVideoAudioButton = "Convert Video + Audio → Turbo"
+    override val turboVideoAudioPrepBannerTitle = "Turbo Prep · Auto-Resume"
+    override val turboVideoAudioPrepBannerBody: (String) -> String = { target ->
+        "When this conversion finishes, you'll automatically return to the Turbo (MediaCodec) speedometer to run «$target» on the prepared file."
+    }
+    override val turboVideoAudioPrepModeTitle = "Prepare Video + Audio → Turbo"
+    override val turboAfterVideoAudioFailedTitle = "Hardware Engine Failed on Prepared File"
+    override val turboAfterVideoAudioFailedBody = "Video and audio were converted to a compatible format, yet the device's MediaCodec hardware encoder still could not complete the job.\n\nYou can continue reliably with the FFmpeg software engine."
 }
 
 // Localized display helpers for domain enums
