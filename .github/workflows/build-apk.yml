@@ -24,11 +24,11 @@ jobs:
       - name: Kodu Indir
         uses: actions/checkout@v6
 
-      - name: Java 17 Kur
+      - name: Java 21 Kur
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Debug Keystore Olustur
         run: |
