@@ -83,6 +83,7 @@ import com.example.ui.components.ConfigSectionCard
 import com.example.ui.components.FpsAndResolutionSection
 import com.example.ui.components.OutputAndCommandPreviewCard
 import com.example.ui.components.PresetSection
+import com.example.ui.components.TrimScrubState
 import com.example.ui.components.TrimSubModeSelector
 import com.example.ui.components.TrimTimeAndKeyframeSection
 import com.example.ui.components.TrimVideoPreviewCard
@@ -106,6 +107,7 @@ fun ModeConfigScreen(
 
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
+    val trimScrubState = remember(media.uri) { TrimScrubState() }
     val customCommandPreviewPlan = remember(media, config.mode, config.customCommandInput, strings) {
         if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
             CustomFfmpegParser.buildPlan(
@@ -336,14 +338,17 @@ fun ModeConfigScreen(
                         TrimVideoPreviewCard(
                             media = media,
                             config = config,
-                            onPlayVideoClick = onPlaySourceMedia
+                            onPlayVideoClick = onPlaySourceMedia,
+                            scrubState = trimScrubState,
+                            isActiveStage = isActiveStage
                         )
                     }
                     item {
                         TrimTimeAndKeyframeSection(
                             media = media,
                             config = config,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            scrubState = trimScrubState
                         )
                     }
                     item {

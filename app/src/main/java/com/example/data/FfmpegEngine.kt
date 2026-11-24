@@ -72,7 +72,7 @@ object FfmpegEngine {
      * into Android Logcat at `E/ffmpeg-kit` error level, while still delivering full logs to
      * `session.allLogsAsString` and per-session callbacks.
      */
-    private fun ensureSilentLogcat() {
+    internal fun ensureSilentLogcat() {
         if (!logRedirectionConfigured) {
             runCatching {
                 FFmpegKitConfig.setLogRedirectionStrategy(LogRedirectionStrategy.NEVER_PRINT_LOGS)

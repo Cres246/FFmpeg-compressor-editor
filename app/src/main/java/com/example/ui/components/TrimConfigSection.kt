@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import android.os.SystemClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -43,7 +44,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,7 +71,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.FfmpegEngine
+import com.example.data.PreviewQuality
+import com.example.data.VideoFrameScrubber
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
@@ -80,9 +84,58 @@ import com.example.domain.localizedTitle
 import com.example.ui.MainViewModel
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.abs
+
+enum class ActiveTrimThumb { START, END }
+
+/**
+ * Shared 120Hz slider drag state between [TrimTimelineRangeBar], [TrimTimeAndKeyframeSection],
+ * and [TrimVideoPreviewCard]. Keeps handles, summary timestamps, and thumbnails fluid at 120Hz
+ * while throttling heavy ViewModel / FFmpeg preview recalculations to ~11Hz during dragging.
+ */
+@Stable
+class TrimScrubState {
+    var draggingThumb by mutableStateOf<ActiveTrimThumb?>(null)
+        private set
+    var liveStartSec by mutableStateOf<Double?>(null)
+        private set
+    var liveEndSec by mutableStateOf<Double?>(null)
+        private set
+
+    val isScrubbing: Boolean
+        get() = draggingThumb != null
+
+    fun updateDrag(thumb: ActiveTrimThumb, startSec: Double, endSec: Double) {
+        draggingThumb = thumb
+        liveStartSec = startSec
+        liveEndSec = endSec
+    }
+
+    fun endDrag() {
+        draggingThumb = null
+        liveStartSec = null
+        liveEndSec = null
+    }
+}
+
+private class LastValidPreviewSec(var start: Double, var end: Double)
+
+private class DisplayedFrameTracker {
+    var sec: Double? = null
+    var isCrisp: Boolean = false
+
+    fun reset() {
+        sec = null
+        isCrisp = false
+    }
+}
+
+private const val SLIDER_VIEWMODEL_THROTTLE_MS = 90L
+private const val SCRUB_HOLD_REFINE_DELAY_MS = 220L
+private const val SETTLE_REFINE_DELAY_MS = 65L
 
 /**
  * Top preview card on Trim screen: two side-by-side square frame thumbnails showing the exact
@@ -93,7 +146,9 @@ fun TrimVideoPreviewCard(
     media: MediaInfo,
     config: ModeConfigState,
     onPlayVideoClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    scrubState: TrimScrubState? = null,
+    isActiveStage: Boolean = true
 ) {
     val context = LocalContext.current
     val extColors = LocalExtendedColors.current
@@ -107,88 +162,305 @@ fun TrimVideoPreviewCard(
         parsedEndSec != null &&
         parsedEndSec > media.durationSec + 0.05
 
-    var startSec by remember(media.uri) { mutableStateOf(0.0) }
-    val nextStartSec = when {
+    val defaultEndSec = (media.durationSec?.let { (it - 0.25).coerceAtLeast(0.0) } ?: 0.0)
+    val lastValid = remember(media.uri, media.durationSec) {
+        LastValidPreviewSec(start = 0.0, end = defaultEndSec)
+    }
+
+    val committedStartSec = when {
         effStart == null -> 0.0
         parsedStartSec != null -> parsedStartSec
-        else -> null
+        else -> lastValid.start
     }
-    if (nextStartSec != null && nextStartSec != startSec) {
-        startSec = nextStartSec
-    }
+    lastValid.start = committedStartSec
 
-    val defaultEndSec = (media.durationSec?.let { (it - 0.25).coerceAtLeast(0.0) } ?: 0.0)
-    var endSec by remember(media.uri, media.durationSec) { mutableStateOf(defaultEndSec) }
-    val nextEndSec = when {
+    val committedEndSec = when {
         effEnd == null -> defaultEndSec
         parsedEndSec != null -> parsedEndSec
-        else -> null
+        else -> lastValid.end
     }
-    if (nextEndSec != null && nextEndSec != endSec) {
-        endSec = nextEndSec
-    }
+    lastValid.end = committedEndSec
 
-    val startLabel = remember(effStart, startSec, strings) {
-        if (effStart == null) "00:00.0"
-        else FfmpegMath.formatKeyframeTime(startSec, strings)
+    val isScrubbingStart = scrubState?.draggingThumb == ActiveTrimThumb.START
+    val isScrubbingEnd = scrubState?.draggingThumb == ActiveTrimThumb.END
+    val liveStartOverride = if (isScrubbingStart) scrubState.liveStartSec else null
+    val liveEndOverride = if (isScrubbingEnd) scrubState.liveEndSec else null
+
+    val effectiveStartSec = liveStartOverride ?: committedStartSec
+    val effectiveEndSec = liveEndOverride ?: committedEndSec
+    val effectiveEndBeyond = if (liveEndOverride != null) false else isEndBeyondDuration
+
+    val startLabel = remember(effStart, liveStartOverride, effectiveStartSec, strings) {
+        if (liveStartOverride == null && effStart == null) "00:00.0"
+        else FfmpegMath.formatKeyframeTime(effectiveStartSec, strings)
     }
-    val endLabel = remember(effEnd, endSec, media.durationSec, strings) {
+    val endLabel = remember(effEnd, liveEndOverride, effectiveEndSec, media.durationSec, strings) {
         when {
-            effEnd != null -> FfmpegMath.formatKeyframeTime(endSec, strings)
+            liveEndOverride != null -> FfmpegMath.formatKeyframeTime(effectiveEndSec, strings)
+            effEnd != null -> FfmpegMath.formatKeyframeTime(effectiveEndSec, strings)
             media.durationSec != null -> FfmpegMath.formatKeyframeTime(media.durationSec, strings)
             else -> strings.trimEndPlaceholder
         }
     }
 
     var startBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
-    var startLoading by remember(media.uri) { mutableStateOf(true) }
+    var startLoading by remember(media.uri) { mutableStateOf(media.hasVideo) }
     var endBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
-    var endLoading by remember(media.uri) { mutableStateOf(true) }
+    var endLoading by remember(media.uri) { mutableStateOf(media.hasVideo) }
 
-    val latestEndBeyond = rememberUpdatedState(isEndBeyondDuration)
+    val startTracker = remember(media.uri) { DisplayedFrameTracker() }
+    val endTracker = remember(media.uri) { DisplayedFrameTracker() }
 
-    // Conflated live frame extraction: updates smoothly during slider scrubbing and lands on exact final frame
-    LaunchedEffect(media.uri) {
-        snapshotFlow { startSec }
+    val latestStartSec = rememberUpdatedState(effectiveStartSec)
+    val latestEndSec = rememberUpdatedState(effectiveEndSec)
+    val latestScrubbingStart = rememberUpdatedState(isScrubbingStart)
+    val latestScrubbingEnd = rememberUpdatedState(isScrubbingEnd)
+    val latestEndBeyond = rememberUpdatedState(effectiveEndBeyond)
+
+    // Persistent hardware-backed frame scrubber bound strictly to active Config stage so
+    // MediaMetadataRetriever & VPU decoder sessions are freed immediately on Back or Start.
+    val scrubber = remember(media.uri, media.durationSec, isActiveStage) {
+        if (media.hasVideo && isActiveStage) {
+            VideoFrameScrubber(
+                context = context,
+                uri = media.uri,
+                durationSec = media.durationSec
+            )
+        } else {
+            null
+        }
+    }
+    DisposableEffect(scrubber) {
+        onDispose { scrubber?.close() }
+    }
+
+    // Silent background timeline pre-warming (24 low-res RGB_565 keyframes across the timeline).
+    LaunchedEffect(scrubber) {
+        scrubber?.prewarmTimeline()
+    }
+
+    // --- START THUMBNAIL PIPELINE ---
+    // Stage 0: 0ms RAM lookup on every 120Hz scrub tick for instant pre-warmed / cached hits.
+    LaunchedEffect(scrubber, effectiveStartSec) {
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        val cached = activeScrubber.peekInstantFrame(
+            timeSec = effectiveStartSec,
+            allowNearbyFallback = latestScrubbingStart.value
+        )
+        if (cached != null) {
+            val prevSec = startTracker.sec
+            val isCloser = prevSec == null ||
+                abs(cached.timestampSec - effectiveStartSec) < abs(prevSec - effectiveStartSec) - 0.01 ||
+                (abs(cached.timestampSec - effectiveStartSec) < 0.05 && cached.isCrisp && !startTracker.isCrisp)
+            if (isCloser || startBitmap == null) {
+                startBitmap = cached.bitmap
+                startTracker.sec = cached.timestampSec
+                startTracker.isCrisp = cached.isCrisp
+                startLoading = false
+            }
+        }
+    }
+
+    // Stage 1: Conflated fast keyframe decode (256px RGB_565 OPTION_CLOSEST_SYNC) — never starves at 120Hz.
+    LaunchedEffect(scrubber) {
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        snapshotFlow { latestStartSec.value }
             .distinctUntilChanged()
             .conflate()
             .collect { sec ->
-                startLoading = true
-                val extracted = FfmpegEngine.extractPreviewFrame(
-                    context = context,
-                    uri = media.uri,
-                    timeSec = sec,
-                    durationSec = media.durationSec
-                )
-                if (extracted != null || startBitmap == null) {
-                    startBitmap = extracted
+                if (activeScrubber.hasCrispFrame(sec)) {
+                    activeScrubber.peekInstantFrame(sec, allowNearbyFallback = false)?.let { cached ->
+                        startBitmap = cached.bitmap
+                        startTracker.sec = cached.timestampSec
+                        startTracker.isCrisp = true
+                    }
+                    startLoading = false
+                    return@collect
                 }
-                startLoading = false
+                if (latestScrubbingStart.value && activeScrubber.hasExactScrubFrame(sec)) {
+                    activeScrubber.peekInstantFrame(sec, allowNearbyFallback = false)?.let { cached ->
+                        val prevSec = startTracker.sec
+                        if (startBitmap == null || prevSec == null ||
+                            abs(cached.timestampSec - sec) < abs(prevSec - sec) ||
+                            !startTracker.isCrisp
+                        ) {
+                            startBitmap = cached.bitmap
+                            startTracker.sec = cached.timestampSec
+                            startTracker.isCrisp = cached.isCrisp
+                        }
+                    }
+                    startLoading = false
+                    return@collect
+                }
+
+                if (startBitmap == null) {
+                    startLoading = true
+                }
+                val fastFrame = activeScrubber.extractFrame(sec, PreviewQuality.FAST_SCRUB)
+                if (fastFrame != null) {
+                    val curTarget = latestStartSec.value
+                    val prevSec = startTracker.sec
+                    val shouldApply = startBitmap == null ||
+                        prevSec == null ||
+                        abs(sec - curTarget) < abs(prevSec - curTarget) - 0.01 ||
+                        (abs(sec - curTarget) <= 0.05 && !startTracker.isCrisp)
+                    if (shouldApply) {
+                        startBitmap = fastFrame
+                        startTracker.sec = sec
+                        startTracker.isCrisp = false
+                    }
+                }
+                if (startBitmap != null || fastFrame == null) {
+                    startLoading = false
+                }
             }
     }
 
-    LaunchedEffect(media.uri) {
-        snapshotFlow { endSec to latestEndBeyond.value }
+    // Stage 2: Exact frame-accurate refinement (480px ARGB_8888 OPTION_CLOSEST) on pause or release.
+    LaunchedEffect(scrubber, effectiveStartSec, isScrubbingStart) {
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        val targetSec = effectiveStartSec
+        if (activeScrubber.hasCrispFrame(targetSec)) {
+            activeScrubber.peekInstantFrame(targetSec, allowNearbyFallback = false)?.let { cached ->
+                startBitmap = cached.bitmap
+                startTracker.sec = cached.timestampSec
+                startTracker.isCrisp = true
+            }
+            startLoading = false
+            return@LaunchedEffect
+        }
+
+        delay(if (isScrubbingStart) SCRUB_HOLD_REFINE_DELAY_MS else SETTLE_REFINE_DELAY_MS)
+
+        val crispFrame = activeScrubber.extractFrame(targetSec, PreviewQuality.EXACT_CRISP)
+        if (crispFrame != null && abs(latestStartSec.value - targetSec) < 0.05) {
+            startBitmap = crispFrame
+            startTracker.sec = targetSec
+            startTracker.isCrisp = true
+        }
+        startLoading = false
+    }
+
+    // --- END THUMBNAIL PIPELINE ---
+    // Stage 0: 0ms RAM lookup on every 120Hz scrub tick.
+    LaunchedEffect(scrubber, effectiveEndSec, effectiveEndBeyond) {
+        if (effectiveEndBeyond) {
+            endBitmap = null
+            endTracker.reset()
+            endLoading = false
+            return@LaunchedEffect
+        }
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        val cached = activeScrubber.peekInstantFrame(
+            timeSec = effectiveEndSec,
+            allowNearbyFallback = latestScrubbingEnd.value
+        )
+        if (cached != null) {
+            val prevSec = endTracker.sec
+            val isCloser = prevSec == null ||
+                abs(cached.timestampSec - effectiveEndSec) < abs(prevSec - effectiveEndSec) - 0.01 ||
+                (abs(cached.timestampSec - effectiveEndSec) < 0.05 && cached.isCrisp && !endTracker.isCrisp)
+            if (isCloser || endBitmap == null) {
+                endBitmap = cached.bitmap
+                endTracker.sec = cached.timestampSec
+                endTracker.isCrisp = cached.isCrisp
+                endLoading = false
+            }
+        }
+    }
+
+    // Stage 1: Conflated fast keyframe decode for End thumbnail.
+    LaunchedEffect(scrubber) {
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        snapshotFlow { latestEndSec.value to latestEndBeyond.value }
             .distinctUntilChanged()
             .conflate()
             .collect { (sec, beyond) ->
                 if (beyond) {
                     endBitmap = null
+                    endTracker.reset()
                     endLoading = false
-                } else {
-                    endLoading = true
-                    val extracted = FfmpegEngine.extractPreviewFrame(
-                        context = context,
-                        uri = media.uri,
-                        timeSec = sec,
-                        durationSec = media.durationSec
-                    )
-                    if (!latestEndBeyond.value && (extracted != null || endBitmap == null)) {
-                        endBitmap = extracted
+                    return@collect
+                }
+                if (activeScrubber.hasCrispFrame(sec)) {
+                    activeScrubber.peekInstantFrame(sec, allowNearbyFallback = false)?.let { cached ->
+                        if (!latestEndBeyond.value) {
+                            endBitmap = cached.bitmap
+                            endTracker.sec = cached.timestampSec
+                            endTracker.isCrisp = true
+                        }
                     }
+                    endLoading = false
+                    return@collect
+                }
+                if (latestScrubbingEnd.value && activeScrubber.hasExactScrubFrame(sec)) {
+                    activeScrubber.peekInstantFrame(sec, allowNearbyFallback = false)?.let { cached ->
+                        val prevSec = endTracker.sec
+                        if (!latestEndBeyond.value && (endBitmap == null || prevSec == null ||
+                                abs(cached.timestampSec - sec) < abs(prevSec - sec) ||
+                                !endTracker.isCrisp)
+                        ) {
+                            endBitmap = cached.bitmap
+                            endTracker.sec = cached.timestampSec
+                            endTracker.isCrisp = cached.isCrisp
+                        }
+                    }
+                    endLoading = false
+                    return@collect
+                }
+
+                if (endBitmap == null) {
+                    endLoading = true
+                }
+                val fastFrame = activeScrubber.extractFrame(sec, PreviewQuality.FAST_SCRUB)
+                if (!latestEndBeyond.value && fastFrame != null) {
+                    val curTarget = latestEndSec.value
+                    val prevSec = endTracker.sec
+                    val shouldApply = endBitmap == null ||
+                        prevSec == null ||
+                        abs(sec - curTarget) < abs(prevSec - curTarget) - 0.01 ||
+                        (abs(sec - curTarget) <= 0.05 && !endTracker.isCrisp)
+                    if (shouldApply) {
+                        endBitmap = fastFrame
+                        endTracker.sec = sec
+                        endTracker.isCrisp = false
+                    }
+                }
+                if (endBitmap != null || fastFrame == null || latestEndBeyond.value) {
                     endLoading = false
                 }
             }
+    }
+
+    // Stage 2: Exact frame-accurate refinement for End thumbnail on pause or release.
+    LaunchedEffect(scrubber, effectiveEndSec, isScrubbingEnd, effectiveEndBeyond) {
+        if (effectiveEndBeyond) {
+            endLoading = false
+            return@LaunchedEffect
+        }
+        val activeScrubber = scrubber ?: return@LaunchedEffect
+        val targetSec = effectiveEndSec
+        if (activeScrubber.hasCrispFrame(targetSec)) {
+            activeScrubber.peekInstantFrame(targetSec, allowNearbyFallback = false)?.let { cached ->
+                if (!latestEndBeyond.value) {
+                    endBitmap = cached.bitmap
+                    endTracker.sec = cached.timestampSec
+                    endTracker.isCrisp = true
+                }
+            }
+            endLoading = false
+            return@LaunchedEffect
+        }
+
+        delay(if (isScrubbingEnd) SCRUB_HOLD_REFINE_DELAY_MS else SETTLE_REFINE_DELAY_MS)
+
+        val crispFrame = activeScrubber.extractFrame(targetSec, PreviewQuality.EXACT_CRISP)
+        if (!latestEndBeyond.value && crispFrame != null && abs(latestEndSec.value - targetSec) < 0.05) {
+            endBitmap = crispFrame
+            endTracker.sec = targetSec
+            endTracker.isCrisp = true
+        }
+        endLoading = false
     }
 
     Surface(
@@ -221,9 +493,9 @@ fun TrimVideoPreviewCard(
                 SquareFramePreviewBox(
                     tag = strings.previewEndTag,
                     timeText = endLabel,
-                    bitmap = if (isEndBeyondDuration) null else endBitmap,
-                    isLoading = !isEndBeyondDuration && endLoading,
-                    isOutOfBoundsBlack = isEndBeyondDuration,
+                    bitmap = if (effectiveEndBeyond) null else endBitmap,
+                    isLoading = !effectiveEndBeyond && endLoading,
+                    isOutOfBoundsBlack = effectiveEndBeyond,
                     onClick = onPlayVideoClick,
                     modifier = Modifier
                         .weight(1f)
@@ -231,7 +503,7 @@ fun TrimVideoPreviewCard(
                 )
             }
 
-            if (isEndBeyondDuration && media.durationSec != null) {
+            if (effectiveEndBeyond && media.durationSec != null) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -299,6 +571,7 @@ private fun SquareFramePreviewBox(
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(12.dp)
+    val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
     Box(
         modifier = modifier
             .aspectRatio(1f)
@@ -330,9 +603,9 @@ private fun SquareFramePreviewBox(
                     maxLines = 1
                 )
             }
-        } else if (bitmap != null) {
+        } else if (imageBitmap != null) {
             Image(
-                bitmap = bitmap.asImageBitmap(),
+                bitmap = imageBitmap,
                 contentDescription = strings.previewFrameCd(tag, timeText),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -432,7 +705,8 @@ private fun SquareFramePreviewBox(
 fun TrimTimeAndKeyframeSection(
     media: MediaInfo,
     config: ModeConfigState,
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    scrubState: TrimScrubState? = null
 ) {
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
@@ -442,6 +716,10 @@ fun TrimTimeAndKeyframeSection(
     val isEndBeyondDuration = media.durationSec != null &&
         parsedEndSec != null &&
         parsedEndSec > media.durationSec + 0.05
+
+    val liveStart = scrubState?.liveStartSec
+    val liveEnd = scrubState?.liveEndSec
+    val isActivelyScrubbing = scrubState?.isScrubbing == true && liveStart != null && liveEnd != null
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -476,23 +754,36 @@ fun TrimTimeAndKeyframeSection(
                             modifier = Modifier.size(15.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        val startLabel = effStart?.let {
-                            val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
-                        } ?: strings.trimStartSummaryDefault
-                        val endLabel = effEnd?.let {
-                            val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                            if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
-                        } ?: strings.trimEndPlaceholder
+                        val startLabel = if (isActivelyScrubbing) {
+                            FfmpegMath.formatKeyframeTime(liveStart, strings)
+                        } else {
+                            effStart?.let {
+                                val parsed = FfmpegMath.parseTimestampToSeconds(it)
+                                if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
+                            } ?: strings.trimStartSummaryDefault
+                        }
+                        val endLabel = if (isActivelyScrubbing) {
+                            FfmpegMath.formatKeyframeTime(liveEnd, strings)
+                        } else {
+                            effEnd?.let {
+                                val parsed = FfmpegMath.parseTimestampToSeconds(it)
+                                if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
+                            } ?: strings.trimEndPlaceholder
+                        }
                         Text(
                             text = "$startLabel  →  $endLabel",
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    if (clipDur != null && !isEndBeyondDuration) {
+                    val displayClipDur = if (isActivelyScrubbing) {
+                        (liveEnd - liveStart).coerceAtLeast(0.0)
+                    } else {
+                        clipDur
+                    }
+                    if (displayClipDur != null && (isActivelyScrubbing || !isEndBeyondDuration)) {
                         Text(
-                            text = FfmpegMath.formatDurationShort(clipDur, strings),
+                            text = FfmpegMath.formatDurationShort(displayClipDur, strings),
                             style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -510,6 +801,7 @@ fun TrimTimeAndKeyframeSection(
                     durationSec = totalDur,
                     startSec = visualStart,
                     endSec = visualEnd,
+                    scrubState = scrubState,
                     onRangeChanged = { newStart, newEnd ->
                         viewModel.updateTrimRangeFromSlider(newStart, newEnd)
                     },
@@ -918,17 +1210,17 @@ private fun KeyframeGridBlock(
     }
 }
 
-private enum class ActiveTrimThumb { START, END }
-
 /**
  * Sleek dark-brown horizontal range bar with circular drag handles on both ends.
- * Smoothly updates start/end timestamps and live frame previews while preserving LazyColumn vertical scroll.
+ * Updates handles and live frame previews at 120Hz via [scrubState] while throttling heavier
+ * ViewModel / FFmpeg command recalculations and preserving LazyColumn vertical scroll.
  */
 @Composable
 private fun TrimTimelineRangeBar(
     durationSec: Double,
     startSec: Double,
     endSec: Double,
+    scrubState: TrimScrubState?,
     onRangeChanged: (Double, Double) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -941,12 +1233,11 @@ private fun TrimTimelineRangeBar(
     val latestStart = rememberUpdatedState(startSec)
     val latestEnd = rememberUpdatedState(endSec)
     val latestOnRangeChanged = rememberUpdatedState(onRangeChanged)
+    val latestScrubState = rememberUpdatedState(scrubState)
 
-    var draggingThumb by remember { mutableStateOf<ActiveTrimThumb?>(null) }
+    var localDraggingThumb by remember { mutableStateOf<ActiveTrimThumb?>(null) }
 
     val safeDuration = durationSec.coerceAtLeast(0.1)
-    val startFraction = (startSec / safeDuration).toFloat().coerceIn(0f, 1f)
-    val endFraction = (endSec / safeDuration).toFloat().coerceIn(startFraction, 1f)
 
     Box(
         modifier = modifier
@@ -955,8 +1246,13 @@ private fun TrimTimelineRangeBar(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val trackWidth = (size.width - thumbPaddingPx * 2f).coerceAtLeast(1f)
-                    val startX = thumbPaddingPx + (latestStart.value / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
-                    val endX = thumbPaddingPx + (latestEnd.value / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
+                    var curStartSec = (latestScrubState.value?.liveStartSec ?: latestStart.value)
+                        .coerceIn(0.0, safeDuration)
+                    var curEndSec = (latestScrubState.value?.liveEndSec ?: latestEnd.value)
+                        .coerceIn(curStartSec, safeDuration)
+
+                    val startX = thumbPaddingPx + (curStartSec / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
+                    val endX = thumbPaddingPx + (curEndSec / safeDuration).toFloat().coerceIn(0f, 1f) * trackWidth
 
                     val distStart = abs(down.position.x - startX)
                     val distEnd = abs(down.position.x - endX)
@@ -967,25 +1263,30 @@ private fun TrimTimelineRangeBar(
                     }
 
                     val minGapSec = minOf(0.5, safeDuration * 0.02).coerceAtLeast(0.1)
+                    var lastCommitMs = 0L
+                    var didDrag = false
 
                     fun applyPositionX(posX: Float, thumb: ActiveTrimThumb) {
                         val frac = ((posX - thumbPaddingPx) / trackWidth).coerceIn(0f, 1f)
                         val targetSec = frac * safeDuration
-                        val curStart = latestStart.value.coerceIn(0.0, safeDuration)
-                        val curEnd = latestEnd.value.coerceIn(curStart, safeDuration)
                         if (thumb == ActiveTrimThumb.START) {
-                            val clampedStart = targetSec.coerceIn(0.0, (curEnd - minGapSec).coerceAtLeast(0.0))
-                            latestOnRangeChanged.value(clampedStart, curEnd)
+                            curStartSec = targetSec.coerceIn(0.0, (curEndSec - minGapSec).coerceAtLeast(0.0))
                         } else {
-                            val clampedEnd = targetSec.coerceIn((curStart + minGapSec).coerceAtMost(safeDuration), safeDuration)
-                            latestOnRangeChanged.value(curStart, clampedEnd)
+                            curEndSec = targetSec.coerceIn((curStartSec + minGapSec).coerceAtMost(safeDuration), safeDuration)
+                        }
+                        didDrag = true
+                        latestScrubState.value?.updateDrag(thumb, curStartSec, curEndSec)
+                        val now = SystemClock.uptimeMillis()
+                        if (now - lastCommitMs >= SLIDER_VIEWMODEL_THROTTLE_MS) {
+                            lastCommitMs = now
+                            latestOnRangeChanged.value(curStartSec, curEndSec)
                         }
                     }
 
                     val dragStart = awaitHorizontalTouchSlopOrCancellation(down.id) { change, overSlop ->
                         val resolved = chosenThumb ?: if (overSlop < 0f) ActiveTrimThumb.START else ActiveTrimThumb.END
                         chosenThumb = resolved
-                        draggingThumb = resolved
+                        localDraggingThumb = resolved
                         change.consume()
                         applyPositionX(change.position.x, resolved)
                     }
@@ -1001,13 +1302,26 @@ private fun TrimTimelineRangeBar(
                                 }
                             }
                         } finally {
-                            draggingThumb = null
+                            if (didDrag) {
+                                // Commit final exact range to ViewModel BEFORE clearing live scrub state
+                                // so thumbnails and text fields never jump back for a single frame.
+                                latestOnRangeChanged.value(curStartSec, curEndSec)
+                            }
+                            latestScrubState.value?.endDrag()
+                            localDraggingThumb = null
                         }
                     }
                 }
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val drawStartSec = scrubState?.liveStartSec ?: startSec
+            val drawEndSec = scrubState?.liveEndSec ?: endSec
+            val activeThumb = scrubState?.draggingThumb ?: localDraggingThumb
+
+            val startFraction = (drawStartSec / safeDuration).toFloat().coerceIn(0f, 1f)
+            val endFraction = (drawEndSec / safeDuration).toFloat().coerceIn(startFraction, 1f)
+
             val centerY = size.height / 2f
             val trackStart = thumbPaddingPx
             val trackEnd = (size.width - thumbPaddingPx).coerceAtLeast(trackStart + 1f)
@@ -1035,7 +1349,7 @@ private fun TrimTimelineRangeBar(
             )
 
             // Left circular thumb
-            val startDragging = draggingThumb == ActiveTrimThumb.START
+            val startDragging = activeThumb == ActiveTrimThumb.START
             val startRadius = (if (startDragging) 10.5.dp else 9.dp).toPx()
             if (startDragging) {
                 drawCircle(
@@ -1056,7 +1370,7 @@ private fun TrimTimelineRangeBar(
             )
 
             // Right circular thumb
-            val endDragging = draggingThumb == ActiveTrimThumb.END
+            val endDragging = activeThumb == ActiveTrimThumb.END
             val endRadius = (if (endDragging) 10.5.dp else 9.dp).toPx()
             if (endDragging) {
                 drawCircle(
