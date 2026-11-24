@@ -368,6 +368,7 @@ class Media3TurboEngineTest {
 
         listOf(TurkishStrings, EnglishStrings).forEach { s ->
             assertTrue(s.turboStatusRestoringAudio.isNotBlank())
+            assertTrue(s.turboTrimPreCutStatus.isNotBlank())
             assertTrue(s.turbo10BitNotPreservedTitle.isNotBlank())
             assertTrue(s.turbo10BitNotPreservedBody.isNotBlank())
             assertTrue(s.turbo10BitNotPreservedHint.isNotBlank())

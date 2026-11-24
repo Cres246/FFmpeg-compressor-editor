@@ -155,23 +155,31 @@ object Media3CompatibilityAdvisor {
         "aac", "mp3", "opus"
     )
 
-    private val HIGH_QUALITY_AAC_LADDER = listOf(128, 192, 256, 320, 384, 512)
+    private val HIGH_QUALITY_AAC_LADDER = listOf(128, 192, 256, 320, 384, 512, 640, 768)
 
     /**
      * Picks a high-quality default AAC bitrate for Audio-Only Turbo preparation that faithfully
-     * matches the source track without degrading it (e.g. lossless/DTS/TrueHD -> 320k stereo or
-     * 384k multichannel; lossy 192k -> 192k; lossy 256k -> 256k; unknown -> 256k).
+     * matches the source track without degrading it (e.g. 754k/768k 5.1 DTS/E-AC-3 -> 768k;
+     * 640k AC-3 -> 640k; lossless/DTS multichannel unknown/low bitrate -> 384k; stereo -> 320k;
+     * lossy 192k -> 192k; lossy 256k -> 256k; unknown -> 256k).
      */
     fun recommendHighQualityAudioBitrateKbps(media: MediaInfo): Int {
         if (!media.hasAudio) return 256
         val channels = (media.audioChannels ?: 2).coerceAtLeast(1)
-        val channelCeiling = if (channels > 2) 512 else 320
+        val channelCeiling = if (channels > 2) 768 else 320
         val codec = media.audioCodec?.lowercase(Locale.US).orEmpty()
+        val srcKbps = media.audioBitrateKbps
 
         if (media.isLosslessAudio || codec in setOf("dts", "dca", "truehd", "mlp")) {
-            return if (channels > 2) 384 else 320
+            if (channels > 2) {
+                if (srcKbps != null && srcKbps >= 480) {
+                    return (HIGH_QUALITY_AAC_LADDER.firstOrNull { it >= srcKbps - 12 } ?: 768)
+                        .coerceIn(384, 768)
+                }
+                return 384
+            }
+            return 320
         }
-        val srcKbps = media.audioBitrateKbps
         if (srcKbps != null && srcKbps > 0) {
             val matched = HIGH_QUALITY_AAC_LADDER.firstOrNull { it >= srcKbps - 12 }
                 ?: HIGH_QUALITY_AAC_LADDER.last()
@@ -181,19 +189,36 @@ object Media3CompatibilityAdvisor {
     }
 
     /**
-     * Quick chip choices offered in the Turbo Audio-Only recovery picker so the user gets
-     * a source-matched high-quality default while still being able to choose freely.
+     * Quick chip choices offered in the Turbo Audio-Only recovery picker, mirroring
+     * [FfmpegMath.resolveAudioBitrateQuickOptions] up to 768 kbps so high-bitrate 5.1 / DTS /
+     * E-AC-3 / lossless tracks expose every faithful tier (up to 640k / 768k + exact source).
      */
-    fun audioRecoveryBitrateChoices(media: MediaInfo): List<Int> {
-        val channels = (media.audioChannels ?: 2).coerceAtLeast(1)
-        val recommended = recommendHighQualityAudioBitrateKbps(media)
-        val base = if (channels > 2) {
-            listOf(192, 256, 320, 384, 512)
+    fun audioRecoveryBitrateChoices(
+        sourceKbps: Int?,
+        isLosslessSource: Boolean,
+        recommendedKbps: Int,
+        maxKbps: Int = 768
+    ): List<Int> {
+        val rawOptions = FfmpegMath.resolveAudioBitrateQuickOptions(
+            sourceKbps = sourceKbps,
+            isLosslessSource = isLosslessSource,
+            maxKbps = maxKbps
+        )
+        val trimmed = if (sourceKbps == null || sourceKbps >= 128) {
+            rawOptions.filter { it >= 128 }.ifEmpty { rawOptions }
         } else {
-            listOf(128, 192, 256, 320)
+            rawOptions
         }
-        return (base + recommended).distinct().sorted()
+        return (trimmed + recommendedKbps.coerceIn(32, maxKbps)).distinct().sorted()
     }
+
+    fun audioRecoveryBitrateChoices(media: MediaInfo): List<Int> =
+        audioRecoveryBitrateChoices(
+            sourceKbps = media.audioBitrateKbps,
+            isLosslessSource = media.isLosslessAudio,
+            recommendedKbps = recommendHighQualityAudioBitrateKbps(media),
+            maxKbps = 768
+        )
 
     /**
      * Diagnoses Media3 1.11.1 + device MediaCodec compatibility directly from [MediaInfo]

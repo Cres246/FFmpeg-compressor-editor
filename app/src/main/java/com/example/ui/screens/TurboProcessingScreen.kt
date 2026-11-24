@@ -34,8 +34,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Bolt
@@ -57,9 +60,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -70,7 +75,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -90,6 +94,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -98,6 +103,7 @@ import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
+import com.example.domain.Media3CompatibilityAdvisor
 import com.example.domain.TurboRecoveryStep
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
@@ -188,18 +194,16 @@ fun TurboProcessingScreen(
     var showAudioConvertDialog by remember(state) { mutableStateOf(canOfferAudioConvert) }
     var showVideoOnlyDialog by remember(state) { mutableStateOf(canOfferVideoOnly) }
     var showVideoAudioDialog by remember(state) { mutableStateOf(canOfferVideoAndAudio) }
-    var selectedRecoveryAudioKbps by remember(state) {
-        mutableIntStateOf(failedState?.recommendedAudioBitrateKbps ?: 256)
+    var recoveryAudioInput by remember(state) {
+        mutableStateOf((failedState?.recommendedAudioBitrateKbps ?: 256).toString())
     }
     val audioRecoveryChoices = remember(failedState) {
-        val rec = failedState?.recommendedAudioBitrateKbps ?: 256
-        val src = failedState?.sourceAudioBitrateKbps ?: 0
-        val base = if (rec > 320 || src > 320) {
-            listOf(192, 256, 320, 384, 512)
-        } else {
-            listOf(128, 192, 256, 320)
-        }
-        (base + rec).distinct().sorted()
+        Media3CompatibilityAdvisor.audioRecoveryBitrateChoices(
+            sourceKbps = failedState?.sourceAudioBitrateKbps,
+            isLosslessSource = failedState?.isLosslessSourceAudio == true,
+            recommendedKbps = failedState?.recommendedAudioBitrateKbps ?: 256,
+            maxKbps = 768
+        )
     }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
 
@@ -549,6 +553,17 @@ fun TurboProcessingScreen(
     }
 
     if (showAudioConvertDialog && canOfferAudioConvert && failedState != null && isActiveStage) {
+        val normalizedRecoveryKbps = FfmpegMath.normalizeAudioBitrate(
+            raw = recoveryAudioInput,
+            defaultKbps = failedState.recommendedAudioBitrateKbps,
+            maxKbps = 768
+        )
+        val typedRecoveryKbps = FfmpegMath.parseAudioBitrateInput(recoveryAudioInput)
+        val showRecoveryUpscaleWarning = typedRecoveryKbps != null && FfmpegMath.isAudioBitrateAboveSource(
+            requestedKbps = typedRecoveryKbps,
+            sourceKbps = failedState.sourceAudioBitrateKbps,
+            isLosslessSource = failedState.isLosslessSourceAudio
+        )
         AlertDialog(
             onDismissRequest = { showAudioConvertDialog = false },
             containerColor = MaterialTheme.colorScheme.surface,
@@ -567,7 +582,10 @@ fun TurboProcessingScreen(
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     val diag = failedState.diagnosisSummary
                     if (!diag.isNullOrBlank()) {
                         TurboDiagnosisBannerChip(text = diag)
@@ -596,16 +614,68 @@ fun TurboProcessingScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         audioRecoveryChoices.forEach { kbps ->
+                            val kbpsStr = kbps.toString()
+                            val isSelected = recoveryAudioInput.trim().replace("k", "", ignoreCase = true) == kbpsStr
                             FilterChip(
-                                selected = selectedRecoveryAudioKbps == kbps,
-                                onClick = { selectedRecoveryAudioKbps = kbps },
+                                selected = isSelected,
+                                onClick = { recoveryAudioInput = kbpsStr },
                                 label = {
                                     Text(
-                                        text = "${kbps}k",
+                                        text = if (kbps == failedState.recommendedAudioBitrateKbps) "${kbpsStr}k ★" else "${kbpsStr}k",
                                         style = MonoLabelStyle.copy(fontWeight = FontWeight.SemiBold)
                                     )
-                                }
+                                },
+                                modifier = Modifier.testTag("turbo_audio_kbps_$kbpsStr"),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
                             )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = recoveryAudioInput,
+                        onValueChange = { recoveryAudioInput = it },
+                        label = { Text(strings.customBitrateLabel) },
+                        suffix = { Text("k", style = MonoLabelStyle) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("turbo_audio_bitrate_input")
+                    )
+                    if (showRecoveryUpscaleWarning && failedState.sourceAudioBitrateKbps != null) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("turbo_audio_bitrate_upscale_warning"),
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.68f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.38f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.WarningAmber,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .padding(top = 1.dp)
+                                        .size(16.dp)
+                                )
+                                Text(
+                                    text = strings.audioBitrateUpscaleWarning(
+                                        failedState.sourceAudioBitrateKbps,
+                                        failedState.sourceAudioCodec?.uppercase() ?: "?",
+                                        normalizedRecoveryKbps
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
                         }
                     }
                 }
@@ -614,7 +684,7 @@ fun TurboProcessingScreen(
                 Button(
                     onClick = {
                         showAudioConvertDialog = false
-                        onTryAudioConvertAndRetry(selectedRecoveryAudioKbps)
+                        onTryAudioConvertAndRetry(normalizedRecoveryKbps)
                     },
                     modifier = Modifier.testTag("turbo_audio_convert_confirm_yes")
                 ) {

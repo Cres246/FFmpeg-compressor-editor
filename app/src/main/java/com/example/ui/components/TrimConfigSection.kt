@@ -153,14 +153,13 @@ fun TrimVideoPreviewCard(
     val context = LocalContext.current
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    val (effStart, effEnd, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-
-    val parsedStartSec = effStart?.let { FfmpegMath.parseTimestampToSeconds(it) }
-    val parsedEndSec = effEnd?.let { FfmpegMath.parseTimestampToSeconds(it) }
+    val (previewStartSec, previewEndSec, _) = FfmpegMath.resolveTrimPreviewSeconds(config, media.durationSec)
+    val hasExplicitStart = previewStartSec != null || config.startTimeInput.isNotBlank()
+    val hasExplicitEnd = previewEndSec != null || config.endTimeInput.isNotBlank()
 
     val isEndBeyondDuration = media.durationSec != null &&
-        parsedEndSec != null &&
-        parsedEndSec > media.durationSec + 0.05
+        previewEndSec != null &&
+        previewEndSec > media.durationSec + 0.05
 
     val defaultEndSec = (media.durationSec?.let { (it - 0.25).coerceAtLeast(0.0) } ?: 0.0)
     val lastValid = remember(media.uri, media.durationSec) {
@@ -168,15 +167,15 @@ fun TrimVideoPreviewCard(
     }
 
     val committedStartSec = when {
-        effStart == null -> 0.0
-        parsedStartSec != null -> parsedStartSec
+        !hasExplicitStart -> 0.0
+        previewStartSec != null -> previewStartSec
         else -> lastValid.start
     }
     lastValid.start = committedStartSec
 
     val committedEndSec = when {
-        effEnd == null -> defaultEndSec
-        parsedEndSec != null -> parsedEndSec
+        !hasExplicitEnd -> defaultEndSec
+        previewEndSec != null -> previewEndSec
         else -> lastValid.end
     }
     lastValid.end = committedEndSec
@@ -190,14 +189,14 @@ fun TrimVideoPreviewCard(
     val effectiveEndSec = liveEndOverride ?: committedEndSec
     val effectiveEndBeyond = if (liveEndOverride != null) false else isEndBeyondDuration
 
-    val startLabel = remember(effStart, liveStartOverride, effectiveStartSec, strings) {
-        if (liveStartOverride == null && effStart == null) "00:00.0"
+    val startLabel = remember(hasExplicitStart, liveStartOverride, effectiveStartSec, strings) {
+        if (liveStartOverride == null && !hasExplicitStart) "00:00.0"
         else FfmpegMath.formatKeyframeTime(effectiveStartSec, strings)
     }
-    val endLabel = remember(effEnd, liveEndOverride, effectiveEndSec, media.durationSec, strings) {
+    val endLabel = remember(hasExplicitEnd, liveEndOverride, effectiveEndSec, media.durationSec, strings) {
         when {
             liveEndOverride != null -> FfmpegMath.formatKeyframeTime(effectiveEndSec, strings)
-            effEnd != null -> FfmpegMath.formatKeyframeTime(effectiveEndSec, strings)
+            hasExplicitEnd -> FfmpegMath.formatKeyframeTime(effectiveEndSec, strings)
             media.durationSec != null -> FfmpegMath.formatKeyframeTime(media.durationSec, strings)
             else -> strings.trimEndPlaceholder
         }
@@ -710,9 +709,7 @@ fun TrimTimeAndKeyframeSection(
 ) {
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
-    val (effStart, effEnd, clipDur) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-    val parsedStartSec = effStart?.let { FfmpegMath.parseTimestampToSeconds(it) }
-    val parsedEndSec = effEnd?.let { FfmpegMath.parseTimestampToSeconds(it) }
+    val (parsedStartSec, parsedEndSec, clipDur) = FfmpegMath.resolveTrimPreviewSeconds(config, media.durationSec)
     val isEndBeyondDuration = media.durationSec != null &&
         parsedEndSec != null &&
         parsedEndSec > media.durationSec + 0.05
@@ -720,6 +717,16 @@ fun TrimTimeAndKeyframeSection(
     val liveStart = scrubState?.liveStartSec
     val liveEnd = scrubState?.liveEndSec
     val isActivelyScrubbing = scrubState?.isScrubbing == true && liveStart != null && liveEnd != null
+    val displayedStartInput = if (scrubState?.draggingThumb == ActiveTrimThumb.START && liveStart != null) {
+        FfmpegMath.formatSliderTimestamp(liveStart)
+    } else {
+        config.startTimeInput
+    }
+    val displayedEndInput = if (scrubState?.draggingThumb == ActiveTrimThumb.END && liveEnd != null) {
+        FfmpegMath.formatSliderTimestamp(liveEnd)
+    } else {
+        config.endTimeInput
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -757,18 +764,16 @@ fun TrimTimeAndKeyframeSection(
                         val startLabel = if (isActivelyScrubbing) {
                             FfmpegMath.formatKeyframeTime(liveStart, strings)
                         } else {
-                            effStart?.let {
-                                val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                                if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
-                            } ?: strings.trimStartSummaryDefault
+                            parsedStartSec?.let { FfmpegMath.formatKeyframeTime(it, strings) }
+                                ?: config.startTimeInput.trim().takeIf { it.isNotEmpty() }
+                                ?: strings.trimStartSummaryDefault
                         }
                         val endLabel = if (isActivelyScrubbing) {
                             FfmpegMath.formatKeyframeTime(liveEnd, strings)
                         } else {
-                            effEnd?.let {
-                                val parsed = FfmpegMath.parseTimestampToSeconds(it)
-                                if (parsed != null && !it.contains(':')) FfmpegMath.formatKeyframeTime(parsed, strings) else it
-                            } ?: strings.trimEndPlaceholder
+                            parsedEndSec?.let { FfmpegMath.formatKeyframeTime(it, strings) }
+                                ?: config.endTimeInput.trim().takeIf { it.isNotEmpty() }
+                                ?: strings.trimEndPlaceholder
                         }
                         Text(
                             text = "$startLabel  →  $endLabel",
@@ -826,7 +831,7 @@ fun TrimTimeAndKeyframeSection(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(
-                    value = config.startTimeInput,
+                    value = displayedStartInput,
                     onValueChange = viewModel::updateStartTime,
                     label = { Text(strings.trimStartLabel) },
                     placeholder = {
@@ -843,7 +848,7 @@ fun TrimTimeAndKeyframeSection(
                         .testTag("trim_start_input")
                 )
                 OutlinedTextField(
-                    value = config.endTimeInput,
+                    value = displayedEndInput,
                     onValueChange = viewModel::updateEndTime,
                     label = { Text(strings.trimEndLabel) },
                     placeholder = { Text(strings.trimEndPlaceholder, style = MonoLabelStyle) },

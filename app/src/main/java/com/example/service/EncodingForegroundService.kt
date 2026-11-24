@@ -22,6 +22,7 @@ import com.example.data.FfmpegEngine
 import com.example.data.Media3TurboEngine
 import com.example.data.MediaStoreSaver
 import com.example.data.PreferencesRepository
+import com.example.data.FfmpegStepResult
 import com.example.data.TurboBitratePlan
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
@@ -414,6 +415,11 @@ class EncodingForegroundService : Service() {
 
         fun startRemuxThenTurbo(context: Context, media: MediaInfo, config: ModeConfigState) {
             val s = AppLanguageController.currentStrings()
+            val expectedDur = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
             val initialRemux = EncodingState.Running(
                 modeTitle = s.turboRemuxModeTitle,
                 outputFileName = "turbo_remux.mp4",
@@ -421,8 +427,8 @@ class EncodingForegroundService : Service() {
                 totalPasses = 1,
                 statusMessage = s.turboRemuxStepStatus,
                 currentTimeSec = 0.0,
-                totalDurationSec = media.durationSec,
-                percent = if (media.durationSec != null) 0 else null,
+                totalDurationSec = expectedDur,
+                percent = if (expectedDur != null) 0 else null,
                 speed = "...",
                 sizeKb = 0L,
                 logs = emptyList(),
@@ -451,7 +457,12 @@ class EncodingForegroundService : Service() {
             audioBitrateKbps: Int
         ) {
             val s = AppLanguageController.currentStrings()
-            val safeAb = audioBitrateKbps.coerceIn(64, 512)
+            val safeAb = audioBitrateKbps.coerceIn(32, 768)
+            val expectedDur = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
             val initialAudio = EncodingState.Running(
                 modeTitle = s.turboAudioConvertModeTitle,
                 outputFileName = "turbo_audio_aac.mp4",
@@ -459,8 +470,8 @@ class EncodingForegroundService : Service() {
                 totalPasses = 1,
                 statusMessage = s.turboAudioConvertStepStatus(safeAb),
                 currentTimeSec = 0.0,
-                totalDurationSec = media.durationSec,
-                percent = if (media.durationSec != null) 0 else null,
+                totalDurationSec = expectedDur,
+                percent = if (expectedDur != null) 0 else null,
                 speed = "...",
                 sizeKb = 0L,
                 logs = emptyList(),
@@ -494,6 +505,11 @@ class EncodingForegroundService : Service() {
             val prepFileName = if (isVideoOnlyPrep) "turbo_video_only_prep.mp4" else "turbo_video_audio_prep.mp4"
             val summaryBanner = buildSummaryBanner(media, prepConfig, s)
             val presetLabel = resolvePresetDisplayLabel(prepConfig)
+            val expectedDur = if (turboTargetConfig.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(turboTargetConfig, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
             val initialPrep = EncodingState.Running(
                 modeTitle = prepTitle,
                 outputFileName = prepFileName,
@@ -501,8 +517,8 @@ class EncodingForegroundService : Service() {
                 totalPasses = 1,
                 statusMessage = s.notifPreparing,
                 currentTimeSec = 0.0,
-                totalDurationSec = media.durationSec,
-                percent = if (media.durationSec != null) 0 else null,
+                totalDurationSec = expectedDur,
+                percent = if (expectedDur != null) 0 else null,
                 speed = "...",
                 sizeKb = 0L,
                 logs = emptyList(),
@@ -977,7 +993,7 @@ class EncodingForegroundService : Service() {
                 val s = AppLanguageController.currentStrings()
                 val audioKbps = (jobData.audioConvertBitrateKbps
                     ?: Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(jobData.media))
-                    .coerceIn(64, 512)
+                    .coerceIn(32, 768)
                 val previousJob = synchronized(lifecycleLock) {
                     activeRunOwnerId = jobData.runId
                     startForegroundCompat(
@@ -1347,9 +1363,185 @@ class EncodingForegroundService : Service() {
         }
     }
 
+    private data class TrimPreCutOutcome(
+        val bracket: FfmpegMath.TrimPreCutBracket,
+        val preCutFile: File,
+        val preCutTiming: FfmpegEngine.ClipTimingProbe,
+        val adjustedTargetConfig: ModeConfigState
+    )
+
+    /**
+     * Automatically scans safe bracketing keyframes (`safeStartKf <= origStart`,
+     * `safeEndKf >= origEnd + 0.15s`) when Turbo recovery runs for a [ProcessingMode.TRIM_VIDEO]
+     * sub-range so we never process a 2-hour movie just to export a short clip.
+     */
+    private suspend fun resolveTrimPreCutBracketIfApplicable(
+        media: MediaInfo,
+        targetConfig: ModeConfigState
+    ): FfmpegMath.TrimPreCutBracket? {
+        if (!media.hasVideo || !FfmpegMath.shouldPreCutTrimForTurboPrep(targetConfig, media.durationSec)) {
+            return null
+        }
+        val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(targetConfig, media.durationSec)
+        val origStart = startStr?.let { FfmpegMath.parseTimestampToSeconds(it) }?.coerceAtLeast(0.0) ?: 0.0
+        val origEnd = endStr?.let { FfmpegMath.parseTimestampToSeconds(it) }?.let { endVal ->
+            if (media.durationSec != null && media.durationSec > 0.0) endVal.coerceAtMost(media.durationSec) else endVal
+        }
+        if (origEnd != null && origEnd <= origStart + 0.05) return null
+
+        val cachedStartScan = targetConfig.trimScan.startScan?.takeIf {
+            kotlin.math.abs(it.targetSec - origStart) <= 0.05
+        }
+        val cachedEndScan = origEnd?.let { en ->
+            targetConfig.trimScan.endScan?.takeIf { kotlin.math.abs(it.targetSec - en) <= 0.05 }
+        }
+        val needStartScan = origStart > 0.05 && cachedStartScan == null
+        val endTargetForScan = origEnd?.takeIf {
+            cachedEndScan == null && (media.durationSec == null || it < media.durationSec - 0.5)
+        }
+
+        return try {
+            coroutineScope {
+                val startDef = if (needStartScan) {
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = applicationContext,
+                            uri = media.uri,
+                            targetSec = origStart,
+                            isStart = true,
+                            durationSec = media.durationSec
+                        )
+                    }
+                } else null
+                val endDef = if (endTargetForScan != null) {
+                    async {
+                        FfmpegEngine.scanKeyframes(
+                            context = applicationContext,
+                            uri = media.uri,
+                            targetSec = endTargetForScan,
+                            isStart = false,
+                            durationSec = media.durationSec
+                        )
+                    }
+                } else null
+                FfmpegMath.resolveTrimPreCutBracket(
+                    origStartSec = origStart,
+                    origEndSec = origEnd,
+                    mediaDurationSec = media.durationSec,
+                    startScan = cachedStartScan ?: startDef?.await(),
+                    endScan = cachedEndScan ?: endDef?.await()
+                )
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Silently slices ONLY `[safeStartKf, safeEndKf]` losslessly into a universal `.mkv` clip
+     * (`-noaccurate_seek -c copy -avoid_negative_ts make_zero`) before Audio-Only / Video-Only /
+     * Video+Audio Turbo preparation, keeping video & audio packets 100% locked together and
+     * verifying millimetric PTS alignment via [FfmpegEngine.probeClipTiming].
+     * Falls back cleanly to `null` (full source) if probing or slicing is not viable.
+     */
+    private suspend fun executeSilentLosslessTrimPreCut(
+        runId: Long,
+        media: MediaInfo,
+        targetConfig: ModeConfigState,
+        workDir: File,
+        modeTitle: String,
+        summaryBanner: String,
+        presetLabel: String?,
+        appendLog: (String) -> Unit,
+        currentLogs: () -> List<String>
+    ): TrimPreCutOutcome? {
+        val bracket = resolveTrimPreCutBracketIfApplicable(media, targetConfig) ?: return null
+        if (!EncodingJobController.isRunActive(runId)) return null
+
+        val preCutFile = File(workDir, "turbo_trim_precut.mkv")
+        runCatching { if (preCutFile.exists()) preCutFile.delete() }
+        val s = AppLanguageController.currentStrings()
+        appendLog("${s.logTagStarted} ${s.turboTrimPreCutStatus}")
+
+        EncodingJobController.updateStateIfActive(
+            runId,
+            EncodingState.Running(
+                modeTitle = modeTitle,
+                outputFileName = preCutFile.name,
+                passIndex = 1,
+                totalPasses = 1,
+                statusMessage = s.turboTrimPreCutStatus,
+                currentTimeSec = 0.0,
+                totalDurationSec = bracket.expectedSpanSec,
+                percent = 0,
+                speed = "...",
+                sizeKb = 0L,
+                logs = currentLogs(),
+                summaryBanner = summaryBanner,
+                videoSpecsSummary = null,
+                presetLabel = presetLabel,
+                isHardwareTurbo = false,
+                canSwitchToTurbo = false,
+                isTurboPreRemux = true
+            )
+        )
+
+        val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+        val preCutArgs = FfmpegMath.buildTrimPreCutArgs(
+            inputPath = inputPath,
+            outputPath = preCutFile.absolutePath,
+            bracket = bracket,
+            hasAudio = media.hasAudio
+        )
+        val stepResult = FfmpegEngine.executeStep(
+            args = preCutArgs,
+            expectedDurationSec = bracket.expectedSpanSec,
+            onProgress = { _, _, _, _ ->
+                if (EncodingJobController.isRunActive(runId)) {
+                    cpuBooster.pulseIfDue()
+                }
+            },
+            onLogLine = { line ->
+                if (EncodingJobController.isRunActive(runId)) {
+                    appendLog(line)
+                }
+            }
+        )
+        if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
+            runCatching { preCutFile.delete() }
+            return null
+        }
+        if (!stepResult.success || !preCutFile.exists() || preCutFile.length() == 0L) {
+            runCatching { preCutFile.delete() }
+            return null
+        }
+
+        val timing = FfmpegEngine.probeClipTiming(preCutFile)
+        val adjustedCfg = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+            originalTargetConfig = targetConfig,
+            bracket = bracket,
+            preparedDurationSec = timing.durationSec,
+            preparedFirstVideoPtsSec = timing.firstVideoPtsSec
+        )
+        if (adjustedCfg == null) {
+            runCatching { preCutFile.delete() }
+            return null
+        }
+        return TrimPreCutOutcome(
+            bracket = bracket,
+            preCutFile = preCutFile,
+            preCutTiming = timing,
+            adjustedTargetConfig = adjustedCfg
+        )
+    }
+
     /**
      * One-time automatic lossless MP4 remux via FFmpeg (-c copy) followed immediately (without
      * asking the user again) by sliding back to the Media3 car speedometer screen to retry.
+     * When trimming a sub-range, automatically slices only the safe keyframe bracket instead of
+     * remuxing the entire movie, then adjusts the Media3 clip range millimetrically.
      */
     private suspend fun runRemuxThenTurboPipeline(
         runId: Long,
@@ -1381,96 +1573,138 @@ class EncodingForegroundService : Service() {
         var handedOffToTurbo = false
 
         try {
-            val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
-            val remuxArgs = listOf(
-                "-y",
-                "-i", inputPath,
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-c", "copy",
-                "-sn", "-dn",
-                "-avoid_negative_ts", "make_zero",
-                "-max_muxing_queue_size", "1024",
-                "-movflags", "+faststart",
-                remuxFile.absolutePath
-            )
+            val preCutBracket = resolveTrimPreCutBracketIfApplicable(media, config)
+            if (!EncodingJobController.isRunActive(runId)) return
 
-            var lastUiEmitMs = 0L
-            var lastEmittedPct: Int? = null
-            var lastEmittedWholeSec = -1L
-            var lastEmittedTenthMb = -1L
-            var lastLogEmitMs = 0L
-
-            val stepResult = FfmpegEngine.executeStep(
-                args = remuxArgs,
-                expectedDurationSec = media.durationSec,
-                onProgress = { curSec, pct, spd, kb ->
-                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                    cpuBooster.pulseIfDue()
-                    val liveS = AppLanguageController.currentStrings()
-                    val nowMs = SystemClock.elapsedRealtime()
-                    val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
-                    val tenthMb = (kb * 10L) / 1024L
-                    val pctChanged = pct != lastEmittedPct
-                    val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                    if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
-                        lastUiEmitMs = nowMs
-                        lastEmittedPct = pct
-                        lastEmittedWholeSec = wholeSec
-                        lastEmittedTenthMb = tenthMb
-                        EncodingJobController.updateStateIfActive(
-                            runId,
-                            EncodingState.Running(
-                                modeTitle = liveS.turboRemuxModeTitle,
-                                outputFileName = remuxFile.name,
-                                passIndex = 1,
-                                totalPasses = 1,
-                                statusMessage = liveS.turboRemuxStepStatus,
-                                currentTimeSec = wholeSec.toDouble(),
-                                totalDurationSec = media.durationSec,
-                                percent = pct,
-                                speed = spd,
-                                sizeKb = kb,
-                                logs = currentLogs(),
-                                summaryBanner = liveS.bannerRemux,
-                                videoSpecsSummary = null,
-                                presetLabel = null,
-                                isHardwareTurbo = false,
-                                canSwitchToTurbo = false,
-                                isTurboPreRemux = true
-                            )
-                        )
-                    }
-                    updateNotificationThrottled(
-                        runId = runId,
-                        title = "FFmpeg · ${liveS.turboRemuxModeTitle}",
-                        text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), media.durationSec, pct, spd, kb, includePercent = false, strings = liveS),
-                        percent = pct,
-                        passIndex = 1,
-                        totalPasses = 1,
-                        force = false
+            suspend fun executeRemuxAttempt(bracket: FfmpegMath.TrimPreCutBracket?): FfmpegStepResult {
+                runCatching { if (remuxFile.exists()) remuxFile.delete() }
+                val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                val remuxArgs = if (bracket != null) {
+                    FfmpegMath.buildTrimPreCutArgs(
+                        inputPath = inputPath,
+                        outputPath = remuxFile.absolutePath,
+                        bracket = bracket,
+                        hasAudio = media.hasAudio
                     )
-                },
-                onLogLine = { line ->
-                    if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                    appendLog(line)
-                    val nowMs = SystemClock.elapsedRealtime()
-                    if (nowMs - lastLogEmitMs >= 320L) {
-                        lastLogEmitMs = nowMs
-                        val snapshot = currentLogs()
-                        val cur = EncodingJobController.state.value
-                        if (cur is EncodingState.Running && !cur.isHardwareTurbo && cur.logs !== snapshot) {
+                } else {
+                    listOf(
+                        "-y",
+                        "-i", inputPath,
+                        "-map", "0:v:0",
+                        "-map", "0:a:0?",
+                        "-c", "copy",
+                        "-sn", "-dn",
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        remuxFile.absolutePath
+                    )
+                }
+                val expectedDur = bracket?.expectedSpanSec ?: media.durationSec
+                var lastUiEmitMs = 0L
+                var lastEmittedPct: Int? = null
+                var lastEmittedWholeSec = -1L
+                var lastEmittedTenthMb = -1L
+                var lastLogEmitMs = 0L
+
+                return FfmpegEngine.executeStep(
+                    args = remuxArgs,
+                    expectedDurationSec = expectedDur,
+                    onProgress = { curSec, pct, spd, kb ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        cpuBooster.pulseIfDue()
+                        val liveS = AppLanguageController.currentStrings()
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
+                        val tenthMb = (kb * 10L) / 1024L
+                        val pctChanged = pct != lastEmittedPct
+                        val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
+                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                            lastUiEmitMs = nowMs
+                            lastEmittedPct = pct
+                            lastEmittedWholeSec = wholeSec
+                            lastEmittedTenthMb = tenthMb
                             EncodingJobController.updateStateIfActive(
                                 runId,
-                                cur.copy(logs = snapshot)
+                                EncodingState.Running(
+                                    modeTitle = liveS.turboRemuxModeTitle,
+                                    outputFileName = remuxFile.name,
+                                    passIndex = 1,
+                                    totalPasses = 1,
+                                    statusMessage = liveS.turboRemuxStepStatus,
+                                    currentTimeSec = wholeSec.toDouble(),
+                                    totalDurationSec = expectedDur,
+                                    percent = pct,
+                                    speed = spd,
+                                    sizeKb = kb,
+                                    logs = currentLogs(),
+                                    summaryBanner = liveS.bannerRemux,
+                                    videoSpecsSummary = null,
+                                    presetLabel = null,
+                                    isHardwareTurbo = false,
+                                    canSwitchToTurbo = false,
+                                    isTurboPreRemux = true
+                                )
                             )
                         }
+                        updateNotificationThrottled(
+                            runId = runId,
+                            title = "FFmpeg · ${liveS.turboRemuxModeTitle}",
+                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedDur, pct, spd, kb, includePercent = false, strings = liveS),
+                            percent = pct,
+                            passIndex = 1,
+                            totalPasses = 1,
+                            force = false
+                        )
+                    },
+                    onLogLine = { line ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        appendLog(line)
+                        val nowMs = SystemClock.elapsedRealtime()
+                        if (nowMs - lastLogEmitMs >= 320L) {
+                            lastLogEmitMs = nowMs
+                            val snapshot = currentLogs()
+                            val cur = EncodingJobController.state.value
+                            if (cur is EncodingState.Running && !cur.isHardwareTurbo && cur.logs !== snapshot) {
+                                EncodingJobController.updateStateIfActive(
+                                    runId,
+                                    cur.copy(logs = snapshot)
+                                )
+                            }
+                        }
                     }
-                }
-            )
+                )
+            }
 
+            var stepResult = executeRemuxAttempt(preCutBracket)
             if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
                 return
+            }
+
+            var finalTargetConfig = config
+            var finalRemuxMedia = media.copy(extension = "mp4")
+
+            if (preCutBracket != null && stepResult.success && remuxFile.exists() && remuxFile.length() > 0L) {
+                val timing = FfmpegEngine.probeClipTiming(remuxFile)
+                val adjustedCfg = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+                    originalTargetConfig = config,
+                    bracket = preCutBracket,
+                    preparedDurationSec = timing.durationSec,
+                    preparedFirstVideoPtsSec = timing.firstVideoPtsSec
+                )
+                if (adjustedCfg != null) {
+                    finalTargetConfig = adjustedCfg
+                    finalRemuxMedia = media.copy(
+                        extension = "mp4",
+                        durationSec = timing.durationSec ?: preCutBracket.expectedSpanSec ?: media.durationSec
+                    )
+                } else {
+                    // Fallback to full-file remux if seek-cut duration didn't pass sanity verification
+                    stepResult = executeRemuxAttempt(null)
+                    if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
+                        return
+                    }
+                }
             }
 
             if (!stepResult.success || !remuxFile.exists() || remuxFile.length() == 0L) {
@@ -1500,6 +1734,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(report, curS),
                         recommendedAudioBitrateKbps = report.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = false,
@@ -1514,8 +1749,8 @@ class EncodingForegroundService : Service() {
             slideBackToTurboAndRun(
                 runId = runId,
                 startId = startId,
-                media = media.copy(extension = "mp4"),
-                config = config,
+                media = finalRemuxMedia,
+                config = finalTargetConfig,
                 preparedFile = remuxFile,
                 hasTriedRemux = true,
                 hasTriedAudioConvert = false,
@@ -1552,6 +1787,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(report, curS),
                         recommendedAudioBitrateKbps = report.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio
                     )
@@ -1567,8 +1803,10 @@ class EncodingForegroundService : Service() {
 
     /**
      * Progressive Recovery Step 2: Keeps video 100% untouched (-c:v copy) while re-encoding only
-     * the incompatible audio track into high-quality source-matched AAC, then slides automatically
-     * back to the Turbo speedometer screen and retries hardware acceleration.
+     * the incompatible audio track into high-quality source-matched AAC (32..768k), then slides
+     * automatically back to the Turbo speedometer screen and retries hardware acceleration.
+     * When trimming a sub-range, silently pre-cuts ONLY the safe keyframe bracket losslessly first
+     * so audio conversion runs in seconds with millimetric A/V sync (`aresample=async=1:first_pts=0`).
      */
     private suspend fun runAudioConvertThenTurboPipeline(
         runId: Long,
@@ -1585,7 +1823,7 @@ class EncodingForegroundService : Service() {
         var logsSnapshot: List<String> = emptyList()
         val modeLocalizedTitle = config.mode.localizedTitle(s)
         val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
-        val safeAb = audioBitrateKbps.coerceIn(64, 512)
+        val safeAb = audioBitrateKbps.coerceIn(32, 768)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -1602,7 +1840,25 @@ class EncodingForegroundService : Service() {
         var handedOffToTurbo = false
 
         try {
-            val inputPath = FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+            val preCut = executeSilentLosslessTrimPreCut(
+                runId = runId,
+                media = media,
+                targetConfig = config,
+                workDir = audioWorkDir,
+                modeTitle = s.turboAudioConvertModeTitle,
+                summaryBanner = s.bannerAudioOnly(safeAb),
+                presetLabel = null,
+                appendLog = ::appendLog,
+                currentLogs = ::currentLogs
+            )
+            if (!EncodingJobController.isRunActive(runId)) return
+
+            val inputPath = preCut?.preCutFile?.absolutePath
+                ?: FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+            val expectedAudioDur = preCut?.preCutTiming?.durationSec
+                ?: preCut?.bracket?.expectedSpanSec
+                ?: media.durationSec
+
             val audioArgs = listOf(
                 "-y",
                 "-i", inputPath,
@@ -1611,6 +1867,7 @@ class EncodingForegroundService : Service() {
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "${safeAb}k",
+                "-af", "aresample=async=1:first_pts=0",
                 "-sn", "-dn",
                 "-avoid_negative_ts", "make_zero",
                 "-max_muxing_queue_size", "1024",
@@ -1626,7 +1883,7 @@ class EncodingForegroundService : Service() {
 
             val stepResult = FfmpegEngine.executeStep(
                 args = audioArgs,
-                expectedDurationSec = media.durationSec,
+                expectedDurationSec = expectedAudioDur,
                 onProgress = { curSec, pct, spd, kb ->
                     if (!EncodingJobController.isRunActive(runId)) return@executeStep
                     cpuBooster.pulseIfDue()
@@ -1650,7 +1907,7 @@ class EncodingForegroundService : Service() {
                                 totalPasses = 1,
                                 statusMessage = liveS.turboAudioConvertStepStatus(safeAb),
                                 currentTimeSec = wholeSec.toDouble(),
-                                totalDurationSec = media.durationSec,
+                                totalDurationSec = expectedAudioDur,
                                 percent = pct,
                                 speed = spd,
                                 sizeKb = kb,
@@ -1667,7 +1924,7 @@ class EncodingForegroundService : Service() {
                     updateNotificationThrottled(
                         runId = runId,
                         title = "FFmpeg · ${liveS.turboAudioConvertModeTitle}",
-                        text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), media.durationSec, pct, spd, kb, includePercent = false, strings = liveS),
+                        text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedAudioDur, pct, spd, kb, includePercent = false, strings = liveS),
                         percent = pct,
                         passIndex = 1,
                         totalPasses = 1,
@@ -1688,6 +1945,8 @@ class EncodingForegroundService : Service() {
                     }
                 }
             )
+            // Free intermediate lossless pre-cut MKV immediately after audio conversion finishes
+            runCatching { preCut?.preCutFile?.delete() }
 
             if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
                 return
@@ -1711,6 +1970,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(report, curS),
                         recommendedAudioBitrateKbps = safeAb,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = true,
@@ -1720,15 +1980,29 @@ class EncodingForegroundService : Service() {
                 return
             }
 
+            var finalTargetConfig = config
+            var finalDur = media.durationSec
+            if (preCut != null) {
+                val finalTiming = FfmpegEngine.probeClipTiming(audioPrepFile)
+                finalDur = finalTiming.durationSec ?: preCut.preCutTiming.durationSec ?: media.durationSec
+                finalTargetConfig = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+                    originalTargetConfig = config,
+                    bracket = preCut.bracket,
+                    preparedDurationSec = finalTiming.durationSec,
+                    preparedFirstVideoPtsSec = finalTiming.firstVideoPtsSec
+                ) ?: preCut.adjustedTargetConfig
+            }
+
             slideBackToTurboAndRun(
                 runId = runId,
                 startId = startId,
                 media = media.copy(
                     extension = "mp4",
                     audioCodec = "aac",
-                    audioBitrateKbps = safeAb
+                    audioBitrateKbps = safeAb,
+                    durationSec = finalDur
                 ),
-                config = config,
+                config = finalTargetConfig,
                 preparedFile = audioPrepFile,
                 hasTriedRemux = true,
                 hasTriedAudioConvert = true,
@@ -1754,6 +2028,7 @@ class EncodingForegroundService : Service() {
                         recoveryStep = TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO,
                         recommendedAudioBitrateKbps = safeAb,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = true
@@ -1769,9 +2044,11 @@ class EncodingForegroundService : Service() {
     }
 
     /**
-     * Progressive Recovery Step 3: Runs the user's configured Video+Audio CRF encode into a
-     * temporary MP4 (never polluting Gallery), then slides automatically back to the Turbo
-     * speedometer and runs [turboTargetConfig] on the newly compatible file.
+     * Progressive Recovery Step 3/4: Runs the user's configured Video-Only or Video+Audio CRF
+     * encode into a temporary MP4 (never polluting Gallery), then slides automatically back to the
+     * Turbo speedometer and runs [turboTargetConfig] on the newly compatible file.
+     * When [turboTargetConfig] trims a sub-range, silently pre-cuts ONLY the safe keyframe bracket
+     * losslessly first so FFmpeg encodes only the short clip instead of the full movie.
      */
     private suspend fun runVideoAudioPrepThenTurboPipeline(
         runId: Long,
@@ -1811,10 +2088,33 @@ class EncodingForegroundService : Service() {
         var handedOffToTurbo = false
 
         try {
+            val preCut = executeSilentLosslessTrimPreCut(
+                runId = runId,
+                media = media,
+                targetConfig = turboTargetConfig,
+                workDir = prepWorkDir,
+                modeTitle = resolvePrepTitle(s),
+                summaryBanner = summaryBanner,
+                presetLabel = presetLabel,
+                appendLog = ::appendLog,
+                currentLogs = ::currentLogs
+            )
+            if (!EncodingJobController.isRunActive(runId)) return
+
+            val effectivePrepMedia = if (preCut != null) {
+                media.copy(
+                    uri = Uri.fromFile(preCut.preCutFile),
+                    extension = "mkv",
+                    durationSec = preCut.preCutTiming.durationSec ?: preCut.bracket.expectedSpanSec ?: media.durationSec
+                )
+            } else {
+                media
+            }
+
             val passLogPrefix = File(prepWorkDir, "ff2pass_prep").absolutePath
             val inputPlaceholder = "__FFMPEG_LAZY_PREP_INPUT__"
             val steps = FfmpegMath.buildFfmpegSteps(
-                media = media,
+                media = effectivePrepMedia,
                 config = prepConfig,
                 inputTokenProvider = { inputPlaceholder },
                 outputPath = prepFile.absolutePath,
@@ -1828,7 +2128,7 @@ class EncodingForegroundService : Service() {
                 val totalPasses = steps.size
                 val stepArgs = step.args.map { arg ->
                     if (arg == inputPlaceholder) {
-                        FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                        FfmpegEngine.resolveInputPath(applicationContext, effectivePrepMedia.uri)
                     } else {
                         arg
                     }
@@ -1924,6 +2224,10 @@ class EncodingForegroundService : Service() {
                                 isHardwareTurbo = true,
                                 isUnsupportedFormat = true,
                                 hasTriedRemux = true,
+                                sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
+                                isLosslessSourceAudio = media.isLosslessAudio,
+                                hasSourceAudio = media.hasAudio,
                                 hasTriedVideoOnlyConvert = true,
                                 recoveryStep = TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
                             )
@@ -1942,6 +2246,8 @@ class EncodingForegroundService : Service() {
                     return
                 }
             }
+            // Free intermediate lossless pre-cut MKV immediately after CRF prep finishes
+            runCatching { preCut?.preCutFile?.delete() }
 
             if (!EncodingJobController.isRunActive(runId)) return
 
@@ -1961,6 +2267,10 @@ class EncodingForegroundService : Service() {
                         logs = currentLogs(),
                         isHardwareTurbo = true,
                         hasTriedRemux = true,
+                        sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
+                        isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = !isVideoOnlyPrep,
                         hasTriedVideoOnlyConvert = true,
                         hasTriedVideoAudioConvert = !isVideoOnlyPrep,
@@ -1984,6 +2294,7 @@ class EncodingForegroundService : Service() {
             } else {
                 media.copy(
                     extension = "mp4",
+                    durationSec = effectivePrepMedia.durationSec,
                     videoCodec = if (prepConfig.codec == VideoCodecOption.H265) "hevc" else "h264",
                     pixFmt = prepConfig.bitDepth.pixFmt,
                     audioCodec = when {
@@ -1994,11 +2305,23 @@ class EncodingForegroundService : Service() {
                 )
             }
 
+            val finalTurboTargetConfig = if (preCut != null) {
+                val finalTiming = FfmpegEngine.probeClipTiming(prepFile)
+                FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+                    originalTargetConfig = turboTargetConfig,
+                    bracket = preCut.bracket,
+                    preparedDurationSec = finalTiming.durationSec ?: preparedMedia.durationSec,
+                    preparedFirstVideoPtsSec = finalTiming.firstVideoPtsSec
+                ) ?: preCut.adjustedTargetConfig
+            } else {
+                turboTargetConfig
+            }
+
             slideBackToTurboAndRun(
                 runId = runId,
                 startId = startId,
                 media = preparedMedia,
-                config = turboTargetConfig,
+                config = finalTurboTargetConfig,
                 preparedFile = prepFile,
                 hasTriedRemux = true,
                 hasTriedAudioConvert = !isVideoOnlyPrep,
@@ -2021,6 +2344,10 @@ class EncodingForegroundService : Service() {
                         logs = currentLogs(),
                         isHardwareTurbo = true,
                         hasTriedRemux = true,
+                        sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
+                        isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = !isVideoOnlyPrep,
                         hasTriedVideoOnlyConvert = true,
                         hasTriedVideoAudioConvert = !isVideoOnlyPrep,
@@ -2142,7 +2469,7 @@ class EncodingForegroundService : Service() {
         val srcAudioCodec = media.audioCodec?.lowercase(Locale.US).orEmpty()
         val canCopyAudio = wantsAudioCopy && srcAudioCodec in Media3CompatibilityAdvisor.MP4_COPY_SAFE_AUDIO_CODECS
         val targetAudioKbps = (plan?.audioBitrateBps?.div(1000))
-            ?.takeIf { it in 32..512 }
+            ?.takeIf { it in 32..768 }
             ?: Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(media)
         val trimRange = if (config.mode == ProcessingMode.TRIM_VIDEO) {
             FfmpegMath.resolveTrimRange(config, media.durationSec)
@@ -2295,6 +2622,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = initialDiagSummary,
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = false,
@@ -2525,6 +2853,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = if (isTenBitBlocked) curS.turbo10BitNotPreservedTitle else curDiag,
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,
@@ -2561,6 +2890,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(compatReport, curS),
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,
@@ -2623,6 +2953,7 @@ class EncodingForegroundService : Service() {
                                 diagnosisSummary = failS.turboDiagAudioIncompatible(media.audioCodec?.uppercase(Locale.US) ?: "AUDIO"),
                                 recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
+                                sourceAudioCodec = media.audioCodec,
                                 isLosslessSourceAudio = media.isLosslessAudio,
                                 hasSourceAudio = media.hasAudio,
                                 hasTriedAudioConvert = hasTriedAudioConvert,
@@ -2718,6 +3049,7 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(compatReport, curS),
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
+                        sourceAudioCodec = media.audioCodec,
                         isLosslessSourceAudio = media.isLosslessAudio,
                         hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,

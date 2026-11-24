@@ -3,11 +3,16 @@ package com.example
 import com.example.domain.BitDepthOption
 import com.example.domain.FfmpegMath
 import com.example.domain.FpsOption
+import com.example.domain.KeyframePointResult
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
 import com.example.domain.ResolutionOption
+import com.example.domain.TrimCutStrategy
+import com.example.domain.TrimScanState
+import com.example.domain.TrimSubMode
+import com.example.domain.TrimTimeChoice
 import com.example.domain.VideoCodecOption
 import android.net.Uri
 import org.junit.Assert.assertEquals
@@ -592,5 +597,157 @@ class FfmpegMathTest {
             passLogPrefix = "pass"
         ).single().args
         assertTrue("TS AAC must include aac_adtstoasc for MP4 copy", tsArgs.contains("aac_adtstoasc"))
+
+        // VIDEO_AND_AUDIO_CRF includes aresample=async=1:first_pts=0 for zero A/V drift on pre-cut clips
+        val vaArgs = FfmpegMath.buildFfmpegSteps(
+            media = mkvAac,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_AND_AUDIO_CRF, codec = VideoCodecOption.H264),
+            inputTokenProvider = { "in.mkv" },
+            outputPath = "out.mp4",
+            passLogPrefix = "pass"
+        ).single().args
+        assertTrue(vaArgs.contains("-af"))
+        assertTrue(vaArgs.contains("aresample=async=1:first_pts=0"))
+    }
+
+    @Test
+    fun manualKeyframeTakesFinalAuthorityAndPreviewAvoidsFiveMsRoundingSkew() {
+        // 18.447s rounds to 00:18.4, whereas (18.447 + 0.005) = 18.452s would round to 00:18.5!
+        val startScan = KeyframePointResult(
+            targetSec = 20.0,
+            prevKf = 16.0,
+            nextKf = 22.0,
+            recommendedRawSec = 16.005,
+            recommendedDisplay = "00:16.0",
+            nearbyKeyframes = listOf(16.0, 18.447, 22.0)
+        )
+        val endScan = KeyframePointResult(
+            targetSec = 40.0,
+            prevKf = 36.0,
+            nextKf = 42.0,
+            recommendedRawSec = 42.0,
+            recommendedDisplay = "00:42.0",
+            nearbyKeyframes = listOf(36.0, 39.2, 42.0)
+        )
+        // User manually overrides both start (18.447) and end (39.2) away from auto safe prev/next
+        val cfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            startTimeInput = FfmpegMath.formatKeyframeTime(18.447),
+            endTimeInput = FfmpegMath.formatKeyframeTime(39.2),
+            trimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
+            trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES,
+            trimScan = TrimScanState(panelExpanded = true, startScan = startScan, endScan = endScan),
+            selectedStartKfSec = 18.447,
+            selectedEndKfSec = 39.2
+        )
+
+        // FFmpeg range still applies +5ms GOP guard on the USER'S manual keyframe (never prevKf=16.0)
+        val (ffStart, ffEnd, _) = FfmpegMath.resolveTrimRange(cfg, 120.0)
+        assertEquals("18.452", ffStart)
+        assertEquals("39.200", ffEnd)
+
+        // Preview range exposes exact 18.447 (formats as 00:18.4, matching the chip 1:1!)
+        val (prevStart, prevEnd, prevDur) = FfmpegMath.resolveTrimPreviewSeconds(cfg, 120.0)
+        assertEquals(18.447, prevStart!!, 0.0001)
+        assertEquals(39.2, prevEnd!!, 0.0001)
+        assertEquals(20.753, prevDur!!, 0.001)
+        assertEquals("00:18.4", FfmpegMath.formatKeyframeTime(prevStart))
+    }
+
+    @Test
+    fun trimPreCutComputesMillimetricSyncOffsetsAndRejectsCorruptIndices() {
+        val movieDur = 7200.0 // 2-hour 4K MKV movie
+        val targetCfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            trimCutStrategy = TrimCutStrategy.PRECISE_REENCODE,
+            trimTimeChoice = TrimTimeChoice.RAW_USER_TIMES,
+            trimSubMode = TrimSubMode.CRF_AUDIO_COPY,
+            startTimeInput = "1:10:00", // 4200.000s
+            endTimeInput = "1:12:00"    // 4320.000s (120.000s requested clip)
+        )
+        assertTrue(FfmpegMath.shouldPreCutTrimForTurboPrep(targetCfg, movieDur))
+
+        // Nearly full-length trim should NOT pre-cut unnecessarily
+        val fullMovieCfg = targetCfg.copy(startTimeInput = "00:00.2", endTimeInput = "1:59:59")
+        assertFalse(FfmpegMath.shouldPreCutTrimForTurboPrep(fullMovieCfg, movieDur))
+
+        val startScan = KeyframePointResult(
+            targetSec = 4200.0,
+            prevKf = 4197.420,
+            nextKf = 4201.500,
+            recommendedRawSec = 4197.425,
+            recommendedDisplay = "1:09:57.4",
+            nearbyKeyframes = listOf(4193.0, 4197.420, 4201.500)
+        )
+        val endScan = KeyframePointResult(
+            targetSec = 4320.0,
+            prevKf = 4318.0,
+            nextKf = 4323.180,
+            recommendedRawSec = 4323.180,
+            recommendedDisplay = "1:12:03.2",
+            nearbyKeyframes = listOf(4318.0, 4323.180, 4327.0)
+        )
+        val bracket = FfmpegMath.resolveTrimPreCutBracket(
+            origStartSec = 4200.0,
+            origEndSec = 4320.0,
+            mediaDurationSec = movieDur,
+            startScan = startScan,
+            endScan = endScan
+        )!!
+        assertEquals(4197.420, bracket.safeStartKfSec, 0.0001)
+        assertEquals(4323.180, bracket.safeEndKfSec!!, 0.0001)
+        assertEquals(125.760, bracket.expectedSpanSec!!, 0.001)
+
+        // Pre-cut args use -noaccurate_seek +5ms guard, -c copy, and -avoid_negative_ts make_zero
+        val mkvPreCutArgs = FfmpegMath.buildTrimPreCutArgs("movie.mkv", "precut.mkv", bracket, hasAudio = true)
+        assertTrue(mkvPreCutArgs.contains("-noaccurate_seek"))
+        assertEquals("4197.425", mkvPreCutArgs[mkvPreCutArgs.indexOf("-ss") + 1])
+        assertEquals("4323.180", mkvPreCutArgs[mkvPreCutArgs.indexOf("-to") + 1])
+        assertTrue(mkvPreCutArgs.contains("make_zero"))
+        assertFalse("MKV intermediate must not force MP4 +faststart", mkvPreCutArgs.contains("+faststart"))
+
+        val mp4PreCutArgs = FfmpegMath.buildTrimPreCutArgs("movie.mkv", "remux.mp4", bracket, hasAudio = true)
+        assertTrue("MP4 remux pre-cut includes +faststart", mp4PreCutArgs.contains("+faststart"))
+
+        // Case 1: Clean alignment (v0 = 0.000) -> exact [2.580, 122.580], duration = 120.000s
+        val adjustedClean = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+            originalTargetConfig = targetCfg,
+            bracket = bracket,
+            preparedDurationSec = 125.760,
+            preparedFirstVideoPtsSec = 0.0
+        )!!
+        assertEquals("2.580", adjustedClean.startTimeInput)
+        assertEquals("122.580", adjustedClean.endTimeInput)
+
+        // Case 2: Leading audio packet preceded video keyframe by 25ms (v0 = +0.025)
+        // Adjusted clip shifts by exact +0.025 -> [2.605, 122.605], duration STILL exact 120.000s!
+        val adjustedAudioLead = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+            originalTargetConfig = targetCfg,
+            bracket = bracket,
+            preparedDurationSec = 125.785,
+            preparedFirstVideoPtsSec = 0.025
+        )!!
+        assertEquals("2.605", adjustedAudioLead.startTimeInput)
+        assertEquals("122.605", adjustedAudioLead.endTimeInput)
+
+        // Case 3: Corrupt demuxer seek index (duration off by > 3.5s) -> returns null for safe full-source fallback
+        val corruptFallback = FfmpegMath.computeAdjustedTrimConfigAfterPreCut(
+            originalTargetConfig = targetCfg,
+            bracket = bracket,
+            preparedDurationSec = 140.0,
+            preparedFirstVideoPtsSec = 0.0
+        )
+        assertEquals(null, corruptFallback)
+
+        // Case 4: Trim from 00:00 to 00:30 of a 2-hour movie -> no -ss seek needed, only -to!
+        val frontOnlyCfg = targetCfg.copy(startTimeInput = "0", endTimeInput = "30")
+        assertTrue(FfmpegMath.shouldPreCutTrimForTurboPrep(frontOnlyCfg, movieDur))
+        val end30Scan = endScan.copy(targetSec = 30.0, nextKf = 32.5, nearbyKeyframes = listOf(28.0, 32.5, 36.0))
+        val frontBracket = FfmpegMath.resolveTrimPreCutBracket(0.0, 30.0, movieDur, null, end30Scan)!!
+        assertEquals(0.0, frontBracket.safeStartKfSec, 0.0001)
+        assertEquals(32.5, frontBracket.safeEndKfSec!!, 0.0001)
+        val frontArgs = FfmpegMath.buildTrimPreCutArgs("movie.mkv", "precut.mkv", frontBracket, hasAudio = true)
+        assertFalse("Starting at 0.0 must omit -ss", frontArgs.contains("-ss"))
+        assertTrue(frontArgs.contains("-to"))
     }
 }

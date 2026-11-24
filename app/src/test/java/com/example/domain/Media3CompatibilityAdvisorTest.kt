@@ -367,6 +367,19 @@ class Media3CompatibilityAdvisorTest {
         assertEquals(384, Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(media(aCodec = "ac3", aBitrate = 384, aChannels = 6)))
         // Low 96k lossy -> floor 128k high quality
         assertEquals(128, Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(media(aCodec = "mp2", aBitrate = 96, aChannels = 2)))
+        // 754k DTS 5.1 & 768k E-AC-3 5.1 -> faithful 768k recommendation and high-bitrate chip ladder (>384k!)
+        val dts754 = media(aCodec = "dts", aBitrate = 754, aChannels = 6)
+        assertEquals(768, Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(dts754))
+        val choices754 = Media3CompatibilityAdvisor.audioRecoveryBitrateChoices(dts754)
+        assertTrue("754k DTS recovery choices must expose 512k, 640k, and 754k/768k", choices754.containsAll(listOf(384, 512, 640, 754, 768)))
+        assertEquals(choices754.sorted(), choices754)
+
+        val eac3768 = media(aCodec = "eac3", aBitrate = 768, aChannels = 6)
+        assertEquals(768, Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(eac3768))
+        val choices768 = Media3CompatibilityAdvisor.audioRecoveryBitrateChoices(eac3768)
+        assertTrue(choices768.containsAll(listOf(384, 512, 640, 768)))
+        assertEquals(choices768.sorted(), choices768)
+
         // Recovery choices always contain the recommended default and stay sorted
         val choices51 = Media3CompatibilityAdvisor.audioRecoveryBitrateChoices(media(aCodec = "dts", aChannels = 6))
         assertTrue(choices51.contains(384))

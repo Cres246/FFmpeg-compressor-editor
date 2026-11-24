@@ -435,6 +435,7 @@ sealed interface EncodingState {
         val diagnosisSummary: String? = null,
         val recommendedAudioBitrateKbps: Int = 256,
         val sourceAudioBitrateKbps: Int? = null,
+        val sourceAudioCodec: String? = null,
         val isLosslessSourceAudio: Boolean = false,
         val hasSourceAudio: Boolean = true,
         val hasTriedAudioConvert: Boolean = false,

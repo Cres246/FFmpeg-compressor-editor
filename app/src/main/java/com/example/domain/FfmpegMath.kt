@@ -718,7 +718,9 @@ object FfmpegMath {
     }
 
     /**
-     * Computes effective start/end strings and clip duration for Mode 5 (Trim).
+     * Computes effective FFmpeg start/end strings and clip duration for Mode 5 (Trim).
+     * Explicit user-selected keyframes (`selectedStartKfSec` / `selectedEndKfSec`) ALWAYS take
+     * final authority; start keyframes include the +0.005s (+5ms) GOP guard for `-noaccurate_seek`.
      */
     fun resolveTrimRange(
         config: ModeConfigState,
@@ -731,17 +733,17 @@ object FfmpegMath {
             config.trimTimeChoice == TrimTimeChoice.SNAP_KEYFRAMES
 
         val effectiveStart = when {
-            startRaw.isEmpty() -> null
             useKeyframes && config.selectedStartKfSec != null ->
                 formatRawSeconds(config.selectedStartKfSec + 0.005)
+            startRaw.isEmpty() -> null
             useKeyframes && config.trimScan.startScan?.recommendedRawSec != null ->
                 formatRawSeconds(config.trimScan.startScan.recommendedRawSec)
             else -> startRaw
         }
         val effectiveEnd = when {
-            endRaw.isEmpty() -> null
             useKeyframes && config.selectedEndKfSec != null ->
                 formatRawSeconds(config.selectedEndKfSec)
+            endRaw.isEmpty() -> null
             useKeyframes && config.trimScan.endScan?.recommendedRawSec != null ->
                 formatRawSeconds(config.trimScan.endScan.recommendedRawSec)
             else -> endRaw
@@ -751,6 +753,238 @@ object FfmpegMath {
         val ee = if (effectiveEnd == null) mediaDurationSec else parseTimestampToSeconds(effectiveEnd)
         val clipDur = if (ss != null && ee != null && ee > ss) ee - ss else null
         return Triple(effectiveStart, effectiveEnd, clipDur)
+    }
+
+    /**
+     * Exact UI/preview timestamps WITHOUT FFmpeg's +5ms `-noaccurate_seek` GOP guard so that
+     * selected keyframe chips, time text boxes, slider handles, summary bar, and frame preview
+     * thumbnails always agree 1:1 (preventing 0.1s rounding mismatches such as 18.447 + 0.005 -> 18.5).
+     */
+    fun resolveTrimPreviewSeconds(
+        config: ModeConfigState,
+        mediaDurationSec: Double?
+    ): Triple<Double?, Double?, Double?> {
+        val startRaw = config.startTimeInput.trim().replace(" ", "").replace(',', '.')
+        val endRaw = config.endTimeInput.trim().replace(" ", "").replace(',', '.')
+
+        val useKeyframes = config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
+            config.trimTimeChoice == TrimTimeChoice.SNAP_KEYFRAMES
+
+        val startSec = when {
+            useKeyframes && config.selectedStartKfSec != null -> config.selectedStartKfSec
+            startRaw.isEmpty() -> null
+            useKeyframes && config.trimScan.startScan?.prevKf != null -> config.trimScan.startScan.prevKf
+            else -> parseTimestampToSeconds(startRaw)
+        }
+        val endSec = when {
+            useKeyframes && config.selectedEndKfSec != null -> config.selectedEndKfSec
+            endRaw.isEmpty() -> null
+            useKeyframes && config.trimScan.endScan?.nextKf != null -> config.trimScan.endScan.nextKf
+            else -> parseTimestampToSeconds(endRaw)
+        }
+
+        val ss = startSec ?: 0.0
+        val ee = endSec ?: mediaDurationSec
+        val clipDur = if (ee != null && ee > ss) ee - ss else null
+        return Triple(startSec, endSec, clipDur)
+    }
+
+    /**
+     * Safe lossless keyframe bracket around a requested [ProcessingMode.TRIM_VIDEO] range so Turbo
+     * recovery steps (Remux, Audio-Only AAC, Video-Only, Video+Audio) process only the short clip
+     * instead of the entire movie while keeping millimetric A/V sync.
+     */
+    data class TrimPreCutBracket(
+        val origStartSec: Double,
+        val origEndSec: Double?,
+        val safeStartKfSec: Double,
+        val safeEndKfSec: Double?,
+        val expectedSpanSec: Double?
+    )
+
+    /**
+     * True when [config] is a strict sub-range trim that materially benefits from an automatic
+     * lossless keyframe pre-cut before running FFmpeg Turbo preparation.
+     */
+    fun shouldPreCutTrimForTurboPrep(
+        config: ModeConfigState,
+        mediaDurationSec: Double?
+    ): Boolean {
+        if (config.mode != ProcessingMode.TRIM_VIDEO) return false
+        val (startStr, endStr, _) = resolveTrimRange(config, mediaDurationSec)
+        val origStart = startStr?.let { parseTimestampToSeconds(it) }?.coerceAtLeast(0.0) ?: 0.0
+        val origEnd = endStr?.let { parseTimestampToSeconds(it) }?.let { endVal ->
+            if (mediaDurationSec != null && mediaDurationSec > 0.0) endVal.coerceAtMost(mediaDurationSec) else endVal
+        }
+        if (origEnd != null && origEnd <= origStart + 0.05) return false
+        val trimsFront = origStart > 0.5
+        val trimsTail = origEnd != null && mediaDurationSec != null && (mediaDurationSec - origEnd) > 2.0
+        return trimsFront || trimsTail
+    }
+
+    /**
+     * Resolves safe bracketing keyframes (`safeStartKfSec <= origStartSec` and
+     * `safeEndKfSec >= origEndSec + 0.15` when trimming the tail) from FFprobe keyframe scans.
+     * Rejects non-zero broadcast clock offsets (e.g. raw MPEG-TS PCR) so callers safely fall back.
+     */
+    fun resolveTrimPreCutBracket(
+        origStartSec: Double,
+        origEndSec: Double?,
+        mediaDurationSec: Double?,
+        startScan: KeyframePointResult?,
+        endScan: KeyframePointResult?
+    ): TrimPreCutBracket? {
+        val safeOrigStart = origStartSec.coerceAtLeast(0.0)
+        val safeOrigEnd = origEndSec?.let { endVal ->
+            if (mediaDurationSec != null && mediaDurationSec > 0.0) endVal.coerceAtMost(mediaDurationSec) else endVal
+        }
+        if (safeOrigEnd != null && safeOrigEnd <= safeOrigStart + 0.05) return null
+
+        val safeStartKf: Double = if (safeOrigStart <= 0.05) {
+            0.0
+        } else {
+            val strictBefore = startScan?.nearbyKeyframes?.lastOrNull { it <= safeOrigStart + 0.001 }
+            val candidate = strictBefore ?: startScan?.prevKf?.takeIf { it <= safeOrigStart + 0.001 }
+            if (candidate == null || !candidate.isFinite() || candidate < 0.0 || candidate > safeOrigStart + 0.5) {
+                // Keyframe probe returned unusable or non-zero-based clock PTS; cannot guarantee millimetric offset.
+                return null
+            }
+            candidate
+        }
+
+        val safeEndKf: Double? = when {
+            safeOrigEnd == null -> null
+            mediaDurationSec != null && safeOrigEnd >= mediaDurationSec - 0.5 -> null
+            else -> {
+                // Pick the first keyframe safely at or after (origEnd + 0.15s) so B-frames around
+                // origEnd are guaranteed present for Media3's frame-accurate clipping.
+                val comfortableAfter = endScan?.nearbyKeyframes?.firstOrNull { it >= safeOrigEnd + 0.15 }
+                val fallbackAfter = endScan?.nextKf?.takeIf { it >= safeOrigEnd }
+                val candidate = comfortableAfter ?: fallbackAfter
+                when {
+                    candidate == null || !candidate.isFinite() -> null
+                    candidate <= safeStartKf + 0.1 -> null
+                    mediaDurationSec != null && candidate >= mediaDurationSec - 0.1 -> null
+                    else -> candidate
+                }
+            }
+        }
+
+        // Only worth pre-cutting if the bracket actually skips a meaningful chunk of the source
+        val effectiveEnd = safeEndKf ?: mediaDurationSec
+        val expectedSpan = effectiveEnd?.let { (it - safeStartKf).coerceAtLeast(0.1) }
+        if (safeStartKf <= 0.25 && safeEndKf == null) {
+            return null
+        }
+
+        return TrimPreCutBracket(
+            origStartSec = safeOrigStart,
+            origEndSec = safeOrigEnd,
+            safeStartKfSec = safeStartKf,
+            safeEndKfSec = safeEndKf,
+            expectedSpanSec = expectedSpan
+        )
+    }
+
+    /**
+     * Builds zero-reencode lossless keyframe slice FFmpeg arguments (`-noaccurate_seek -c copy`)
+     * into either `.mkv` (universal lossless intermediate accepting DTS/TrueHD/Vorbis/PCM/Hi10P)
+     * or `.mp4` (direct Remux pre-cut).
+     */
+    fun buildTrimPreCutArgs(
+        inputPath: String,
+        outputPath: String,
+        bracket: TrimPreCutBracket,
+        hasAudio: Boolean
+    ): List<String> {
+        val args = mutableListOf("-y")
+        if (bracket.safeStartKfSec > 0.001) {
+            args.addAll(
+                listOf(
+                    "-noaccurate_seek",
+                    "-ss", formatRawSeconds(bracket.safeStartKfSec + 0.005)
+                )
+            )
+        }
+        if (bracket.safeEndKfSec != null) {
+            args.addAll(listOf("-to", formatRawSeconds(bracket.safeEndKfSec)))
+        }
+        args.addAll(listOf("-i", inputPath, "-map", "0:v:0"))
+        if (hasAudio) {
+            args.addAll(listOf("-map", "0:a:0?"))
+        }
+        args.addAll(
+            listOf(
+                "-c", "copy",
+                "-sn", "-dn",
+                "-avoid_negative_ts", "make_zero",
+                "-max_muxing_queue_size", "1024"
+            )
+        )
+        if (outputPath.endsWith(".mp4", ignoreCase = true)) {
+            args.addAll(listOf("-movflags", "+faststart"))
+        }
+        args.add(outputPath)
+        return args
+    }
+
+    /**
+     * Computes the exact millimetric relative trim range inside a pre-cut prepared clip:
+     *
+     * `adjustedStart = (origStartSec - safeStartKfSec) + firstVideoPtsSec`
+     * `adjustedEnd   = (origEndSec   - safeStartKfSec) + firstVideoPtsSec`
+     *
+     * Including `firstVideoPtsSec` accounts for any leading audio packet that preceded
+     * `safeStartKfSec` when `-avoid_negative_ts make_zero` shifted both streams together, keeping
+     * video frames and transcoded AAC samples aligned to 0.000 ms.
+     *
+     * Returns `null` if the probed clip duration fails sanity validation (e.g. corrupt seek index),
+     * signaling the caller to fall back cleanly to the full source file.
+     */
+    fun computeAdjustedTrimConfigAfterPreCut(
+        originalTargetConfig: ModeConfigState,
+        bracket: TrimPreCutBracket,
+        preparedDurationSec: Double?,
+        preparedFirstVideoPtsSec: Double = 0.0
+    ): ModeConfigState? {
+        val requestedDur = bracket.origEndSec?.let { it - bracket.origStartSec }
+        if (preparedDurationSec != null) {
+            if (!preparedDurationSec.isFinite() || preparedDurationSec <= 0.05) return null
+            if (requestedDur != null && preparedDurationSec < requestedDur - 0.35) return null
+            // If both ends were keyframe-bounded and actual cut duration diverges sharply (>3.5s)
+            // from expected keyframe span, the demuxer seek index was unreliable -> fall back safely.
+            if (bracket.safeEndKfSec != null &&
+                bracket.expectedSpanSec != null &&
+                kotlin.math.abs(preparedDurationSec - bracket.expectedSpanSec) > 3.5
+            ) {
+                return null
+            }
+        }
+
+        val safeV0 = preparedFirstVideoPtsSec
+            .takeIf { it.isFinite() && it >= -0.5 && it <= 5.0 }
+            ?.coerceAtLeast(0.0)
+            ?: 0.0
+
+        val adjustedStart = ((bracket.origStartSec - bracket.safeStartKfSec) + safeV0)
+            .coerceAtLeast(0.0)
+        val adjustedEnd = bracket.origEndSec?.let { endOrig ->
+            val rawEnd = (endOrig - bracket.safeStartKfSec) + safeV0
+            if (preparedDurationSec != null) rawEnd.coerceAtMost(preparedDurationSec) else rawEnd
+        }
+
+        if (adjustedEnd != null && adjustedEnd <= adjustedStart + 0.05) return null
+        if (preparedDurationSec != null && adjustedStart >= preparedDurationSec - 0.05) return null
+
+        return originalTargetConfig.copy(
+            startTimeInput = formatRawSeconds(adjustedStart),
+            endTimeInput = adjustedEnd?.let { formatRawSeconds(it) } ?: "",
+            trimCutStrategy = TrimCutStrategy.PRECISE_REENCODE,
+            trimTimeChoice = TrimTimeChoice.RAW_USER_TIMES,
+            selectedStartKfSec = null,
+            selectedEndKfSec = null,
+            trimScan = TrimScanState()
+        )
     }
 
     /**
@@ -1205,7 +1439,13 @@ object FfmpegMath {
                     args.add("-an")
                 } else {
                     val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
-                    args.addAll(listOf("-c:a", "aac", "-b:a", "${ab}k"))
+                    args.addAll(
+                        listOf(
+                            "-c:a", "aac",
+                            "-b:a", "${ab}k",
+                            "-af", "aresample=async=1:first_pts=0"
+                        )
+                    )
                 }
                 args.addAll(
                     listOf(

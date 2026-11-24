@@ -335,7 +335,7 @@ internal object DirectMediaCodecTranscoder {
                             context = context,
                             sourceUri = request.sourceUri,
                             outAudioFile = tmpAudio,
-                            targetBitrateBps = request.audioBitrateBps.coerceIn(32_000, 512_000),
+                            targetBitrateBps = request.audioBitrateBps.coerceIn(32_000, 768_000),
                             clipStartUs = request.clipStartUs,
                             clipEndUs = request.clipEndUs,
                             untrimmedVideoFirstPtsUs = initialVideoPtsUs,

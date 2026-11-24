@@ -446,6 +446,7 @@ interface AppStrings {
     val turboTryRemuxButton: String
     val turboRemuxModeTitle: String
     val turboRemuxStepStatus: String
+    val turboTrimPreCutStatus: String
     val turboAfterRemuxFailedTitle: String
     val turboAfterRemuxFailedBody: String
     val turboAfterRemuxFastHint: String
@@ -811,6 +812,7 @@ object TurkishStrings : AppStrings {
     override val turboTryRemuxButton = "Kayıpsız Format Değişimi Dene"
     override val turboRemuxModeTitle = "Formatı Dönüştür → Turbo"
     override val turboRemuxStepStatus = "MediaCodec için kayıpsız MP4 formatına çevriliyor (-c copy)"
+    override val turboTrimPreCutStatus = "Seçili kesit keyframe sınırından kayıpsız ayrılıyor..."
     override val turboAfterRemuxFailedTitle = "Donanım Hızlandırma Bu Dosyada Desteklenmiyor"
     override val turboAfterRemuxFailedBody = "Kayıpsız format değişimi denendi ancak bu dosyanın video veya ses akışı cihazdaki Android MediaCodec donanım motoruyla uyumlu değil.\n\nBu dosya için ya önce yeniden dönüştürme yapılması ya da doğrudan FFmpeg motorunun kullanılması gerekiyor."
     override val turboAfterRemuxFastHint = "Tavsiye: Hızlı ve sorunsuz sonuç için FFmpeg'i 'fast' (hızlı) preset ile doğrudan kullanabilirsiniz; FFmpeg tüm kodek ve formatları kararlı biçimde işler."
@@ -1210,6 +1212,7 @@ object EnglishStrings : AppStrings {
     override val turboTryRemuxButton = "Try Lossless Format Change"
     override val turboRemuxModeTitle = "Change Format → Turbo"
     override val turboRemuxStepStatus = "Remuxing losslessly to MP4 for MediaCodec (-c copy)"
+    override val turboTrimPreCutStatus = "Losslessly slicing selected trim range at safe keyframes..."
     override val turboAfterRemuxFailedTitle = "Hardware Acceleration Unsupported for This File"
     override val turboAfterRemuxFailedBody = "A lossless format change was tried, but this file's video or audio stream is still incompatible with your device's Android MediaCodec hardware engine.\n\nYou'll need to re-encode the file or use the FFmpeg software engine directly."
     override val turboAfterRemuxFastHint = "Tip: For quick, reliable results, try running FFmpeg directly with the 'fast' preset — FFmpeg handles virtually all codecs and containers."

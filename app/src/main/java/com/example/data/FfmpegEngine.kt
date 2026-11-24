@@ -396,6 +396,78 @@ object FfmpegEngine {
         )
     }
 
+    data class ClipTimingProbe(
+        val firstVideoPtsSec: Double = 0.0,
+        val firstAudioPtsSec: Double? = null,
+        val durationSec: Double? = null
+    )
+
+    /**
+     * Fast (~15ms) header-only probe measuring exact starting video/audio stream PTS and container
+     * duration of a local pre-cut/prepared clip so Media3 trim offsets stay sample-accurate.
+     */
+    suspend fun probeClipTiming(file: File): ClipTimingProbe = withContext(Dispatchers.IO) {
+        if (!file.exists() || file.length() == 0L) return@withContext ClipTimingProbe()
+        ensureSilentLogcat()
+        val info = runCatching {
+            FFprobeKit.getMediaInformation(file.absolutePath)?.mediaInformation
+        }.getOrNull()
+
+        val durationSec = info?.duration?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val streams = info?.streams.orEmpty()
+        val videoStream = streams.firstOrNull { stream ->
+            stream.type?.equals("video", ignoreCase = true) == true &&
+                (runCatching {
+                    stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+                }.getOrNull() ?: 0) != 1
+        }
+        val audioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+
+        var firstVideoPts = videoStream?.getStringProperty("start_time")
+            ?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() }
+        val firstAudioPts = audioStream?.getStringProperty("start_time")
+            ?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() }
+
+        if (firstVideoPts == null) {
+            firstVideoPts = runCatching {
+                val pktSession = FFprobeKit.executeWithArguments(
+                    arrayOf(
+                        "-v", "error",
+                        "-select_streams", "v:0",
+                        "-read_intervals", "%+#1",
+                        "-show_packets",
+                        "-show_entries", "packet=pts_time,dts_time",
+                        "-of", "compact=p=0",
+                        file.absolutePath
+                    )
+                )
+                val out = pktSession.output.orEmpty()
+                var ptsVal: Double? = null
+                var dtsVal: Double? = null
+                for (line in out.lineSequence()) {
+                    for (token in line.split('|')) {
+                        when {
+                            token.startsWith("pts_time=") ->
+                                ptsVal = token.removePrefix("pts_time=").trim().toDoubleOrNull()
+                            token.startsWith("dts_time=") ->
+                                dtsVal = token.removePrefix("dts_time=").trim().toDoubleOrNull()
+                        }
+                    }
+                    if (ptsVal != null || dtsVal != null) break
+                }
+                (ptsVal ?: dtsVal)?.takeIf { it.isFinite() }
+            }.getOrNull()
+        }
+
+        ClipTimingProbe(
+            firstVideoPtsSec = firstVideoPts ?: 0.0,
+            firstAudioPtsSec = firstAudioPts,
+            durationSec = durationSec
+        )
+    }
+
     private fun extractStreamRotationDegrees(
         stream: com.arthenica.ffmpegkit.StreamInformation,
         context: Context,

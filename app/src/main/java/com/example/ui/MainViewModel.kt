@@ -458,7 +458,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (autoRefresh) {
-            scheduleAutoKeyframeRescan(debounceMs = if (isDragFinished) 60L else 240L)
+            scheduleAutoKeyframeRescan(
+                debounceMs = if (isDragFinished) 60L else 240L,
+                syncInputsOnComplete = isDragFinished
+            )
         }
     }
 
@@ -507,21 +510,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun applyNearbyKeyframeToStart(kfSec: Double) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
+        val formatted = FfmpegMath.formatKeyframeTime(kfSec)
         updateConfig { current ->
             current.copy(
+                startTimeInput = formatted,
                 selectedStartKfSec = kfSec,
                 trimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
-                trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES
+                trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES,
+                trimScan = current.trimScan.copy(isScanning = false, error = null)
             )
         }
     }
 
     fun applyNearbyKeyframeToEnd(kfSec: Double) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
+        val formatted = FfmpegMath.formatKeyframeTime(kfSec)
         updateConfig { current ->
             current.copy(
+                endTimeInput = formatted,
                 selectedEndKfSec = kfSec,
                 trimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
-                trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES
+                trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES,
+                trimScan = current.trimScan.copy(isScanning = false, error = null)
             )
         }
     }
@@ -672,7 +685,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val endResult = endDeferred?.await()
 
                 updateConfig {
+                    val pickedStartKf = startResult?.prevKf
+                    val rawEndKf = endResult?.nextKf
+                    val pickedEndKf = if (rawEndKf != null && pickedStartKf != null && rawEndKf <= pickedStartKf + 0.05) {
+                        endResult.nearbyKeyframes.firstOrNull { kf -> kf > pickedStartKf + 0.05 } ?: rawEndKf
+                    } else {
+                        rawEndKf
+                    }
                     it.copy(
+                        startTimeInput = pickedStartKf?.let { kf -> FfmpegMath.formatKeyframeTime(kf) } ?: it.startTimeInput,
+                        endTimeInput = pickedEndKf?.let { kf -> FfmpegMath.formatKeyframeTime(kf) } ?: it.endTimeInput,
                         trimScan = TrimScanState(
                             panelExpanded = true,
                             isScanning = false,
@@ -680,8 +702,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             endScan = endResult,
                             error = null
                         ),
-                        selectedStartKfSec = startResult?.prevKf,
-                        selectedEndKfSec = endResult?.nextKf,
+                        selectedStartKfSec = pickedStartKf,
+                        selectedEndKfSec = pickedEndKf,
                         trimCutStrategy = TrimCutStrategy.LOSSLESS_KEYFRAME,
                         trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES
                     )
@@ -706,8 +728,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Silently re-scans whichever trim endpoint(s) changed once the keyframe picker is open,
      * preserving the untouched endpoint and avoiding validation-error flicker mid-typing.
+     * When [syncInputsOnComplete] is true (slider release), also aligns the changed endpoint's
+     * text input with the newly pre-selected safe keyframe chip.
      */
-    private fun scheduleAutoKeyframeRescan(debounceMs: Long) {
+    private fun scheduleAutoKeyframeRescan(
+        debounceMs: Long,
+        syncInputsOnComplete: Boolean = false
+    ) {
         keyframeScanJob?.cancel()
         keyframeScanJob = viewModelScope.launch {
             if (debounceMs > 0L) {
@@ -781,9 +808,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val mergedStartScan = if (startStillMatches) newStartScan else latest.trimScan.startScan
                     val mergedEndScan = if (endStillMatches) newEndScan else latest.trimScan.endScan
                     val mergedStartKf = if (startStillMatches) newStartScan?.prevKf else latest.selectedStartKfSec
-                    val mergedEndKf = if (endStillMatches) newEndScan?.nextKf else latest.selectedEndKfSec
+                    val rawMergedEndKf = if (endStillMatches) newEndScan?.nextKf else latest.selectedEndKfSec
+                    val mergedEndKf = if (endStillMatches && rawMergedEndKf != null && mergedStartKf != null && rawMergedEndKf <= mergedStartKf + 0.05) {
+                        newEndScan?.nearbyKeyframes?.firstOrNull { kf -> kf > mergedStartKf + 0.05 } ?: rawMergedEndKf
+                    } else {
+                        rawMergedEndKf
+                    }
+
+                    val nextStartInput = if (syncInputsOnComplete && startStillMatches && mergedStartKf != null) {
+                        FfmpegMath.formatKeyframeTime(mergedStartKf)
+                    } else {
+                        latest.startTimeInput
+                    }
+                    val nextEndInput = if (syncInputsOnComplete && endStillMatches && mergedEndKf != null) {
+                        FfmpegMath.formatKeyframeTime(mergedEndKf)
+                    } else {
+                        latest.endTimeInput
+                    }
 
                     latest.copy(
+                        startTimeInput = nextStartInput,
+                        endTimeInput = nextEndInput,
                         trimScan = latest.trimScan.copy(
                             panelExpanded = true,
                             isScanning = false,
