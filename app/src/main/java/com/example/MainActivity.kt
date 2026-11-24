@@ -347,8 +347,8 @@ private fun FFLabAppRoot(
         }
     }
 
-    val targetSizeModes = ProcessingMode.entries.filter { it.category == ModeCategory.TARGET_SIZE }
-    val otherModes = ProcessingMode.entries.filter { it.category == ModeCategory.OTHER }
+    val targetSizeModes = remember { ProcessingMode.entries.filter { it.category == ModeCategory.TARGET_SIZE } }
+    val otherModes = remember { ProcessingMode.entries.filter { it.category == ModeCategory.OTHER } }
 
     val currentStage = when {
         encodingState.isHardwareTurboState() -> AppScreenStage.TURBO_PROCESSING
@@ -361,6 +361,10 @@ private fun FFLabAppRoot(
     var cachedConfig by remember { mutableStateOf<ModeConfigState?>(null) }
     if (uiState.activeConfig != null) {
         cachedConfig = uiState.activeConfig
+    }
+    var cachedMedia by remember { mutableStateOf<com.example.domain.MediaInfo?>(null) }
+    if (uiState.mediaInfo != null) {
+        cachedMedia = uiState.mediaInfo
     }
     var cachedStandardEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
     if (encodingState !is EncodingState.Idle && !encodingState.isHardwareTurboState()) {
@@ -465,7 +469,7 @@ private fun FFLabAppRoot(
 
                     AppScreenStage.CONFIG -> {
                         val activeCfg = uiState.activeConfig ?: cachedConfig
-                        val media = uiState.mediaInfo
+                        val media = uiState.mediaInfo ?: cachedMedia
                         if (activeCfg != null && media != null) {
                             ModeConfigScreen(
                                 media = media,
@@ -643,7 +647,7 @@ private fun FFLabAppRoot(
                                     .padding(innerPadding)
                                     .verticalScroll(rememberScrollState())
                                     .padding(horizontal = 16.dp, vertical = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(9.dp)
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 MediaHeroCard(
                                     mediaInfo = uiState.mediaInfo,
@@ -691,7 +695,7 @@ private fun FFLabAppRoot(
                                     )
                                 }
 
-                                Spacer(Modifier.height(2.dp))
+                                Spacer(Modifier.height(18.dp))
                             }
                         }
                     }

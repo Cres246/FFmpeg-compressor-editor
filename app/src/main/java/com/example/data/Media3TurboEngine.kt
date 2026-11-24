@@ -44,6 +44,7 @@ import com.example.domain.ProcessingMode
 import com.example.domain.ResolutionOption
 import com.example.domain.TrimSubMode
 import com.example.domain.VideoCodecOption
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.nio.ByteBuffer
@@ -447,7 +448,7 @@ object Media3TurboEngine {
         val plan = computeTurboBitratePlan(media, config, probe, hwCaps, aacCaps)
         onPlanResolved(plan)
 
-        // Tier 1: Optimized hardware encoder (CBR for target-size, 2s GOP, chip-validated operatingRate)
+        // Tier 1: Optimized hardware encoder (CBR for target-size, 2s GOP, safe 4K negotiation)
         val attempt1 = executeSingleAttempt(
             context = context,
             media = media,
@@ -465,10 +466,15 @@ object Media3TurboEngine {
             return attempt1
         }
 
+        // Wait for Qualcomm/OEM C2 HAL (e.g. vendor.qti.media.c2) to finish asynchronously
+        // releasing Attempt 1's 4K VPU session + EGL surface before allocating Tier 2.
+        // Without this cooldown, Tier 2 collides 0ms later with Tier 1's still-releasing VPU.
+        runCatching { if (outputFile.exists()) outputFile.delete() }
+        delay(380L)
+
         // Tier 2: Clean minimal hardware MediaCodec format + universal OpenGL HDR->SDR tone-mapping.
         // Solves Qualcomm c2.qti.avc.encoder rejections on FFmpeg lossless-cut clips, HDR10/HLG/DV
         // decoder tone-map failures, and strict OEM profile/level/operating-rate checks.
-        runCatching { if (outputFile.exists()) outputFile.delete() }
         val attempt2 = executeSingleAttempt(
             context = context,
             media = media,
@@ -498,24 +504,45 @@ object Media3TurboEngine {
             config.fps != FpsOption.FPS_30 &&
             (outPixels > 1920L * 1080L || srcFps > 61.0 || !hwCaps.areSizeAndRateSupported(outW, outH, srcFps))
 
-        if (!canTryFpsFallback) {
-            return attempt2
+        if (canTryFpsFallback) {
+            runCatching { if (outputFile.exists()) outputFile.delete() }
+            delay(380L)
+            return executeSingleAttempt(
+                context = context,
+                media = media,
+                sourceUri = sourceUri,
+                probe = probe,
+                hwCaps = hwCaps,
+                aacCaps = aacCaps,
+                plan = plan,
+                config = config,
+                outputFile = outputFile,
+                attemptMode = EncoderAttemptMode.SAFE_FPS_FALLBACK,
+                onProgress = onProgress
+            )
         }
 
-        runCatching { if (outputFile.exists()) outputFile.delete() }
-        return executeSingleAttempt(
-            context = context,
-            media = media,
-            sourceUri = sourceUri,
-            probe = probe,
-            hwCaps = hwCaps,
-            aacCaps = aacCaps,
-            plan = plan,
-            config = config,
-            outputFile = outputFile,
-            attemptMode = EncoderAttemptMode.SAFE_FPS_FALLBACK,
-            onProgress = onProgress
-        )
+        // Final cold-start transient retry: if Tier 2 failed rapidly on first launch while the
+        // device's MediaCodec HAL was still warming up, give it one clean retry after cooldown.
+        if (attempt2.elapsedSec < 3.0) {
+            runCatching { if (outputFile.exists()) outputFile.delete() }
+            delay(450L)
+            return executeSingleAttempt(
+                context = context,
+                media = media,
+                sourceUri = sourceUri,
+                probe = probe,
+                hwCaps = hwCaps,
+                aacCaps = aacCaps,
+                plan = plan,
+                config = config,
+                outputFile = outputFile,
+                attemptMode = EncoderAttemptMode.CLEAN_MINIMAL_HW,
+                onProgress = onProgress
+            )
+        }
+
+        return attempt2
     }
 
     private fun isRecoverableAttemptError(result: Media3TurboResult): Boolean {
@@ -525,7 +552,11 @@ object Media3TurboEngine {
             "ERROR_CODE_ENCODING_FAILED",
             "ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED",
             "ERROR_CODE_DECODING_FORMAT_UNSUPPORTED",
-            "ERROR_CODE_DECODER_INIT_FAILED"
+            "ERROR_CODE_DECODER_INIT_FAILED",
+            "ERROR_CODE_DECODING_FAILED",
+            "ERROR_CODE_AUDIO_PROCESSING_FAILED",
+            "ERROR_CODE_MUXING_FAILED",
+            "ERROR_CODE_UNSPECIFIED"
         )
     }
 
@@ -690,51 +721,87 @@ object Media3TurboEngine {
                 val outPixels = outW.toLong() * outH.toLong()
                 val effectiveFps = if (needsFpsDrop) 30.0 else (srcFps ?: 30.0).coerceIn(15.0, 120.0)
 
+                val isHighResStream = outPixels > 1920L * 1080L
                 val encoderFactory: Codec.EncoderFactory = when (attemptMode) {
                     EncoderAttemptMode.OPTIMIZED_HW -> {
-                        val settingsBuilder = VideoEncoderSettings.Builder()
-                            .setBitrate(plan.videoBitrateBps)
-                            .setiFrameIntervalSeconds(2f)
+                        if (isHighResStream && hwCaps.codecName != null) {
+                            // On >1080p (1440p / 4K / 4K60), strict Qualcomm C2 drivers reject
+                            // Media3 DefaultEncoderFactory's operating-rate=INT_MAX & Level 5.1 locks.
+                            // Use our minimal raw-style MediaFormat directly at full VPU clock speed
+                            // (keeping CBR for strict target-size accuracy), while ensuring any portrait
+                            // fallback delegate uses a finite operatingRate instead of Integer.MAX_VALUE.
+                            val safeFallbackOpRate = (hwCaps.maxFpsForSize(outW, outH) ?: effectiveFps)
+                                .roundToInt()
+                                .coerceIn(30, 120)
+                            val fallbackDelegateSettings = VideoEncoderSettings.Builder()
+                                .setBitrate(plan.videoBitrateBps)
+                                .setiFrameIntervalSeconds(2f)
+                                .setEncoderPerformanceParameters(safeFallbackOpRate, 1)
+                                .apply {
+                                    if (plan.useCbr && hwCaps.supportsCbr) {
+                                        setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                                    } else if (hwCaps.supportsVbr) {
+                                        setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                                    }
+                                    if (videoMime == MimeTypes.VIDEO_H264 &&
+                                        outPixels >= 3840L * 2160L &&
+                                        effectiveFps > 32.0 &&
+                                        hwCaps.supportsAvcHighLevel52
+                                    ) {
+                                        setEncodingProfileLevel(
+                                            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+                                            MediaCodecInfo.CodecProfileLevel.AVCLevel52
+                                        )
+                                    }
+                                }
+                                .build()
+                            val delegateFactory = DefaultEncoderFactory.Builder(context)
+                                .setRequestedVideoEncoderSettings(fallbackDelegateSettings)
+                                .setEnableFallback(true)
+                                .build()
 
-                        if (plan.useCbr && hwCaps.supportsCbr) {
-                            settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-                        } else if (hwCaps.supportsVbr) {
-                            settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
-                        }
+                            CleanHardwareEncoderFactory(
+                                context = context,
+                                delegate = delegateFactory,
+                                preferredCodecName = hwCaps.codecName,
+                                videoCapabilities = hwCaps.videoCapabilities,
+                                aacCaps = aacCaps,
+                                targetVideoMime = videoMime,
+                                targetVideoBitrateBps = plan.videoBitrateBps,
+                                targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
+                                useCbrIfSupported = plan.useCbr && hwCaps.supportsCbr,
+                                maxSupportedFpsForSize = hwCaps.maxFpsForSize(outW, outH)
+                            )
+                        } else {
+                            val settingsBuilder = VideoEncoderSettings.Builder()
+                                .setBitrate(plan.videoBitrateBps)
+                                .setiFrameIntervalSeconds(2f)
 
-                        // Use the hardware VPU's real maximum supported rate for this resolution
-                        // (faster on 720p/1080p chips that support 240-480 fps, and never exceeds
-                        // strict 4K30/4K60 Qualcomm C2 clock budgets).
-                        val chipMaxFps = hwCaps.maxFpsForSize(outW, outH)
-                        val safeOpRate = chipMaxFps?.roundToInt()?.coerceIn(30, 480)
-                            ?: if (outPixels <= 1920L * 1080L) 240 else 120
-                        settingsBuilder.setEncoderPerformanceParameters(
-                            /* operatingRate= */ safeOpRate,
-                            /* priority= */ 1
-                        )
+                            if (plan.useCbr && hwCaps.supportsCbr) {
+                                settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                            } else if (hwCaps.supportsVbr) {
+                                settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                            }
 
-                        // Prevent Media3 from locking 4K 60fps H.264 to AVC Level 5.1 if chip supports 5.2
-                        if (videoMime == MimeTypes.VIDEO_H264 &&
-                            outPixels >= 3840L * 2160L &&
-                            effectiveFps > 32.0 &&
-                            hwCaps.supportsAvcHighLevel52
-                        ) {
-                            settingsBuilder.setEncodingProfileLevel(
-                                MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
-                                MediaCodecInfo.CodecProfileLevel.AVCLevel52
+                            // Use the hardware VPU's real maximum supported rate for <=1080p
+                            val chipMaxFps = hwCaps.maxFpsForSize(outW, outH)
+                            val safeOpRate = chipMaxFps?.roundToInt()?.coerceIn(30, 480) ?: 240
+                            settingsBuilder.setEncoderPerformanceParameters(
+                                /* operatingRate= */ safeOpRate,
+                                /* priority= */ 1
+                            )
+
+                            val defaultFactory = DefaultEncoderFactory.Builder(context)
+                                .setRequestedVideoEncoderSettings(settingsBuilder.build())
+                                .setEnableFallback(true)
+                                .build()
+
+                            AudioBitrateWrapperEncoderFactory(
+                                delegate = defaultFactory,
+                                targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
+                                aacCaps = aacCaps
                             )
                         }
-
-                        val defaultFactory = DefaultEncoderFactory.Builder(context)
-                            .setRequestedVideoEncoderSettings(settingsBuilder.build())
-                            .setEnableFallback(true)
-                            .build()
-
-                        AudioBitrateWrapperEncoderFactory(
-                            delegate = defaultFactory,
-                            targetAudioBitrateBps = plan.audioBitrateBps.takeIf { it > 0 },
-                            aacCaps = aacCaps
-                        )
                     }
 
                     EncoderAttemptMode.CLEAN_MINIMAL_HW,
@@ -749,11 +816,31 @@ object Media3TurboEngine {
                         } else {
                             fallbackAdjustedBps.coerceAtMost(24_000_000)
                         }
-                        // Fallback delegate also carries our exact capped bitrate & 2s GOP (without operatingRate)
-                        // in case portrait/alignment negotiation delegates back to DefaultEncoderFactory.
+                        // Explicitly pass a finite operatingRate to DefaultEncoderFactory so Media3
+                        // NEVER injects KEY_OPERATING_RATE = Integer.MAX_VALUE (2147483647) if
+                        // portrait/alignment negotiation delegates back to DefaultEncoderFactory.
+                        val delegateOpRate = if (attemptMode == EncoderAttemptMode.SAFE_FPS_FALLBACK) {
+                            30
+                        } else {
+                            (hwCaps.maxFpsForSize(outW, outH) ?: effectiveFps).roundToInt().coerceIn(30, 120)
+                        }
                         val fallbackVideoSettings = VideoEncoderSettings.Builder()
                             .setBitrate(cappedBitrate)
                             .setiFrameIntervalSeconds(2f)
+                            .setEncoderPerformanceParameters(delegateOpRate, 1)
+                            .apply {
+                                if (videoMime == MimeTypes.VIDEO_H264 &&
+                                    attemptMode != EncoderAttemptMode.SAFE_FPS_FALLBACK &&
+                                    outPixels >= 3840L * 2160L &&
+                                    effectiveFps > 32.0 &&
+                                    hwCaps.supportsAvcHighLevel52
+                                ) {
+                                    setEncodingProfileLevel(
+                                        MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+                                        MediaCodecInfo.CodecProfileLevel.AVCLevel52
+                                    )
+                                }
+                            }
                             .build()
                         val audioAndFallbackDelegate = DefaultEncoderFactory.Builder(context)
                             .setRequestedVideoEncoderSettings(fallbackVideoSettings)
@@ -930,7 +1017,15 @@ object Media3TurboEngine {
             if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
                 retriever.setDataSource(uri.path)
             } else {
-                retriever.setDataSource(context, uri)
+                val openedDirect = runCatching {
+                    retriever.setDataSource(context, uri)
+                    true
+                }.getOrDefault(false)
+                if (!openedDirect) {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        retriever.setDataSource(pfd.fileDescriptor)
+                    }
+                }
             }
             val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
             val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
@@ -961,7 +1056,15 @@ object Media3TurboEngine {
             if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
                 extractor.setDataSource(uri.path!!)
             } else {
-                extractor.setDataSource(context, uri, null)
+                val openedDirect = runCatching {
+                    extractor.setDataSource(context, uri, null)
+                    true
+                }.getOrDefault(false)
+                if (!openedDirect) {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        extractor.setDataSource(pfd.fileDescriptor)
+                    }
+                }
             }
             for (i in 0 until extractor.trackCount) {
                 val trackFormat = extractor.getTrackFormat(i)
@@ -980,11 +1083,15 @@ object Media3TurboEngine {
                         val sr = runCatching { trackFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrNull()
                         if (sr != null && sr > 0) audioSampleRate = sr
                     }
-                } else if (mime.startsWith("video/") && videoFps == null) {
+                } else if (mime.startsWith("video/")) {
                     if (trackFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                         val fps = runCatching { trackFormat.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
                             .getOrElse { runCatching { trackFormat.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrNull() }
-                        if (fps != null && fps > 1.0) videoFps = fps
+                        if (fps != null && fps in 1.0..240.0) {
+                            if (videoFps == null || fps > videoFps!! + 1.0) {
+                                videoFps = fps
+                            }
+                        }
                     }
                 }
             }

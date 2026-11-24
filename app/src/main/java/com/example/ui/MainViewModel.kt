@@ -60,6 +60,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(WorkbenchUiState())
     val uiState: StateFlow<WorkbenchUiState> = _uiState.asStateFlow()
     private var probeErrorAutoClearJob: Job? = null
+    private var mediaProbeJob: Job? = null
+    private var keyframeScanJob: Job? = null
 
     val encodingState: StateFlow<EncodingState> = EncodingJobController.state
     val appLanguage: StateFlow<AppLanguage> = AppLanguageController.language
@@ -95,7 +97,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onMediaSelected(uri: Uri) {
-        viewModelScope.launch {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
+        mediaProbeJob?.cancel()
+        mediaProbeJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isProbing = true,
@@ -113,6 +118,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         probeError = null
                     )
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (t: Throwable) {
                 val s = AppLanguageController.currentStrings()
                 _uiState.update { it.copy(isProbing = false) }
@@ -175,6 +182,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             customCommandInput = ""
         )
 
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         _uiState.update {
             it.copy(
                 activeConfig = initialConfig,
@@ -188,6 +197,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeConfig() {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         _uiState.update { it.copy(activeConfig = null, validationError = null) }
     }
 
@@ -298,26 +309,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateStartTime(value: String) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         updateConfig {
             it.copy(
                 startTimeInput = value,
                 selectedStartKfSec = null,
-                trimScan = it.trimScan.copy(startScan = null, error = null)
+                trimScan = it.trimScan.copy(isScanning = false, startScan = null, error = null)
             )
         }
     }
 
     fun updateEndTime(value: String) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         updateConfig {
             it.copy(
                 endTimeInput = value,
                 selectedEndKfSec = null,
-                trimScan = it.trimScan.copy(endScan = null, error = null)
+                trimScan = it.trimScan.copy(isScanning = false, endScan = null, error = null)
             )
         }
     }
 
     fun updateTrimRangeFromSlider(startSec: Double, endSec: Double) {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         val formattedStart = FfmpegMath.formatSliderTimestamp(startSec)
         val formattedEnd = FfmpegMath.formatSliderTimestamp(endSec)
         updateConfig {
@@ -465,7 +482,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        viewModelScope.launch {
+        keyframeScanJob?.cancel()
+        keyframeScanJob = viewModelScope.launch {
             updateConfig { it.copy(trimScan = TrimScanState(isScanning = true)) }
             try {
                 val startDeferred = startSec?.let { st ->
@@ -491,6 +509,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         trimTimeChoice = TrimTimeChoice.SNAP_KEYFRAMES
                     )
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (t: Throwable) {
                 val curS = AppLanguageController.currentStrings()
                 updateConfig {
@@ -506,6 +526,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startEncoding() {
+        if (EncodingJobController.state.value is EncodingState.Running) return
         val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
@@ -586,6 +607,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun switchCurrentJobToTurbo() {
+        val cur = EncodingJobController.state.value
+        if (cur !is EncodingState.Running || cur.isHardwareTurbo) return
         val snapshot = EncodingJobController.activeJobSnapshot
         val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
         val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
@@ -593,6 +616,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun tryRemuxThenRetryTurbo() {
+        val cur = EncodingJobController.state.value
+        if (cur !is EncodingState.Failed || !cur.isHardwareTurbo || cur.hasTriedRemux) return
         val snapshot = EncodingJobController.activeJobSnapshot
         val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
         val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
@@ -600,19 +625,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fallbackFromTurboToFfmpeg(useFastPreset: Boolean = false) {
+        val cur = EncodingJobController.state.value
+        if (cur !is EncodingState.Failed || !cur.isHardwareTurbo) return
         val snapshot = EncodingJobController.activeJobSnapshot
         val media = snapshot?.media ?: _uiState.value.mediaInfo ?: return
         val cfg = snapshot?.config ?: _uiState.value.activeConfig ?: return
         val targetCfg = if (useFastPreset) cfg.copy(preset = PresetOption.FAST) else cfg
+        _uiState.update { it.copy(activeConfig = targetCfg, validationError = null) }
         EncodingForegroundService.startEncoding(appContext, media, targetCfg)
     }
 
     fun cancelEncoding() {
-        // Immediately invalidate active run ID, cancel native FFmpeg / Media3, and reset state to Idle
-        EncodingJobController.cancelActiveRun()
+        keyframeScanJob?.cancel()
+        keyframeScanJob = null
         // Return cleanly to the Home screen (Ana Menü) right away
         _uiState.update { it.copy(activeConfig = null, validationError = null) }
-        // Instruct the foreground service to release WakeLock/ADPF boost, clean temp files, and stop
+        // Single atomic cancel: invalidates run ID, cancels native FFmpeg/Media3, and stops ForegroundService
         EncodingForegroundService.cancelEncoding(appContext)
     }
 

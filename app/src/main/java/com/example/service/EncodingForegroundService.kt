@@ -39,10 +39,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -83,6 +86,30 @@ object EncodingJobController {
     fun beginNewRun(): Long {
         val nextId = runCounter.incrementAndGet()
         activeRunId = nextId
+        return nextId
+    }
+
+    /**
+     * Atomically cancels any prior run and transitions immediately into a standard FFmpeg Running
+     * state without waiting for Android's startForegroundService dispatch, eliminating tap-to-slide
+     * latency on both Config -> Processing and Turbo Failed -> FFmpeg Fallback.
+     */
+    fun startStandardRun(
+        media: MediaInfo,
+        config: ModeConfigState,
+        initialRunningState: EncodingState.Running
+    ): Long {
+        val prev = activeRunId
+        if (prev > 0L) {
+            cancelledRunId = prev
+        }
+        val nextId = runCounter.incrementAndGet()
+        activeRunId = nextId
+        val nextJob = PendingEncodingJob(nextId, media, config)
+        pendingJob = nextJob
+        activeJobSnapshot = nextJob
+        hasActiveTurboEngine.set(false)
+        _state.value = initialRunningState
         return nextId
     }
 
@@ -144,6 +171,7 @@ object EncodingJobController {
         val nextJob = PendingEncodingJob(nextId, media, config)
         pendingJob = nextJob
         activeJobSnapshot = nextJob
+        hasActiveTurboEngine.set(false)
         _state.value = initialRemuxState
         return nextId
     }
@@ -151,10 +179,12 @@ object EncodingJobController {
     /**
      * Atomically invalidates the active run so no late FFmpegKit or Media3 progress/log/error
      * callback can ever reopen ProcessingScreen or trap the user, cancels native engines,
-     * and returns to Idle. Never loads Media3 classes if Turbo was never used.
+     * and returns to Idle. Returns the cancelled runId (or 0L if already Idle).
      */
-    fun cancelActiveRun() {
+    fun cancelActiveRun(): Long {
         val current = activeRunId
+        val wasIdle = current == 0L && _state.value is EncodingState.Idle
+        if (wasIdle) return 0L
         if (current > 0L) {
             cancelledRunId = current
         }
@@ -167,9 +197,12 @@ object EncodingJobController {
         if (hasActiveTurboEngine.getAndSet(false)) {
             runCatching { Media3TurboEngine.cancelActive() }
         }
+        return current
     }
 
     fun forceResetToIdle() {
+        activeRunId = 0L
+        pendingJob = null
         activeJobSnapshot = null
         hasActiveTurboEngine.set(false)
         _state.value = EncodingState.Idle
@@ -185,12 +218,46 @@ class EncodingForegroundService : Service() {
         const val ACTION_START_TURBO = "com.example.fflab.ACTION_START_TURBO_ENCODING"
         const val ACTION_REMUX_THEN_TURBO = "com.example.fflab.ACTION_REMUX_THEN_TURBO"
         const val ACTION_CANCEL = "com.example.fflab.ACTION_CANCEL_ENCODING"
+        private const val EXTRA_CANCELLED_RUN_ID = "extra_cancelled_run_id"
 
         fun startEncoding(context: Context, media: MediaInfo, config: ModeConfigState) {
-            val runId = EncodingJobController.beginNewRun()
-            val job = PendingEncodingJob(runId, media, config)
-            EncodingJobController.pendingJob = job
-            EncodingJobController.activeJobSnapshot = job
+            val s = AppLanguageController.currentStrings()
+            val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(s)}"
+            val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
+            val summaryBanner = buildSummaryBanner(media, config, s)
+            val presetLabel = resolvePresetDisplayLabel(config)
+            val canSwitchToTurbo = supportsMedia3HardwareTurbo(media, config)
+            val initialPasses = when (config.mode) {
+                ProcessingMode.DISCORD_20MB,
+                ProcessingMode.WHATSAPP_100MB,
+                ProcessingMode.GMAIL_25MB,
+                ProcessingMode.CUSTOM_SIZE -> 2
+                else -> 1
+            }
+            val expectedDur = if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                FfmpegMath.resolveTrimRange(config, media.durationSec).third ?: media.durationSec
+            } else {
+                media.durationSec
+            }
+            val initialRunning = EncodingState.Running(
+                modeTitle = modeTitle,
+                outputFileName = expectedOutputName,
+                passIndex = 1,
+                totalPasses = initialPasses,
+                statusMessage = s.notifPreparing,
+                currentTimeSec = 0.0,
+                totalDurationSec = expectedDur,
+                percent = if (expectedDur != null) 0 else null,
+                speed = "...",
+                sizeKb = 0L,
+                logs = emptyList(),
+                summaryBanner = summaryBanner,
+                videoSpecsSummary = null,
+                presetLabel = presetLabel,
+                isHardwareTurbo = false,
+                canSwitchToTurbo = canSwitchToTurbo
+            )
+            EncodingJobController.startStandardRun(media, config, initialRunning)
             val intent = Intent(context, EncodingForegroundService::class.java).apply {
                 action = ACTION_START
             }
@@ -275,9 +342,12 @@ class EncodingForegroundService : Service() {
         }
 
         fun cancelEncoding(context: Context) {
-            EncodingJobController.cancelActiveRun()
+            val cancelledId = EncodingJobController.cancelActiveRun()
             val intent = Intent(context, EncodingForegroundService::class.java).apply {
                 action = ACTION_CANCEL
+                if (cancelledId > 0L) {
+                    putExtra(EXTRA_CANCELLED_RUN_ID, cancelledId)
+                }
             }
             runCatching { context.startService(intent) }
         }
@@ -375,6 +445,89 @@ class EncodingForegroundService : Service() {
 
             return (headParts + tailSpecs).joinToString(" · ")
         }
+
+        /**
+         * Unified plain-text summary line for FFmpeg processing screen matching the exact Turbo order:
+         * <20MB · H264 635k · AAC · 1080p · 30 FPS · 8b
+         * (Preset is already shown in Playfair italic beneath the percentage, so it is never repeated here.)
+         */
+        internal fun buildSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
+            val tailSpecs = if (media.hasVideo &&
+                config.mode != ProcessingMode.EXTRACT_AUDIO &&
+                config.mode != ProcessingMode.CUSTOM_COMMAND
+            ) {
+                formatCompactVideoSpecsParts(media, config, isTurbo = false)
+            } else {
+                emptyList()
+            }
+
+            val audioPart = if (!media.hasAudio) s.bannerSilentAudio else "AAC"
+            val audioCopyPart = if (!media.hasAudio) s.bannerSilentAudio else {
+                if (s.language == com.example.domain.AppLanguage.TR) "Ses copy" else "Audio copy"
+            }
+
+            val headParts: List<String> = when (config.mode) {
+                ProcessingMode.DISCORD_20MB,
+                ProcessingMode.WHATSAPP_100MB,
+                ProcessingMode.GMAIL_25MB,
+                ProcessingMode.CUSTOM_SIZE -> {
+                    val mb = when (config.mode) {
+                        ProcessingMode.DISCORD_20MB -> 20.0
+                        ProcessingMode.WHATSAPP_100MB -> 100.0
+                        ProcessingMode.GMAIL_25MB -> 25.0
+                        else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
+                    }
+                    val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput) ?: 1.0
+                    val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(mb)
+                    val ab = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
+                    val vkbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(mb, dur, ab)
+                    listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${vkbps}k", audioPart)
+                }
+                ProcessingMode.TRIM_VIDEO -> {
+                    val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
+                    val range = "${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}"
+                    when (config.trimSubMode) {
+                        TrimSubMode.CRF_AUDIO_COPY -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
+                        TrimSubMode.CRF_AUDIO_AAC -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioPart)
+                        else -> listOf(range, config.trimSubMode.localizedTitle(s))
+                    }
+                }
+                ProcessingMode.REMUX_FORMAT -> listOf(s.bannerRemux)
+                ProcessingMode.AUDIO_ONLY_AAC -> {
+                    val ab = FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)
+                    listOf(s.bannerAudioOnly(ab))
+                }
+                ProcessingMode.VIDEO_ONLY_CRF ->
+                    listOf("${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
+                ProcessingMode.VIDEO_AND_AUDIO_CRF ->
+                    listOf("${config.codec.tag} CRF ${config.codec.crf}", audioPart)
+                ProcessingMode.EXTRACT_AUDIO -> listOf(s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s)))
+                ProcessingMode.CUSTOM_COMMAND -> listOf(s.bannerCustomCmd)
+            }
+
+            return (headParts + tailSpecs).joinToString(" · ")
+        }
+
+        internal fun resolvePresetDisplayLabel(config: ModeConfigState): String? {
+            val usesPreset = when (config.mode) {
+                ProcessingMode.DISCORD_20MB,
+                ProcessingMode.WHATSAPP_100MB,
+                ProcessingMode.GMAIL_25MB,
+                ProcessingMode.CUSTOM_SIZE,
+                ProcessingMode.VIDEO_ONLY_CRF,
+                ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
+                ProcessingMode.TRIM_VIDEO -> config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
+                    config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
+                else -> false
+            }
+            if (!usesPreset) return null
+            return when (config.preset) {
+                com.example.domain.PresetOption.FAST -> "Fast"
+                com.example.domain.PresetOption.MEDIUM -> "Medium"
+                com.example.domain.PresetOption.SLOW -> "Slow"
+                com.example.domain.PresetOption.VERYSLOW -> "Very Slow"
+            }
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -395,13 +548,17 @@ class EncodingForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CANCEL -> {
-                EncodingJobController.cancelActiveRun()
-                activeJob?.cancel()
-                activeJob = null
-                cpuBooster.stop()
-                releaseWakeLock()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                val targetRunId = intent.getLongExtra(EXTRA_CANCELLED_RUN_ID, -1L)
+                val currentRunId = EncodingJobController.currentActiveRunId()
+                if (targetRunId == -1L || currentRunId == 0L || currentRunId == targetRunId) {
+                    EncodingJobController.cancelActiveRun()
+                    activeJob?.cancel()
+                    activeJob = null
+                    cpuBooster.stop()
+                    releaseWakeLock()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
             ACTION_START -> {
                 val jobData = EncodingJobController.pendingJob
@@ -452,8 +609,17 @@ class EncodingForegroundService : Service() {
                 )
                 acquireWakeLock()
                 cpuBooster.stop()
-                activeJob?.cancel()
+                val previousJob = activeJob
+                previousJob?.cancel()
                 activeJob = serviceScope.launch {
+                    // Allow cancelled FFmpeg native threads and its SAF file descriptor to finish
+                    // unwinding cleanly before Media3 opens the same URI and initializes the hardware VPU.
+                    // This runs silently underneath the vertical slide animation with zero perceived delay.
+                    if (previousJob != null) {
+                        withTimeoutOrNull(450L) { runCatching { previousJob.cancelAndJoin() } }
+                        delay(160L)
+                    }
+                    if (!EncodingJobController.isRunActive(jobData.runId)) return@launch
                     runTurboPipeline(
                         runId = jobData.runId,
                         media = jobData.media,
@@ -1411,89 +1577,6 @@ class EncodingForegroundService : Service() {
                 logs = synchronized(collectedLogs) { collectedLogs.toList() }
             )
         )
-    }
-
-    /**
-     * Unified plain-text summary line for FFmpeg processing screen matching the exact Turbo order:
-     * <20MB · H264 635k · AAC · 1080p · 30 FPS · 8b
-     * (Preset is already shown in Playfair italic beneath the percentage, so it is never repeated here.)
-     */
-    private fun buildSummaryBanner(media: MediaInfo, config: ModeConfigState, s: AppStrings): String {
-        val tailSpecs = if (media.hasVideo &&
-            config.mode != ProcessingMode.EXTRACT_AUDIO &&
-            config.mode != ProcessingMode.CUSTOM_COMMAND
-        ) {
-            formatCompactVideoSpecsParts(media, config, isTurbo = false)
-        } else {
-            emptyList()
-        }
-
-        val audioPart = if (!media.hasAudio) s.bannerSilentAudio else "AAC"
-        val audioCopyPart = if (!media.hasAudio) s.bannerSilentAudio else {
-            if (s.language == com.example.domain.AppLanguage.TR) "Ses copy" else "Audio copy"
-        }
-
-        val headParts: List<String> = when (config.mode) {
-            ProcessingMode.DISCORD_20MB,
-            ProcessingMode.WHATSAPP_100MB,
-            ProcessingMode.GMAIL_25MB,
-            ProcessingMode.CUSTOM_SIZE -> {
-                val mb = when (config.mode) {
-                    ProcessingMode.DISCORD_20MB -> 20.0
-                    ProcessingMode.WHATSAPP_100MB -> 100.0
-                    ProcessingMode.GMAIL_25MB -> 25.0
-                    else -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
-                }
-                val dur = media.durationSec ?: FfmpegMath.parsePositiveDouble(config.manualDurationInput) ?: 1.0
-                val defAb = FfmpegMath.defaultAudioBitrateForTwoPass(mb)
-                val ab = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defAb)
-                val vkbps = FfmpegMath.calculateTwoPassVideoBitrateKbps(mb, dur, ab)
-                listOf("<${FfmpegMath.formatMbTag(mb)}MB", "${config.codec.tag} ${vkbps}k", audioPart)
-            }
-            ProcessingMode.TRIM_VIDEO -> {
-                val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, media.durationSec)
-                val range = "${startStr ?: "00:00"}→${endStr ?: s.trimEndPlaceholder}"
-                when (config.trimSubMode) {
-                    TrimSubMode.CRF_AUDIO_COPY -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
-                    TrimSubMode.CRF_AUDIO_AAC -> listOf(range, "${config.codec.tag} CRF ${config.codec.crf}", audioPart)
-                    else -> listOf(range, config.trimSubMode.localizedTitle(s))
-                }
-            }
-            ProcessingMode.REMUX_FORMAT -> listOf(s.bannerRemux)
-            ProcessingMode.AUDIO_ONLY_AAC -> {
-                val ab = FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)
-                listOf(s.bannerAudioOnly(ab))
-            }
-            ProcessingMode.VIDEO_ONLY_CRF ->
-                listOf("${config.codec.tag} CRF ${config.codec.crf}", audioCopyPart)
-            ProcessingMode.VIDEO_AND_AUDIO_CRF ->
-                listOf("${config.codec.tag} CRF ${config.codec.crf}", audioPart)
-            ProcessingMode.EXTRACT_AUDIO -> listOf(s.bannerExtractAudio(config.audioExtractFormat.localizedLabel(s)))
-            ProcessingMode.CUSTOM_COMMAND -> listOf(s.bannerCustomCmd)
-        }
-
-        return (headParts + tailSpecs).joinToString(" · ")
-    }
-
-    private fun resolvePresetDisplayLabel(config: ModeConfigState): String? {
-        val usesPreset = when (config.mode) {
-            ProcessingMode.DISCORD_20MB,
-            ProcessingMode.WHATSAPP_100MB,
-            ProcessingMode.GMAIL_25MB,
-            ProcessingMode.CUSTOM_SIZE,
-            ProcessingMode.VIDEO_ONLY_CRF,
-            ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
-            ProcessingMode.TRIM_VIDEO -> config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_COPY ||
-                config.trimSubMode == com.example.domain.TrimSubMode.CRF_AUDIO_AAC
-            else -> false
-        }
-        if (!usesPreset) return null
-        return when (config.preset) {
-            com.example.domain.PresetOption.FAST -> "Fast"
-            com.example.domain.PresetOption.MEDIUM -> "Medium"
-            com.example.domain.PresetOption.SLOW -> "Slow"
-            com.example.domain.PresetOption.VERYSLOW -> "Very Slow"
-        }
     }
 
     private fun resolveContextualHint(config: ModeConfigState, s: AppStrings): String? {

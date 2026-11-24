@@ -6,7 +6,15 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -84,6 +92,8 @@ import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
+
+private enum class ProcessingPhase { RUNNING, SUCCESS, FAILED, IDLE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -247,74 +257,108 @@ fun ProcessingScreen(
             }
         }
     ) { innerPadding ->
-        LazyColumn(
+        var lastRunning by remember { mutableStateOf<EncodingState.Running?>(null) }
+        var lastSuccess by remember { mutableStateOf<EncodingState.Success?>(null) }
+        var lastFailed by remember { mutableStateOf<EncodingState.Failed?>(null) }
+        when (state) {
+            is EncodingState.Running -> lastRunning = state
+            is EncodingState.Success -> lastSuccess = state
+            is EncodingState.Failed -> lastFailed = state
+            EncodingState.Idle -> Unit
+        }
+        val phase = when (state) {
+            is EncodingState.Running -> ProcessingPhase.RUNNING
+            is EncodingState.Success -> ProcessingPhase.SUCCESS
+            is EncodingState.Failed -> ProcessingPhase.FAILED
+            EncodingState.Idle -> ProcessingPhase.IDLE
+        }
+        AnimatedContent(
+            targetState = phase,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            when (state) {
-                is EncodingState.Running -> {
-                    item {
-                        RunningMonitorCard(state = state)
-                    }
-                    item {
-                        LogConsoleCard(
-                            logs = state.logs,
-                            expanded = showLogs,
-                            onToggle = { showLogs = !showLogs }
-                        )
-                    }
-                }
-
-                is EncodingState.Success -> {
-                    item {
-                        SuccessSummaryBanner(summary = state.summaryMessage)
-                    }
-                    items(state.outputs, key = { it.id }) { output ->
-                        CompletedOutputCard(
-                            output = output,
-                            onOpen = { onOpenOutput(output) },
-                            onShare = { onShareOutput(output) }
-                        )
-                    }
-                    if (state.logs.isNotEmpty()) {
-                        item {
-                            LogConsoleCard(
-                                logs = state.logs,
-                                expanded = showLogs,
-                                onToggle = { showLogs = !showLogs }
-                            )
+            transitionSpec = {
+                (fadeIn(tween(240)) + slideInVertically(tween(260)) { it / 18 }) togetherWith
+                    fadeOut(tween(160))
+            },
+            label = "processing_phase_transition"
+        ) { targetPhase ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when (targetPhase) {
+                    ProcessingPhase.RUNNING -> {
+                        val running = (state as? EncodingState.Running) ?: lastRunning
+                        if (running != null) {
+                            item {
+                                RunningMonitorCard(state = running)
+                            }
+                            item {
+                                LogConsoleCard(
+                                    logs = running.logs,
+                                    expanded = showLogs,
+                                    onToggle = { showLogs = !showLogs }
+                                )
+                            }
                         }
                     }
-                }
 
-                is EncodingState.Failed -> {
-                    item {
-                        FailureBannerCard(
-                            errorMessage = state.errorMessage,
-                            hint = state.hint,
-                            wasCancelled = state.wasCancelled
-                        )
-                    }
-                    if (state.logs.isNotEmpty()) {
-                        item {
-                            LogConsoleCard(
-                                logs = state.logs,
-                                expanded = showLogs,
-                                onToggle = { showLogs = !showLogs }
-                            )
+                    ProcessingPhase.SUCCESS -> {
+                        val success = (state as? EncodingState.Success) ?: lastSuccess
+                        if (success != null) {
+                            item {
+                                SuccessSummaryBanner(summary = success.summaryMessage)
+                            }
+                            items(success.outputs, key = { it.id }) { output ->
+                                CompletedOutputCard(
+                                    output = output,
+                                    onOpen = { onOpenOutput(output) },
+                                    onShare = { onShareOutput(output) }
+                                )
+                            }
+                            if (success.logs.isNotEmpty()) {
+                                item {
+                                    LogConsoleCard(
+                                        logs = success.logs,
+                                        expanded = showLogs,
+                                        onToggle = { showLogs = !showLogs }
+                                    )
+                                }
+                            }
                         }
                     }
-                }
 
-                EncodingState.Idle -> Unit
+                    ProcessingPhase.FAILED -> {
+                        val failed = (state as? EncodingState.Failed) ?: lastFailed
+                        if (failed != null) {
+                            item {
+                                FailureBannerCard(
+                                    errorMessage = failed.errorMessage,
+                                    hint = failed.hint,
+                                    wasCancelled = failed.wasCancelled
+                                )
+                            }
+                            if (failed.logs.isNotEmpty()) {
+                                item {
+                                    LogConsoleCard(
+                                        logs = failed.logs,
+                                        expanded = showLogs,
+                                        onToggle = { showLogs = !showLogs }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    ProcessingPhase.IDLE -> Unit
+                }
             }
         }
     }
 
-    if (showTurboConfirmDialog && state is EncodingState.Running && state.canSwitchToTurbo) {
+    if (showTurboConfirmDialog && isActiveStage && state is EncodingState.Running && state.canSwitchToTurbo) {
         AlertDialog(
             onDismissRequest = { showTurboConfirmDialog = false },
             containerColor = MaterialTheme.colorScheme.surface,
@@ -457,8 +501,13 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
             Spacer(Modifier.height(16.dp))
 
             if (state.percent != null) {
+                val smoothProgress by animateFloatAsState(
+                    targetValue = (state.percent / 100f).coerceIn(0f, 1f),
+                    animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+                    label = "ffmpeg_linear_progress"
+                )
                 LinearProgressIndicator(
-                    progress = { (state.percent / 100f).coerceIn(0f, 1f) },
+                    progress = { smoothProgress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(10.dp)

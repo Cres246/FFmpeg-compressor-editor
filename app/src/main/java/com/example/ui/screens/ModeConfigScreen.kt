@@ -3,6 +3,12 @@ package com.example.ui.screens
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -185,7 +191,11 @@ fun ModeConfigScreen(
                         .navigationBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    if (!validationError.isNullOrBlank()) {
+                    AnimatedVisibility(
+                        visible = !validationError.isNullOrBlank(),
+                        enter = fadeIn(tween(180)) + expandVertically(tween(200)),
+                        exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
+                    ) {
                         Row(
                             modifier = Modifier.padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -198,7 +208,7 @@ fun ModeConfigScreen(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = validationError,
+                                text = validationError.orEmpty(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )

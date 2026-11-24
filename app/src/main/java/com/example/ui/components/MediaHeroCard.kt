@@ -1,6 +1,9 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -78,14 +81,20 @@ fun MediaHeroCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
+                .padding(horizontal = 14.dp, vertical = 9.dp)
         ) {
             when {
                 isProbing -> {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -106,14 +115,12 @@ fun MediaHeroCard(
                 mediaInfo == null -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 2.dp, bottom = 2.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
-                                modifier = Modifier.size(42.dp),
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.size(34.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer,
                                 border = BorderStroke(1.dp, primary.copy(alpha = 0.16f))
                             ) {
@@ -122,14 +129,14 @@ fun MediaHeroCard(
                                         imageVector = Icons.Rounded.Movie,
                                         contentDescription = strings.selectSourceMedia,
                                         tint = primary,
-                                        modifier = Modifier.size(22.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
-                            Spacer(Modifier.width(12.dp))
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 text = strings.selectSourceMedia,
-                                style = MaterialTheme.typography.headlineSmall.copy(
+                                style = MaterialTheme.typography.titleLarge.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -139,7 +146,7 @@ fun MediaHeroCard(
                             )
                         }
 
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(9.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -278,7 +285,7 @@ fun MediaHeroCard(
                             }
                         }
 
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
 
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),

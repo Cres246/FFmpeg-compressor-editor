@@ -3,9 +3,15 @@ package com.example.ui.screens
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -94,6 +100,8 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+private enum class TurboPhase { RUNNING, SUCCESS, FAILED, IDLE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -264,52 +272,86 @@ fun TurboProcessingScreen(
             }
         }
     ) { innerPadding ->
-        LazyColumn(
+        var lastRunning by remember { mutableStateOf<EncodingState.Running?>(null) }
+        var lastSuccess by remember { mutableStateOf<EncodingState.Success?>(null) }
+        var lastFailed by remember { mutableStateOf<EncodingState.Failed?>(null) }
+        when (state) {
+            is EncodingState.Running -> lastRunning = state
+            is EncodingState.Success -> lastSuccess = state
+            is EncodingState.Failed -> lastFailed = state
+            EncodingState.Idle -> Unit
+        }
+        val phase = when (state) {
+            is EncodingState.Running -> TurboPhase.RUNNING
+            is EncodingState.Success -> TurboPhase.SUCCESS
+            is EncodingState.Failed -> TurboPhase.FAILED
+            EncodingState.Idle -> TurboPhase.IDLE
+        }
+        AnimatedContent(
+            targetState = phase,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            when (state) {
-                is EncodingState.Running -> {
-                    item {
-                        TurboSpeedometerHeroCard(state = state)
+            transitionSpec = {
+                (fadeIn(tween(240)) + slideInVertically(tween(260)) { it / 18 }) togetherWith
+                    fadeOut(tween(160))
+            },
+            label = "turbo_phase_transition"
+        ) { targetPhase ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                when (targetPhase) {
+                    TurboPhase.RUNNING -> {
+                        val running = (state as? EncodingState.Running) ?: lastRunning
+                        if (running != null) {
+                            item {
+                                TurboSpeedometerHeroCard(state = running)
+                            }
+                            item {
+                                TurboPreservedSpecsCard(state = running)
+                            }
+                        }
                     }
-                    item {
-                        TurboPreservedSpecsCard(state = state)
-                    }
-                }
 
-                is EncodingState.Success -> {
-                    item {
-                        TurboSuccessBanner(
-                            summary = state.summaryMessage,
-                            elapsedSec = state.elapsedSec
-                        )
+                    TurboPhase.SUCCESS -> {
+                        val success = (state as? EncodingState.Success) ?: lastSuccess
+                        if (success != null) {
+                            item {
+                                TurboSuccessBanner(
+                                    summary = success.summaryMessage,
+                                    elapsedSec = success.elapsedSec
+                                )
+                            }
+                            items(success.outputs, key = { it.id }) { output ->
+                                TurboCompletedOutputCard(
+                                    output = output,
+                                    onOpen = { onOpenOutput(output) },
+                                    onShare = { onShareOutput(output) }
+                                )
+                            }
+                        }
                     }
-                    items(state.outputs, key = { it.id }) { output ->
-                        TurboCompletedOutputCard(
-                            output = output,
-                            onOpen = { onOpenOutput(output) },
-                            onShare = { onShareOutput(output) }
-                        )
-                    }
-                }
 
-                is EncodingState.Failed -> {
-                    item {
-                        TurboFailureWarningCard(
-                            isUnsupportedFormat = state.isUnsupportedFormat,
-                            hasTriedRemux = state.hasTriedRemux,
-                            errorMessage = state.errorMessage,
-                            hint = state.hint
-                        )
+                    TurboPhase.FAILED -> {
+                        val failed = (state as? EncodingState.Failed) ?: lastFailed
+                        if (failed != null) {
+                            item {
+                                TurboFailureWarningCard(
+                                    isUnsupportedFormat = failed.isUnsupportedFormat,
+                                    hasTriedRemux = failed.hasTriedRemux,
+                                    errorMessage = failed.errorMessage,
+                                    hint = failed.hint
+                                )
+                            }
+                        }
                     }
-                }
 
-                EncodingState.Idle -> Unit
+                    TurboPhase.IDLE -> Unit
+                }
             }
         }
     }
