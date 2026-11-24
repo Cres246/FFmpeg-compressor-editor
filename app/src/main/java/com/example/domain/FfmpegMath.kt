@@ -56,14 +56,15 @@ object FfmpegMath {
     ): String? {
         val target = resolution.targetShort
         val lMax = resolution.maxLong
+        val evenFallback = if (needsEvenScale) "scale=trunc(iw/2)*2:trunc(ih/2)*2" else null
         if (target == null || lMax == null) {
-            return if (needsEvenScale) "scale=trunc(iw/2)*2:trunc(ih/2)*2" else null
+            return evenFallback
         }
         return if (width != null && height != null && width > 0 && height > 0) {
             when {
-                height > width -> "scale=$target:-2"
-                width.toLong() * 9L > height.toLong() * 16L -> "scale=$lMax:-2"
-                else -> "scale=-2:$target"
+                height > width -> if (width <= target) evenFallback else "scale=$target:-2"
+                width.toLong() * 9L > height.toLong() * 16L -> if (width <= lMax) evenFallback else "scale=$lMax:-2"
+                else -> if (height <= target) evenFallback else "scale=-2:$target"
             }
         } else {
             "scale=-2:$target"
@@ -71,12 +72,85 @@ object FfmpegMath {
     }
 
     /**
-     * Normalizes audio bitrate input (strips k/K, clamps 32..maxKbps, falls back to default).
+     * Normalizes audio bitrate input (strips k/K, clamps positive numbers to 32..maxKbps,
+     * falls back to default when blank or non-numeric).
      */
     fun normalizeAudioBitrate(raw: String, defaultKbps: Int, maxKbps: Int = 768): Int {
         val cleaned = raw.trim().replace("k", "", ignoreCase = true)
         val parsed = cleaned.toIntOrNull()
-        return if (parsed != null && parsed in 32..maxKbps) parsed else defaultKbps.coerceIn(32, maxKbps)
+        return if (parsed != null && parsed > 0) {
+            parsed.coerceIn(32, maxKbps)
+        } else {
+            defaultKbps.coerceIn(32, maxKbps)
+        }
+    }
+
+    fun parseAudioBitrateInput(raw: String): Int? =
+        raw.trim().replace("k", "", ignoreCase = true).toIntOrNull()?.takeIf { it > 0 }
+
+    private val STANDARD_AAC_QUICK_KBPS = listOf(64, 128, 192, 256, 320, 384, 512, 640, 768)
+    private val STANDARD_MP3_QUICK_KBPS = listOf(64, 128, 192, 256, 320)
+    private const val AUDIO_SOURCE_TOLERANCE_KBPS = 12
+
+    /**
+     * Returns quick audio bitrate preset chips capped to the source audio quality for lossy tracks
+     * (with +12 kbps tolerance so 126k YouTube/phone AAC still offers the 128k chip, and adding
+     * non-standard source bitrates like 96k/48k directly). Lossless or unknown-bitrate tracks keep
+     * the full preset list up to [maxKbps].
+     */
+    fun resolveAudioBitrateQuickOptions(
+        sourceKbps: Int?,
+        isLosslessSource: Boolean,
+        maxKbps: Int = 768
+    ): List<Int> {
+        val base = (if (maxKbps <= 320) STANDARD_MP3_QUICK_KBPS else STANDARD_AAC_QUICK_KBPS)
+            .filter { it <= maxKbps }
+        if (isLosslessSource || sourceKbps == null || sourceKbps <= 0) {
+            return base
+        }
+        val effectiveCeiling = minOf(maxKbps, sourceKbps + AUDIO_SOURCE_TOLERANCE_KBPS)
+        val filtered = base.filter { it <= effectiveCeiling }.toMutableList()
+        val clampedSource = sourceKbps.coerceIn(32, maxKbps)
+        val nearExisting = filtered.any { kotlin.math.abs(it - clampedSource) <= AUDIO_SOURCE_TOLERANCE_KBPS }
+        if (!nearExisting) {
+            filtered.add(clampedSource)
+            filtered.sort()
+        }
+        return filtered.ifEmpty { listOf(clampedSource) }
+    }
+
+    /**
+     * Picks a smart default audio bitrate that never exceeds a known lossy source's quality
+     * while honoring the mode's base default (e.g. 128k for 2-Pass, 192k for Trim, 256k for CRF).
+     */
+    fun resolveDefaultAudioBitrate(
+        baseDefaultKbps: Int,
+        sourceKbps: Int?,
+        isLosslessSource: Boolean,
+        maxKbps: Int = 768
+    ): Int {
+        val safeBase = baseDefaultKbps.coerceIn(32, maxKbps)
+        if (isLosslessSource || sourceKbps == null || sourceKbps <= 0) {
+            return safeBase
+        }
+        val options = resolveAudioBitrateQuickOptions(sourceKbps, isLosslessSource = false, maxKbps = maxKbps)
+        val highestOption = options.lastOrNull() ?: sourceKbps.coerceIn(32, maxKbps)
+        return minOf(safeBase, highestOption).coerceIn(32, maxKbps)
+    }
+
+    /**
+     * True when the user enters a custom bitrate meaningfully higher than a known lossy source,
+     * which cannot improve audio fidelity and only inflates output size.
+     */
+    fun isAudioBitrateAboveSource(
+        requestedKbps: Int?,
+        sourceKbps: Int?,
+        isLosslessSource: Boolean
+    ): Boolean {
+        if (isLosslessSource || requestedKbps == null || sourceKbps == null || sourceKbps <= 0) {
+            return false
+        }
+        return requestedKbps > sourceKbps + AUDIO_SOURCE_TOLERANCE_KBPS
     }
 
     fun defaultAudioBitrateForTwoPass(targetMb: Double): Int =
@@ -354,9 +428,9 @@ object FfmpegMath {
     }
 
     /**
-     * Exact live telemetry status line matching script's run_ff():
-     * TR: Süre: 24.6 / 61.4 sn (%40) | 1.34x | 4820kb
-     * EN: Time: 24.6 / 61.4 s (40%) | 1.34x | 4820kb
+     * Live telemetry status line formatted with aesthetic MB display (e.g. `15.6mb`):
+     * TR: Süre: 24.6 / 61.4 sn | 1.34x | 15.6mb
+     * EN: Time: 24.6 / 61.4 s | 1.34x | 15.6mb
      */
     fun formatTelemetryLine(
         currentSec: Double,
@@ -368,7 +442,12 @@ object FfmpegMath {
         strings: AppStrings = AppLanguageController.currentStrings()
     ): String {
         val curStr = String.format(Locale.US, "%.1f", currentSec.coerceAtLeast(0.0))
-        val sizePart = if (sizeKb > 0) " | ${sizeKb}kb" else ""
+        val sizePart = if (sizeKb > 0L) {
+            val mb = (sizeKb / 1024.0).coerceAtLeast(0.1)
+            " | ${String.format(Locale.US, "%.1fmb", mb)}"
+        } else {
+            ""
+        }
         val speedPart = speed.ifBlank { "..." }
         val unit = strings.secondsUnitShort
         return if (totalDurationSec != null && totalDurationSec > 0.0) {
@@ -381,14 +460,14 @@ object FfmpegMath {
     }
 
     /**
-     * Computes effective start/end strings and clip duration for Mode 4 (Trim).
+     * Computes effective start/end strings and clip duration for Mode 5 (Trim).
      */
     fun resolveTrimRange(
         config: ModeConfigState,
         mediaDurationSec: Double?
     ): Triple<String?, String?, Double?> {
-        val startRaw = config.startTimeInput.trim().replace(" ", "")
-        val endRaw = config.endTimeInput.trim().replace(" ", "")
+        val startRaw = config.startTimeInput.trim().replace(" ", "").replace(',', '.')
+        val endRaw = config.endTimeInput.trim().replace(" ", "").replace(',', '.')
 
         val useKeyframes = config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME &&
             config.trimTimeChoice == TrimTimeChoice.SNAP_KEYFRAMES
@@ -438,7 +517,7 @@ object FfmpegMath {
             ProcessingMode.WHATSAPP_100MB -> "${base}_${codecTag}${bitTag}_100MB.mp4"
             ProcessingMode.GMAIL_25MB -> "${base}_${codecTag}${bitTag}_25MB.mp4"
             ProcessingMode.CUSTOM_SIZE -> {
-                val mb = parsePositiveDouble(config.targetMbInput) ?: 20.0
+                val mb = parsePositiveDouble(config.targetMbInput) ?: 8.0
                 "${base}_${codecTag}${bitTag}_${formatMbTag(mb)}MB.mp4"
             }
             ProcessingMode.TRIM_VIDEO -> {
@@ -504,7 +583,7 @@ object FfmpegMath {
     }
 
     /**
-     * Builds exact FFmpeg argument list(s) for modes 1–9.
+     * Builds exact FFmpeg argument list(s) for modes 1–10.
      * `inputPlaceholder` can be either a preview string ("$IN") or a real SAF parameter / path.
      */
     fun buildFfmpegSteps(
@@ -534,7 +613,7 @@ object FfmpegMath {
                     ProcessingMode.DISCORD_20MB -> 20.0
                     ProcessingMode.WHATSAPP_100MB -> 100.0
                     ProcessingMode.GMAIL_25MB -> 25.0
-                    else -> parsePositiveDouble(config.targetMbInput) ?: 20.0
+                    else -> parsePositiveDouble(config.targetMbInput) ?: 8.0
                 }
                 val dur = media.durationSec ?: parsePositiveDouble(config.manualDurationInput) ?: 1.0
                 val defAb = defaultAudioBitrateForTwoPass(targetMb)

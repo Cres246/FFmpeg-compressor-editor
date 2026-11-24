@@ -92,27 +92,28 @@ flowchart TD
 
 1. **Gerçek 2-Pass ABR Bit Hızı Formülü ([`FfmpegMath.calculateTwoPassVideoBitrateKbps`](app/src/main/java/com/example/domain/FfmpegMath.kt)):**
    * `totalKb = targetMb * 8000.0 * 0.96`, `vkbps = floor((totalKb / safeDur) - audioBitrateKbps).coerceAtLeast(80)`.
-   * Ondalık `8000` + `%4` (`0.96`) güvenlik payı çıktıyı hem ikili MiB hem ondalık MB sınırlarının (Discord `20 MB`, Gmail `25 MB`, WhatsApp `100 MB`) altında tutar.
+   * Ondalık `8000` + `%4` (`0.96`) güvenlik payı çıktıyı hem ikili MiB hem ondalık MB sınırlarının (Discord `20 MB`, Gmail `25 MB`, WhatsApp `100 MB`) altında tutar. `CUSTOM_SIZE` için tüm katmanlarda ortak varsayılan `8 MB`'dır.
    * Düşük bit hızı uyarısı `<= 120 kbps`; `30 FPS + 720p` önerisi `(dur >= 60s && vkbps < [H.265: 950 | H.264: 1400]) || vkbps < 650`.
-   * Kullanıcı dokunmadıysa (`*Touched == false`): `<= 3 MB` → `64k` ses (aksi `128k`); `< 5 MB` → `30 FPS` + `720p` (kaynak kısa kenarı `> 720` ise).
+   * Kullanıcı dokunmadıysa (`*Touched == false`): `<= 3 MB` → `64k` ses (aksi `128k`, kayıplı kaynak bit hızı tavanı uygulanır); `< 5 MB` → `30 FPS` + `720p` (kaynak kısa kenarı `> 720` ise).
 2. **Kodek, CRF, `hvc1` ve Bit Derinliği:**
    * `H.264 (libx264)` → **`CRF 16`** ve **kesinlikle 8-bit (`yuv420p`)** (`MainViewModel.updateBitDepth` ve UI 10-bit H.264'ü engeller).
    * `H.265 (libx265)` → **`CRF 20`**, kaynak `10bit`/`12bit` ise varsayılan `10-bit (yuv420p10le)`, tüm son çıktılarda `-tag:v hvc1`, 2-Pass'ta `-x265-params log-level=warning:pools=+:pass=1|2:stats=<passLog>.log`.
-3. **3 Yönlü Çözünürlük Ölçekleme ve `EVEN_VF` ([`FfmpegMath.buildScaleFilter`](app/src/main/java/com/example/domain/FfmpegMath.kt)):**
+3. **3 Yönlü Çözünürlük Ölçekleme (Yukarı Ölçekleme Korumalı) ve `EVEN_VF` ([`FfmpegMath.buildScaleFilter`](app/src/main/java/com/example/domain/FfmpegMath.kt)):**
+   * Kaynak zaten hedef çözünürlükten küçük veya eşitse yukarı ölçekleme (upscale) **yapılmaz** (yalnızca tek piksel varsa `EVEN_VF`).
    * Dikey (`height > width`): `scale=<targetShort>:-2`
    * Geniş sinema (`width * 9L > height * 16L`, ör. `3840×1600`): `scale=<maxLong>:-2` (`1920×800`, genişlik taşmasını önler)
    * Standart (`16:9` / `4:3` / `1:1`): `scale=-2:<targetShort>`
    * Orijinal çözünürlükte tek sayılı kenar varsa: `scale=trunc(iw/2)*2:trunc(ih/2)*2`
-4. **Keyframe Tarama ve `+0.005s` Tamponu:**
+4. **Keyframe Tarama, Türkçe Ondalık Virgül ve `+0.005s` Tamponu:**
    * `ffprobe -show_packets -read_intervals` ile kare çözmeden tarama yapılır; yoğun 1s-GOP videolarda `selectCenteredKeyframes` hedef etrafından simetrik en fazla 12 keyframe seçer.
    * Başlangıç keyframe değerine `-noaccurate_seek` sırasında bir önceki GOP'a düşmemek için daima **`+0.005s` (+5ms)** eklenir; bitiş ham `nextKf` olarak kalır.
-   * Alt Mod 1–2 (kayıpsız): `-noaccurate_seek -ss ... -to ... -i ... -avoid_negative_ts make_zero`. Alt Mod 3–4 (hassas CRF): `-noaccurate_seek` olmadan girdi öncesi `-ss` / `-to`.
-5. **Akış Temizliği ve Kapak Resmi Koruması:**
-   * Her video/ses komutunda `-sn -dn` ve MP4'lerde `-movflags +faststart` eklenir.
-   * `FfmpegEngine.probeMedia`, birincil video akışını seçerken `disposition.attached_pic != 1` kontrolüyle gömülü kapak resimlerini atlar.
-   * Ses tavanları: AAC `32..768 kbps`, MP3 (`libmp3lame`) `32..320 kbps`.
+   * Alt Mod 1–2 (kayıpsız): `-noaccurate_seek -ss ... -to ... -i ... -avoid_negative_ts make_zero`. Alt Mod 3–4 (hassas CRF): `-noaccurate_seek` olmadan girdi öncesi `-ss` / `-to`. Kesim girdilerindeki Türkçe ondalık virgül (`10,5`) otomatik noktaya (`10.5`) çevrilir.
+5. **Kaynak Ses Kalitesi Algılama, Tavanlama & Akış Temizliği:**
+   * `FfmpegEngine.probeMedia`, birincil video akışında `disposition.attached_pic != 1` kuralını katı uygular (kapak resmine fallback yapmaz), döndürme (`rotation`/`rotate`/`MediaMetadataRetriever`) bilgisine göre dikey videoların `width`/`height` boyutlarını takas eder ve ses akışının gerçek bit hızı (`audioBitrateKbps`: stream → MKV `BPS` tag → `MediaExtractor` → salt ses dosya boyutu) ile kanal sayısını (`audioChannels`) çıkarır.
+   * Kayıplı kaynaklarda (`!isLosslessAudio`) `AudioBitrateSection` hızlı seçim kutucukları ve varsayılan bit hızı kaynak kalitesine göre (`+12 kbps` toleransla) tavanlanır; kullanıcı özel kutucuğa kaynaktan yüksek değer yazarsa klasik kırmızı uyarı kutusu (`audio_bitrate_upscale_warning`) gösterilir. Kayıpsız kaynaklarda (`FLAC`/`ALAC`/`PCM` vb.) tavan uygulanmaz.
+   * Her video/ses komutunda `-sn -dn` ve MP4'lerde `-movflags +faststart` eklenir. Ses tavanları: AAC `32..768 kbps`, MP3 (`libmp3lame`) `32..320 kbps`.
 6. **AI Uyumlu Özel Komut Ayrıştırıcısı ([`CustomFfmpegParser.kt`](app/src/main/java/com/example/domain/CustomFfmpegParser.kt)):**
-   * Markdown çitlerini, açıklamaları, yorumları, kabuk işaretlerini, akıllı tırnakları/uzun tireleri, çok satırlı devam karakterlerini (`\`, `^`, `` ` ``), değişkenleri ve `rm`/`del` satırlarını temizler; Pass 1 `/dev/null` hatalarını (`-f mp4`, `-movflags`) düzeltir; `palette.png` gibi ara dosyaları `consumedIntermediateFiles` içinde koruyup Galeri'ye çöp kaydetmez.
+   * Markdown çitlerini, madde işaretlerini (`- Açıklama`), açıklamaları, yorumları, kabuk işaretlerini, akıllı tırnakları/uzun tireleri, çok satırlı devam karakterlerini (`\`, `^`, `` ` ``), değişkenleri ve `rm`/`del` satırlarını temizler; Pass 1 `/dev/null` hatalarını (`-f mp4`, `-movflags`) düzeltir; `palette.png` gibi ara dosyaları `consumedIntermediateFiles` içinde koruyup Galeri'ye çöp kaydetmez.
 
 ---
 
@@ -126,7 +127,7 @@ flowchart TD
    * Platform AAC kodlayıcısı kanal başına `160 kbps` (stereo max `320k`) ile sınırlanır (`clampBitrateForChannels`).
 3. **4 Katmanlı Kurtarma Zinciri:**
    * **Tier 1 (Media3 `OPTIMIZED_HW`):** `<= 1080p` için `DefaultEncoderFactory` + sonlu `operatingRate`; `> 1080p` için Qualcomm C2 uyumlu `CleanHardwareEncoderFactory`.
-   * **`450ms` VPU Soğuma** → **Tier 2 ([`DirectMediaCodecTranscoder`](app/src/main/java/com/example/data/DirectMediaCodecTranscoder.kt)):** Kayıpsız kesilmiş kliplerdeki bozuk `elst`/PTS değerlerini temizleyen monotonik PTS + GLES20 Surface + izole `.m4a` ses ön-geçişi + kesirli 30 FPS akümülatörü (`TargetFpsFrameDropper`) + kesimsiz ortak A/V senkron tabanı (`resolveUntrimmedAvBaselineUs`) + erken/çözücü sonrası HDR renk koruyucusu (`ERROR_HDR_NEEDS_OPENGL`).
+   * **`450ms` VPU Soğuma** → **Tier 2 ([`DirectMediaCodecTranscoder`](app/src/main/java/com/example/data/DirectMediaCodecTranscoder.kt)):** Kayıpsız kesilmiş kliplerdeki bozuk `elst`/PTS değerlerini temizleyen monotonik PTS + GLES20 Surface (`KEY_ROTATION=0` ile çift döndürme engelli) + izole `.m4a` ses ön-geçişi (HE-AAC SBR/PS tembel PCM format algılamalı, EOS deadlock korumalı) + kesirli 30 FPS akümülatörü (`TargetFpsFrameDropper`) + kesimsiz ortak A/V senkron tabanı (`resolveUntrimmedAvBaselineUs`) + erken/çözücü sonrası HDR renk koruyucusu (`ERROR_HDR_NEEDS_OPENGL`).
    * **Tier 3a (Direct 30 FPS VBR):** Yalnızca yüksek FPS/4K VPU tavanı aşımında ve HDR değilse çalışır.
    * **Tier 3b (Media3 OpenGL HDR→SDR):** 10-bit HDR10/HLG/Dolby Vision akışları ve son çare uyumluluk için.
    * **Kullanıcı Kurtarma:** Hâlâ kapsayıcı uyumsuzluğu varsa tek tıkla FFmpeg `-c copy` MP4 ön-remux + otomatik kadran ekranına geri dönüş (`runRemuxThenTurboPipeline`), olmazsa tek tıkla FFmpeg (`Fast` veya seçili preset).
@@ -136,14 +137,24 @@ flowchart TD
 ## 5. Çözülen Kritik Buglar (Özet)
 
 * **SAF FD Kapanması (`b7ecbfe`):** 2. geçişte `resolveInputPath` her adım başında taze çağrılır.
-* **Tek Piksel & 21:9 Ölçek Taşması (`b7ecbfe`):** `EVEN_VF` + 3 yönlü `buildScaleFilter`.
+* **Tek Piksel & 21:9 Ölçek Taşması (`b7ecbfe`):** `EVEN_VF` + 3 yönlü `buildScaleFilter` (+ yukarı ölçekleme koruması).
 * **Kayıpsız Kesim GOP Geri Sıçraması (`b7ecbfe`):** Başlangıç keyframe'ine `+0.005s` tamponu.
 * **Honor Magic Capsule Metin Kayması (`b7ecbfe`):** `shortCriticalText <= 4` karakter + özel `ic_stat_pass_*` vektörleri.
 * **CI `debug.keystore` Hatası (`ed21220`):** `.github/workflows/build-apk.yml` içinde otomatik `keytool` üretimi.
 * **ART `java.lang.VerifyError` Çökmesi (`f66970c`):** `data class AppStrings` 255 parametre sınırını aştığı için `interface AppStrings` + tekil `object TurkishStrings`/`EnglishStrings` mimarisine geçildi.
-* **Gömülü Kapak Resmi Video Sanılması (`cbfd66a`):** `disposition.attached_pic != 1` filtresi.
+* **Gömülü Kapak Resmi Video Sanılması (`cbfd66a` + sertleştirme):** `disposition.attached_pic != 1` katı filtresi (kapak resmine fallback kaldırıldı) ve desteklenmeyen dosyalar için açık `errUnsupportedMediaFile` hatası.
 * **Qualcomm `c2.qti.avc.encoder` `operating-rate=2147483647` & VPU Çakışması (`0605c2d`, `136fbbc`):** `CleanHardwareEncoderFactory`, sonlu `delegateOpRate`, katmanlar arası `450ms` soğuma, `awaitActiveSessionTermination` ve `DirectMediaCodecTranscoder`.
-* **API 24–28 Görsel/GIF `FileProvider` Eksikliği & `DirectMediaCodecTranscoder` Sertleştirmesi (bu dal):** `file_paths.xml` içine `Pictures/FFmpeg/` ve `Download/FFmpeg/` eklendi; `DirectMediaCodecTranscoder` için HDR koruması, 50/48 FPS uyumlu kesirli 30 FPS akümülatörü, kesimsiz ortak A/V tabanı, `openExtractor` sızıntı koruması ve birim testleri eklendi.
+* **API 24–28 Depolama & `FileProvider` Eksikliği (PR #1):** `file_paths.xml` içine `Pictures/FFmpeg/` ve `Download/FFmpeg/` eklendi; API 24–28 `WRITE_EXTERNAL_STORAGE` çalışma zamanı izni (doğrulama sonrası) ve paylaşım için `ClipData.newRawUri` eklendi.
+* **`DirectMediaCodecTranscoder` 6 Kritik Motor Bugfix'i (PR #1):**
+  1. Portre videolarda çift döndürme (`inVideoFormat.setInteger(KEY_ROTATION, 0)` + `outMuxer.setOrientationHint(rotation)`).
+  2. Ses kodlayıcı EOS sonsuz kilidi (`drainAudioEncoder` EOS input döngüsüne eklendi + 5s zaman aşımı).
+  3. HE-AAC SBR/PS yarım hız bozulması (kodlayıcı decoder `INFO_OUTPUT_FORMAT_CHANGED` gerçek PCM hız/kanal ile tembel başlatılır) ve bölünmüş PCM parçalarında artan `chunkPtsUs`.
+  4. `MediaMuxer.stop()` artık `try` bloğunda çağrılır (`moov` yazım hataları yutulmaz).
+  5. Zorunlu ses yeniden kodlama hatasında sessiz ses düşürme/MB taşması engellendi (`DIRECT_AUDIO_TRANSCODE_FAILED`).
+  6. `clipStartUs == 0` pass-through seste `clipEndUs` uygulanması (`audioUsesOriginalTimeline`), B-frame kesim tamponu `500ms`, 5s sınırlı video EOS drain, HDR renk koruması, 50/48 FPS uyumlu kesirli 30 FPS akümülatörü, kesimsiz A/V tabanı ve `openExtractor`/`CodecInputSurface`/`CodecOutputSurface` kaynak sızıntı koruması.
+* **Aktif Geçici Klasör Silinmesi & Servis Yaşam Döngüsü Yarışları (PR #1):** `MainViewModel.init` içinde `cleanupOrphanTempDirsIfIdle` (süreç başına 1 kez, yalnızca boşta) ve `activeJobSnapshot` geri yüklemesi eklendi; `EncodingForegroundService` içinde sahip kontrollü `teardownIfStillOwner(runId, startId)`, `clearTurboEngineIfOwner`, `CpuPerformanceBooster` kilit/aktiflik koruması, `ACTION_START`/`ACTION_REMUX_THEN_TURBO` öncesi native oturum sonlanma beklemesi, Turbo katman arası yüzde/hız sıfırlaması ve `Media3TurboEngine` coroutine iptal kancası (`invokeOnCompletion`) eklendi.
+* **CPU Yükü, Ana İş Parçacığı I/O/IPC & 120Hz Recomposition Darboğazları (PR #1):** Canlı dosya boyutu hem FFmpeg hem Turbo ekranında `15.6mb` (ondalıklı MB) olarak gösterilir; Turbo `tempOutFile.length()` okuması Ana İş Parçacığından `Dispatchers.IO` (`>= 500ms`) üzerine alındı; `Media3TurboEngine` poller `80ms → 250ms` ve UI StateFlow yayımı görsel değişime bağlı `~4 Hz` throttle edildi; `CarSpeedometerGauge` 120Hz ibre okumaları yalnızca Draw fazına, dijital yüzde `derivedStateOf`'a ve 51 çentik trigonometrisi ön-hesaplı sabitlere taşındı; Compose gövdesi içindeki `mutableStateOf` önbellek mutasyonları düz tutucu sınıflarla değiştirildi; Android 16 `canPostPromotedNotifications()` Binder IPC'si `ON_RESUME` gözlemcisine alındı; `LogConsoleCard` 80 satır sınırında kaydırma donması giderildi.
+* **Kesim, Komut Ayrıştırıcı & Döndürme Düzeltmeleri (PR #1):** `MainActivity.onCreate` içinde `savedInstanceState == null` koruması; Türkçe ondalık virgül (`10,5`) normalizasyonu; `validateBeforeLaunch()` ile seçili keyframe tersliği/süre taşması kontrolü ve strateji/alt mod senkronizasyonu; `CustomFfmpegParser` Markdown madde işareti (`- ...`) ve önizleme `-passlogfile` rozeti düzeltmesi.
 
 ---
 
@@ -152,8 +163,8 @@ flowchart TD
 * **Tema:** Yalnızca sıcak gündüz **"Cream & Cello Dark-Brown Editorial"** paleti (`CreamBg #FAF6F0`, `IvorySurface #FFFDF9`, `LinenSurface #F3ECE2`, `CelloBrown #562812`, `CelloAmber #844B27`, `AntiqueSage #3B5E46` kayıpsız, `SiennaError #A63624` kayıplı/hata/redline). Karanlık mod, saf `#FFFFFF`/`#000000` veya ağır gölgeler kullanılmaz.
 * **4 Fontlu Tipografi (`Type.kt`):** `Space Grotesk` (büyük yüzdeler ve ana başlıklar), `Plus Jakarta Sans` (gövde ve butonlar), `JetBrains Mono` (teknik veriler, komutlar, rozetler), `Playfair Display Italic SemiBold` (yalnızca kategori başlıkları, jenerik alt başlıkları, aktif preset ve Turbo koruma notu gibi seçkin editoryal vurgular).
 * **İkonlar:** Discord, WhatsApp ve Gmail için özel marka vektörleri (`ic_brand_*.xml`), `CelloBrown` renginde.
-* **Hareket ve Geçiş:** `MainActivity.requestHighestRefreshRate()` ile 120Hz kilitli; 4 aşama arası `880ms` dikey itme (`CubicBezierEasing(0.68f, 0f, 0.32f, 1f)`), çıkış ekranları için `cached*` durum önbellekleme.
-* **Sadelik:** Mükerrer özet çipleri veya zaten altında bulunan kontrolleri tekrarlayan uyarı içi aksiyon butonları eklenmez.
+* **Hareket ve Geçiş:** `MainActivity.requestHighestRefreshRate()` ile 120Hz kilitli; 4 aşama arası `880ms` dikey itme (`CubicBezierEasing(0.68f, 0f, 0.32f, 1f)`), çıkış ekranları için recomposition tetiklemeyen düz tutucu (`StageRenderCache` / `ProcessingStateCache` / `TurboStateCache`) önbellekleme.
+* **Telemetri & Güvenlik:** Canlı boyut her iki işleme ekranında da KB yerine **`15.6mb`** biçiminde gösterilir; `MediaHeroCard` kaynak ses kalitesini (`Ses: AAC 128k` / `· 5.1` / `(Kayıpsız)`) gösterir; yanlışlıkla basmayı önlemek için hem FFmpeg hem Turbo ekranındaki **İptal Et** düğmesi `"Emin misiniz?"` onay penceresi açar; mükerrer özet çipleri veya tekrarlı uyarı butonları eklenmez.
 
 ---
 
@@ -161,25 +172,28 @@ flowchart TD
 
 1. **`AppStrings` veya büyük yapılandırma sınıflarını ASLA `data class` yapmayın** (`>255` kurucu parametresi ART `VerifyError` üretir).
 2. **`FFmpegKitConfig.getSafParameterForRead` token'ını birden fazla adımda ASLA yeniden kullanmayın** ve büyük kaynak videoları `cacheDir`'e kopyalamayın.
-3. **`FFmpegKit.cancel()`'ı ASLA senkron varsaymayın;** MediaCodec öncesi mutlaka `awaitActiveSessionTermination()` bekleyin.
+3. **`FFmpegKit.cancel()`'ı ASLA senkron varsaymayın;** yeni FFmpeg veya MediaCodec işi başlatmadan önce mutlaka `awaitActiveSessionTermination()` bekleyin.
 4. **Başarısız bir `MediaCodec` denemesinden sonra `0ms` ile tekrar denemeyin;** yarım dosyayı silip C2 HAL için `400–450ms` bekleyin.
 5. **Media3 `DefaultEncoderFactory` (delegeler dahil) üzerinde `setEncoderPerformanceParameters`'ı ASLA boş bırakmayın** (`INT_MAX` Qualcomm'u çökertir).
 6. **Media3'te AAC→AAC yeniden kodlama için `ForceAudioEncodeProcessor`'ı ASLA kaldırmayın** ve platform AAC kodlayıcısına `160 kbps/kanal` (stereo `320k`) üstü vermeyin.
 7. **`SurfaceTexture.setOnFrameAvailableListener`'ı ayrı bir `HandlerThread` olmadan ASLA kullanmayın** (deadlock).
-8. **Coroutine `catch (t: Throwable)` bloklarında `CancellationException`'ı ASLA yutmayın.**
-9. **Turbo (MediaCodec) modunda `CpuPerformanceBooster`'ı ASLA açık bırakmayın.**
-10. **[`app/build.gradle.kts`](app/build.gradle.kts) içindeki `signingConfigs` (`release` ve `debugConfig`) bloklarını ASLA silmeyin veya değiştirmeyin** (AI Studio için zorunlu).
-11. **H.264 10-bit seçeneğini UI'da tekrar açmayın;** metinleri `stringResource()` yerine `AppStrings` üzerinden verin; Magic Capsule `shortCriticalText`'i 4 karakterin üzerine çıkarmayın.
+8. **`DirectMediaCodecTranscoder`'da `MediaMuxer.setOrientationHint(rotation)` kullanırken `decoder.configure` öncesi `inVideoFormat` içindeki `KEY_ROTATION`'ı sıfırlamayı ASLA unutmayın** (çift döndürme); **`MediaMuxer.stop()`'u ASLA sadece `finally`'ye bırakmayın** ve **EOS kuyruklama döngülerinde kodlayıcı çıkışını tahliye etmeyi (drain) ASLA atlamayın**.
+9. **`MainViewModel.init` içinde koşulsuz `cleanupOrphanTempDirs` ASLA çağırmayın** (Activity yeniden oluşurken aktif `fflab_work_*` klasörünü siler; daima `cleanupOrphanTempDirsIfIdle` kullanın).
+10. **Compose gövdesinde ASLA `mutableStateOf` mutasyonu, Ana İş Parçacığı dosya I/O'su (`file.length()`), her yüzde adımında Binder IPC (`canPostPromotedNotifications()`) veya 120Hz animasyon state delegasyonu (`by animateFloatAsState`) yapmayın.**
+11. **Coroutine `catch (t: Throwable)` bloklarında `CancellationException`'ı ASLA yutmayın.**
+12. **Turbo (MediaCodec) modunda `CpuPerformanceBooster`'ı ASLA açık bırakmayın** ve servis `finally` bloklarında sahiplik (`teardownIfStillOwner` / `clearTurboEngineIfOwner`) kontrolü olmadan kaynak kapatmayın.
+13. **[`app/build.gradle.kts`](app/build.gradle.kts) içindeki `signingConfigs` (`release` ve `debugConfig`) bloklarını ASLA silmeyin veya değiştirmeyin** (AI Studio için zorunlu).
+14. **H.264 10-bit seçeneğini UI'da tekrar açmayın;** metinleri `stringResource()` yerine `AppStrings` üzerinden verin; Magic Capsule `shortCriticalText`'i 4 karakterin üzerine çıkarmayın.
 
 ---
 
 ## 8. Sıradaki Yapılacaklar (Güncel Yol Haritası)
 
-* [x] **P0:** `file_paths.xml` içine `Pictures/FFmpeg/` ve `Download/FFmpeg/` köklerinin eklenmesi ve API 24–28 `MediaStoreSaver` hizalanması.
-* [x] **P1:** `DirectMediaCodecTranscoder` HDR renk koruması, 50/48 FPS uyumlu kesirli 30 FPS akümülatörü (`TargetFpsFrameDropper`), kesimsiz ortak A/V senkron tabanı ve `openExtractor` kaynak sızıntı koruması.
-* [x] **P2:** `OpenSourceCreditsDialog`'a AndroidX Media3 Transformer eklenmesi, `metadata.json`'ın 11 mod olarak güncellenmesi ve kullanılmayan ~813 KB eski FFLab ikonlarının (`ic_fflab_logo.png`, `ic_fflab_cream_icon_1795406018575.jpg`) kaldırılması.
-* [x] **P3 (Kısmi):** `DirectMediaCodecTranscoderTest` ve `Media3TurboEngineTest` birim testlerinin eklenmesi ve GitHub Actions `build-apk.yml` içine `testDebugUnitTest` kapısının eklenmesi.
-* [ ] **Sıradaki 1 — Compose UI & `MainViewModel` Testleri:** Ekranlardaki mevcut 40+ `Modifier.testTag(...)` kullanılarak Robolectric + `compose-ui-test-junit4` ile uçtan uca mod seçimi, kesim aralığı doğrulaması ve dil değişimi testlerinin yazılması.
+* [x] **P0:** `file_paths.xml` içine `Pictures/FFmpeg/` ve `Download/FFmpeg/` köklerinin eklenmesi ve API 24–28 `MediaStoreSaver` / `WRITE_EXTERNAL_STORAGE` hizalanması.
+* [x] **P1:** `DirectMediaCodecTranscoder` HDR renk koruması, 50/48 FPS uyumlu kesirli 30 FPS akümülatörü, kesimsiz ortak A/V senkron tabanı, portre çift döndürme, EOS deadlock, HE-AAC SBR/PS ve açık `muxer.stop()` düzeltmeleri.
+* [x] **P2:** `OpenSourceCreditsDialog`'a AndroidX Media3 Transformer eklenmesi, `metadata.json`'ın 11 mod olarak güncellenmesi ve kullanılmayan ~813 KB eski FFLab ikonlarının kaldırılması.
+* [x] **P3:** Genel kod tabanı denetimi/bugfix, her iki işleme ekranında İptal Et onay penceresi, `15.6mb` canlı telemetri & CPU/120Hz optimizasyonu, kaynak ses kalitesi gösterimi/tavanlaması/kırmızı uyarısı ve birim testlerinin CI (`testDebugUnitTest`) ile doğrulanması.
+* [ ] **Sıradaki 1 — Compose UI & `MainViewModel` Testleri:** Ekranlardaki mevcut 40+ `Modifier.testTag(...)` kullanılarak Robolectric + `compose-ui-test-junit4` ile uçtan uca mod seçimi, ses uyarısı, iptal onayı, kesim aralığı doğrulaması ve dil değişimi testlerinin yazılması.
 * [ ] **Sıradaki 2 — `HistorySheet` Tekil Kayıt Yönetimi:** Çıktı geçmişinde tekil satır silme ve galeriden silinmiş URI'lerin temiz şekilde işaretlenmesi/gizlenmesi.
 * [ ] **Sıradaki 3 — Sürüm Senkronizasyonu:** `app/build.gradle.kts` (`versionCode` / `versionName`) ile `.github/workflows/build-apk.yml` (`SURUM_ETIKETI`) sürüm otomasyonunun GitHub Releases etiketleriyle hizalanması.
 * [ ] **Sıradaki 4 — Opsiyonel 10-Bit Direct HDR Desteği:** Eğer gelecekte Media3'ün başarısız olduğu HDR10 kayıpsız kesim klipleri çıkarsa, `DirectMediaCodecTranscoder` için `EGL_OPENGL_ES3_BIT` + `RGBA1010102` + `HEVCProfileMain10` renk boru hattı eklenmesi.

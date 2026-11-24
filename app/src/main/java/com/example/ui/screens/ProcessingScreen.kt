@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,6 +68,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +85,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.domain.CompletedOutput
 import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
@@ -94,6 +99,12 @@ import com.example.ui.theme.MonoLabelStyle
 import com.example.ui.theme.PlayfairDisplayFontFamily
 
 private enum class ProcessingPhase { RUNNING, SUCCESS, FAILED, IDLE }
+
+private class ProcessingStateCache {
+    var lastRunning: EncodingState.Running? = null
+    var lastSuccess: EncodingState.Success? = null
+    var lastFailed: EncodingState.Failed? = null
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +129,14 @@ fun ProcessingScreen(
     val strings = LocalAppStrings.current
     var showLogs by remember(state is EncodingState.Failed) { mutableStateOf(state is EncodingState.Failed) }
     var showTurboConfirmDialog by remember { mutableStateOf(false) }
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state !is EncodingState.Running) {
+        if (state !is EncodingState.Running) {
+            showTurboConfirmDialog = false
+            showCancelConfirmDialog = false
+        }
+    }
 
     val topTitle = when (state) {
         is EncodingState.Running -> state.modeTitle
@@ -195,7 +214,7 @@ fun ProcessingScreen(
                                     }
                                 }
                                 OutlinedButton(
-                                    onClick = onCancel,
+                                    onClick = { showCancelConfirmDialog = true },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(50.dp)
@@ -257,13 +276,11 @@ fun ProcessingScreen(
             }
         }
     ) { innerPadding ->
-        var lastRunning by remember { mutableStateOf<EncodingState.Running?>(null) }
-        var lastSuccess by remember { mutableStateOf<EncodingState.Success?>(null) }
-        var lastFailed by remember { mutableStateOf<EncodingState.Failed?>(null) }
+        val stateCache = remember { ProcessingStateCache() }
         when (state) {
-            is EncodingState.Running -> lastRunning = state
-            is EncodingState.Success -> lastSuccess = state
-            is EncodingState.Failed -> lastFailed = state
+            is EncodingState.Running -> stateCache.lastRunning = state
+            is EncodingState.Success -> stateCache.lastSuccess = state
+            is EncodingState.Failed -> stateCache.lastFailed = state
             EncodingState.Idle -> Unit
         }
         val phase = when (state) {
@@ -290,7 +307,7 @@ fun ProcessingScreen(
             ) {
                 when (targetPhase) {
                     ProcessingPhase.RUNNING -> {
-                        val running = (state as? EncodingState.Running) ?: lastRunning
+                        val running = (state as? EncodingState.Running) ?: stateCache.lastRunning
                         if (running != null) {
                             item {
                                 RunningMonitorCard(state = running)
@@ -306,7 +323,7 @@ fun ProcessingScreen(
                     }
 
                     ProcessingPhase.SUCCESS -> {
-                        val success = (state as? EncodingState.Success) ?: lastSuccess
+                        val success = (state as? EncodingState.Success) ?: stateCache.lastSuccess
                         if (success != null) {
                             item {
                                 SuccessSummaryBanner(summary = success.summaryMessage)
@@ -331,7 +348,7 @@ fun ProcessingScreen(
                     }
 
                     ProcessingPhase.FAILED -> {
-                        val failed = (state as? EncodingState.Failed) ?: lastFailed
+                        val failed = (state as? EncodingState.Failed) ?: stateCache.lastFailed
                         if (failed != null) {
                             item {
                                 FailureBannerCard(
@@ -407,6 +424,57 @@ fun ProcessingScreen(
                     modifier = Modifier.testTag("turbo_confirm_no_button")
                 ) {
                     Text(strings.turboConfirmNo)
+                }
+            }
+        )
+    }
+
+    if (showCancelConfirmDialog && isActiveStage && state is EncodingState.Running) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirmDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.WarningAmber,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.cancelConfirmTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = strings.cancelConfirmBody,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirmDialog = false
+                        onCancel()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("cancel_confirm_yes_button")
+                ) {
+                    Text(strings.cancelConfirmYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCancelConfirmDialog = false },
+                    modifier = Modifier.testTag("cancel_confirm_no_button")
+                ) {
+                    Text(strings.cancelConfirmKeepRunning)
                 }
             }
         )
@@ -501,13 +569,13 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
             Spacer(Modifier.height(16.dp))
 
             if (state.percent != null) {
-                val smoothProgress by animateFloatAsState(
+                val smoothProgressState = animateFloatAsState(
                     targetValue = (state.percent / 100f).coerceIn(0f, 1f),
                     animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
                     label = "ffmpeg_linear_progress"
                 )
                 LinearProgressIndicator(
-                    progress = { smoothProgress },
+                    progress = { smoothProgressState.value },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(10.dp)
@@ -559,9 +627,20 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
 
             if (Build.VERSION.SDK_INT >= 36) {
                 val context = LocalContext.current
-                val canPromote = remember(state.percent, state.passIndex) {
+                val lifecycleOwner = LocalLifecycleOwner.current
+                var canPromote by remember {
                     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                    runCatching { nm?.canPostPromotedNotifications() ?: true }.getOrDefault(true)
+                    mutableStateOf(runCatching { nm?.canPostPromotedNotifications() ?: true }.getOrDefault(true))
+                }
+                DisposableEffect(lifecycleOwner, context) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                            canPromote = runCatching { nm?.canPostPromotedNotifications() ?: true }.getOrDefault(true)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
                 if (!canPromote) {
                     Spacer(Modifier.height(8.dp))
@@ -825,6 +904,10 @@ private fun LogConsoleCard(
 ) {
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
+    val lastLine = logs.lastOrNull()
+    val formattedLogs = remember(logs) {
+        if (logs.isEmpty()) "" else logs.takeLast(80).joinToString("\n")
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -861,7 +944,7 @@ private fun LogConsoleCard(
 
             AnimatedVisibility(visible = expanded) {
                 val consoleScroll = rememberScrollState()
-                LaunchedEffect(logs.size) {
+                LaunchedEffect(logs.size, lastLine) {
                     consoleScroll.animateScrollTo(consoleScroll.maxValue)
                 }
                 Surface(
@@ -873,11 +956,7 @@ private fun LogConsoleCard(
                     border = BorderStroke(1.dp, extColors.subtleBorder)
                 ) {
                     Text(
-                        text = if (logs.isEmpty()) {
-                            strings.logConsoleEmpty
-                        } else {
-                            logs.takeLast(80).joinToString("\n")
-                        },
+                        text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
                         style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier

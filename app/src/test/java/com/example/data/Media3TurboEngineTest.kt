@@ -190,4 +190,49 @@ class Media3TurboEngineTest {
         assertTrue(EnglishStrings.creditsMedia3SectionLabel.isNotBlank())
         assertTrue(EnglishStrings.creditsMedia3Author.isNotBlank())
     }
+
+    @Test
+    fun turboPreventsUpscalingUses8MbCustomDefaultAndShowsAudioCopySpecs() {
+        // 720p source with 1080p selected must NOT upscale to 1920x1080
+        assertEquals(
+            1280 to 720,
+            Media3TurboEngine.resolveTargetDimensions(
+                sampleMedia(width = 1280, height = 720),
+                ModeConfigState(mode = ProcessingMode.DISCORD_20MB, resolution = ResolutionOption.P1080)
+            )
+        )
+        // Blank CUSTOM_SIZE target defaults to 8.0 MB matching UI default
+        assertEquals(
+            8.0,
+            Media3TurboEngine.resolveTargetMb(ModeConfigState(mode = ProcessingMode.CUSTOM_SIZE, targetMbInput = ""))!!,
+            0.001
+        )
+        // VIDEO_ONLY_CRF Turbo specs strip must show Ses copy / Audio copy rather than AAC
+        val trSpecs = com.example.service.EncodingForegroundService.buildTurboUnifiedSpecs(
+            media = sampleMedia(),
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF),
+            s = TurkishStrings
+        )
+        val enSpecs = com.example.service.EncodingForegroundService.buildTurboUnifiedSpecs(
+            media = sampleMedia(),
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF),
+            s = EnglishStrings
+        )
+        assertTrue("Expected 'Ses copy' in '$trSpecs'", trSpecs.contains("Ses copy"))
+        assertTrue("Expected 'Audio copy' in '$enSpecs'", enSpecs.contains("Audio copy"))
+    }
+
+    @Test
+    fun cancelConfirmationAndAudioWarningStringsExistInBothLanguages() {
+        listOf(TurkishStrings, EnglishStrings).forEach { s ->
+            assertTrue(s.cancelConfirmTitle.isNotBlank())
+            assertTrue(s.cancelConfirmBody.isNotBlank())
+            assertTrue(s.cancelConfirmYes.isNotBlank())
+            assertTrue(s.cancelConfirmKeepRunning.isNotBlank())
+            assertTrue(s.audioBitrateSourceCapSub(128, 128).contains("128"))
+            assertTrue(s.audioBitrateUpscaleWarning(128, "AAC", 256).contains("128"))
+            assertTrue(s.errUnsupportedMediaFile.isNotBlank())
+            assertTrue(s.errEncodingInProgress.isNotBlank())
+        }
+    }
 }

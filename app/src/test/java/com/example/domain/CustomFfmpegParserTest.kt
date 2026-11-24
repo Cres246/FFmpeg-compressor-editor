@@ -187,4 +187,38 @@ class CustomFfmpegParserTest {
         assertTrue(args.contains("-crf"))
         assertEquals("/cache/work/clean.mp4", args.last())
     }
+
+    @Test
+    fun ignoresMarkdownBulletExplanationsAfterCommand() {
+        val paste = """
+            ffmpeg -i clip.mp4 -c:v libx264 -crf 20 out.mp4
+            - Uses H.264 for universal playback
+            - Keeps crisp visual quality
+        """.trimIndent()
+
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        assertFalse(args.contains("-"))
+        assertFalse(args.contains("Uses"))
+        assertEquals("/cache/work/out.mp4", args.last())
+    }
+
+    @Test
+    fun previewModeDetectsPassLogfileRewriteAccurately() {
+        val paste = "ffmpeg -y -i clip.mp4 -c:v libx264 -b:v 1500k -pass 1 -passlogfile /tmp/custom -an -f null /dev/null"
+        val previewPlan = CustomFfmpegParser.buildPlan(
+            rawCommand = paste,
+            mediaFileName = "clip.mp4",
+            mediaExtension = "mp4",
+            mediaDurationSec = 60.0,
+            workDirPath = "",
+            defaultOutputFileName = "cikti.mp4",
+            inputTokenProvider = { "\$IN" },
+            isPreview = true
+        )
+        assertTrue(previewPlan.adaptations.autoConfiguredTwoPassLogs)
+        assertTrue(previewPlan.steps[0].args.contains("custom"))
+    }
 }

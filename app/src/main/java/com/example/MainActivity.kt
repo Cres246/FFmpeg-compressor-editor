@@ -2,6 +2,7 @@ package com.example
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -116,6 +117,13 @@ private enum class AppScreenStage(val depth: Int) {
     TURBO_PROCESSING(3)
 }
 
+private class StageRenderCache {
+    var config: ModeConfigState? = null
+    var media: com.example.domain.MediaInfo? = null
+    var standardEncoding: EncodingState = EncodingState.Idle
+    var turboEncoding: EncodingState = EncodingState.Idle
+}
+
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
@@ -127,7 +135,9 @@ class MainActivity : ComponentActivity() {
         isIgnoringBatteryOptimizations = checkIgnoringBatteryOptimizations()
         enableEdgeToEdge()
         requestHighestRefreshRate()
-        handleIncomingIntent(intent)
+        if (savedInstanceState == null) {
+            handleIncomingIntent(intent)
+        }
 
         setContent {
             FFLabTheme {
@@ -258,6 +268,7 @@ class MainActivity : ComponentActivity() {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = output.mimeType
             putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newRawUri(output.fileName, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         runCatching {
@@ -337,7 +348,22 @@ private fun FFLabAppRoot(
         viewModel.startEncoding()
     }
 
+    // Legacy public storage write permission required only on Android 7.0-9.0 (API 24-28)
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        viewModel.startEncoding()
+    }
+
     fun launchEncodingWithNotifCheck() {
+        // Validate configuration first so invalid forms never trigger OS permission popups
+        if (!viewModel.validateBeforeLaunch()) return
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            legacyStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -357,22 +383,19 @@ private fun FFLabAppRoot(
         else -> AppScreenStage.HOME
     }
 
-    // Keep the last rendered screen payload alive while exiting so vertical slide transitions never collapse or flash
-    var cachedConfig by remember { mutableStateOf<ModeConfigState?>(null) }
+    // Keep the last rendered screen payload alive while exiting without triggering extra recompositions
+    val renderCache = remember { StageRenderCache() }
     if (uiState.activeConfig != null) {
-        cachedConfig = uiState.activeConfig
+        renderCache.config = uiState.activeConfig
     }
-    var cachedMedia by remember { mutableStateOf<com.example.domain.MediaInfo?>(null) }
     if (uiState.mediaInfo != null) {
-        cachedMedia = uiState.mediaInfo
+        renderCache.media = uiState.mediaInfo
     }
-    var cachedStandardEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
     if (encodingState !is EncodingState.Idle && !encodingState.isHardwareTurboState()) {
-        cachedStandardEncoding = encodingState
+        renderCache.standardEncoding = encodingState
     }
-    var cachedTurboEncoding by remember { mutableStateOf<EncodingState>(EncodingState.Idle) }
     if (encodingState.isHardwareTurboState()) {
-        cachedTurboEncoding = encodingState
+        renderCache.turboEncoding = encodingState
     }
 
     CompositionLocalProvider(LocalAppStrings provides strings) {
@@ -435,7 +458,7 @@ private fun FFLabAppRoot(
             ) { stage ->
                 when (stage) {
                     AppScreenStage.TURBO_PROCESSING -> {
-                        val renderTurbo = if (encodingState.isHardwareTurboState()) encodingState else cachedTurboEncoding
+                        val renderTurbo = if (encodingState.isHardwareTurboState()) encodingState else renderCache.turboEncoding
                         TurboProcessingScreen(
                             state = renderTurbo,
                             isActiveStage = currentStage == AppScreenStage.TURBO_PROCESSING,
@@ -453,7 +476,7 @@ private fun FFLabAppRoot(
                         val renderEncoding = if (encodingState !is EncodingState.Idle && !encodingState.isHardwareTurboState()) {
                             encodingState
                         } else {
-                            cachedStandardEncoding
+                            renderCache.standardEncoding
                         }
                         ProcessingScreen(
                             state = renderEncoding,
@@ -468,8 +491,8 @@ private fun FFLabAppRoot(
                     }
 
                     AppScreenStage.CONFIG -> {
-                        val activeCfg = uiState.activeConfig ?: cachedConfig
-                        val media = uiState.mediaInfo ?: cachedMedia
+                        val activeCfg = uiState.activeConfig ?: renderCache.config
+                        val media = uiState.mediaInfo ?: renderCache.media
                         if (activeCfg != null && media != null) {
                             ModeConfigScreen(
                                 media = media,
@@ -720,7 +743,7 @@ private fun FFLabAppRoot(
         )
     }
 
-    if (!isIgnoringBatteryOptimizations && !batteryDialogDismissed) {
+    if (currentStage == AppScreenStage.HOME && !isIgnoringBatteryOptimizations && !batteryDialogDismissed) {
         AlertDialog(
             onDismissRequest = { batteryDialogDismissed = true },
             containerColor = MaterialTheme.colorScheme.surface,

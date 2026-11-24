@@ -107,6 +107,23 @@ object FfmpegEngine {
         return parts.joinToString(" → ").ifBlank { AppLanguageController.currentStrings().errUnknown }
     }
 
+    private val orphanCleanupDone = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Cleans any leftover temporary directories from interrupted previous runs.
+     * Runs once per process and only when no active encoding job is running so Activity
+     * recreation while EncodingForegroundService is active never wipes live workDirs.
+     */
+    suspend fun cleanupOrphanTempDirsIfIdle(context: Context, isIdle: () -> Boolean) = withContext(Dispatchers.IO) {
+        if (!isIdle()) return@withContext
+        if (!orphanCleanupDone.compareAndSet(false, true)) return@withContext
+        if (!isIdle()) {
+            orphanCleanupDone.set(false)
+            return@withContext
+        }
+        cleanupOrphanTempDirs(context)
+    }
+
     /**
      * Cleans any leftover temporary directories from interrupted previous runs.
      */
@@ -150,6 +167,8 @@ object FfmpegEngine {
 
     /**
      * Probes media metadata without copying the file to cache (zero-copy even on 15 GB MKV files).
+     * Resolves display-rotated portrait dimensions, excludes embedded cover art (`attached_pic`),
+     * and extracts source audio bitrate & channel count across MP4/MOV/MKV/WebM/MP3/FLAC.
      */
     suspend fun probeMedia(context: Context, uri: Uri): MediaInfo = withContext(Dispatchers.IO) {
         val (displayName, sizeFromCursor) = queryFileNameAndSize(context, uri)
@@ -165,11 +184,12 @@ object FfmpegEngine {
         val safPath = resolveInputPath(context, uri)
         val session = FFprobeKit.getMediaInformation(safPath)
         val info = session.mediaInformation
+            ?: throw IllegalStateException(AppLanguageController.currentStrings().errUnsupportedMediaFile)
 
-        val durationSec = info?.duration?.toDoubleOrNull()
+        val durationSec = info.duration?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
         val sizeBytes = when {
             sizeFromCursor > 0L -> sizeFromCursor
-            else -> info?.size?.toLongOrNull() ?: 0L
+            else -> info.size?.toLongOrNull() ?: 0L
         }
 
         var vCodec: String? = null
@@ -178,31 +198,63 @@ object FfmpegEngine {
         var pixFmt: String? = null
         var fps: Double? = null
         var aCodec: String? = null
+        var aBitrateKbps: Int? = null
+        var aChannels: Int? = null
 
-        val streams = info?.streams.orEmpty()
+        val streams = info.streams.orEmpty()
         val videoStreams = streams.filter { it.type?.equals("video", ignoreCase = true) == true }
+        // Strictly exclude embedded cover art (`disposition.attached_pic == 1`) so MP3/FLAC/M4A
+        // files with album art are never misidentified as videos.
         val primaryVideoStream = videoStreams.firstOrNull { stream ->
             val attachedPic = runCatching {
                 stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
             }.getOrNull() ?: 0
             attachedPic != 1
-        } ?: videoStreams.firstOrNull()
+        }
 
         if (primaryVideoStream != null) {
             vCodec = primaryVideoStream.codec
-            width = primaryVideoStream.width?.toInt()
-            height = primaryVideoStream.height?.toInt()
+            val rawW = primaryVideoStream.width?.toInt()?.takeIf { it > 0 }
+            val rawH = primaryVideoStream.height?.toInt()?.takeIf { it > 0 }
+            val rotation = extractStreamRotationDegrees(primaryVideoStream, context, uri)
+            if (rawW != null && rawH != null) {
+                if (kotlin.math.abs(rotation) % 180 == 90) {
+                    width = rawH
+                    height = rawW
+                } else {
+                    width = rawW
+                    height = rawH
+                }
+            }
             pixFmt = primaryVideoStream.getStringProperty("pix_fmt")
             fps = parseFrameRate(primaryVideoStream.getStringProperty("avg_frame_rate"))
                 ?: parseFrameRate(primaryVideoStream.getStringProperty("r_frame_rate"))
         }
 
-        for (stream in streams) {
-            val type = stream.type?.lowercase(Locale.US)
-            if (type == "audio" && aCodec == null) {
-                aCodec = stream.codec
-                break
+        val primaryAudioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+        if (primaryAudioStream != null) {
+            aCodec = primaryAudioStream.codec
+            aChannels = runCatching {
+                primaryAudioStream.allProperties?.optInt("channels", 0)?.takeIf { it > 0 }
+            }.getOrNull()
+
+            var audioBps = extractStreamBitrateBps(primaryAudioStream)
+            if (audioBps == null) {
+                audioBps = probeAudioBitrateWithExtractor(context, uri)
             }
+            if (audioBps == null && primaryVideoStream == null) {
+                audioBps = info.bitrate?.toLongOrNull()?.takeIf { it > 0L }
+                    ?: if (sizeBytes > 0L && durationSec != null && durationSec > 0.5) {
+                        ((sizeBytes * 8.0) / durationSec).toLong().takeIf { it > 0L }
+                    } else null
+            }
+            aBitrateKbps = audioBps
+                ?.let { kotlin.math.round(it / 1000.0).toInt() }
+                ?.takeIf { it in 8..20_000 }
+        }
+
+        if (vCodec.isNullOrBlank() && aCodec.isNullOrBlank()) {
+            throw IllegalStateException(AppLanguageController.currentStrings().errUnsupportedMediaFile)
         }
 
         MediaInfo(
@@ -217,8 +269,102 @@ object FfmpegEngine {
             height = height,
             pixFmt = pixFmt,
             audioCodec = aCodec,
-            fps = fps
+            fps = fps,
+            audioBitrateKbps = aBitrateKbps,
+            audioChannels = aChannels
         )
+    }
+
+    private fun extractStreamRotationDegrees(
+        stream: com.arthenica.ffmpegkit.StreamInformation,
+        context: Context,
+        uri: Uri
+    ): Int {
+        // 1. Check FFprobe `side_data_list` displaymatrix rotation (standard in MP4/MOV/MKV)
+        runCatching {
+            val sideDataList = stream.allProperties?.optJSONArray("side_data_list")
+            if (sideDataList != null) {
+                for (i in 0 until sideDataList.length()) {
+                    val item = sideDataList.optJSONObject(i) ?: continue
+                    if (item.has("rotation")) {
+                        val rot = item.optDouble("rotation", Double.NaN)
+                        if (rot.isFinite()) return ((kotlin.math.round(rot).toInt() % 360) + 360) % 360
+                    }
+                }
+            }
+        }
+        // 2. Check legacy stream `tags.rotate`
+        runCatching {
+            val tagRot = stream.allProperties?.optJSONObject("tags")?.optString("rotate")?.trim()?.toIntOrNull()
+            if (tagRot != null) return ((tagRot % 360) + 360) % 360
+        }
+        // 3. Fallback to Android MediaMetadataRetriever for MOV/MP4 rotation matrix edge cases
+        return runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
+                    retriever.setDataSource(uri.path)
+                } else {
+                    val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+                    if (pfd != null) {
+                        pfd.use { retriever.setDataSource(it.fileDescriptor) }
+                    } else {
+                        retriever.setDataSource(context, uri)
+                    }
+                }
+                val r = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                ((r % 360) + 360) % 360
+            } finally {
+                runCatching { retriever.release() }
+            }
+        }.getOrDefault(0)
+    }
+
+    private fun extractStreamBitrateBps(stream: com.arthenica.ffmpegkit.StreamInformation): Long? {
+        val direct = stream.bitrate?.trim()?.toLongOrNull()?.takeIf { it > 0L }
+        if (direct != null) return direct
+        // MKV/WebM files often store exact per-stream bitrate in `tags.BPS` or `tags.BPS-eng`
+        return runCatching {
+            val tags = stream.allProperties?.optJSONObject("tags") ?: return@runCatching null
+            val keys = tags.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key.equals("BPS", ignoreCase = true) || key.startsWith("BPS-", ignoreCase = true)) {
+                    val v = tags.optString(key).trim().toLongOrNull()
+                    if (v != null && v > 0L) return@runCatching v
+                }
+            }
+            null
+        }.getOrNull()
+    }
+
+    private fun probeAudioBitrateWithExtractor(context: Context, uri: Uri): Long? {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
+                extractor.setDataSource(uri.path!!)
+            } else {
+                val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+                if (pfd != null) {
+                    pfd.use { extractor.setDataSource(it.fileDescriptor) }
+                } else {
+                    extractor.setDataSource(context, uri, null)
+                }
+            }
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("audio/") && fmt.containsKey(android.media.MediaFormat.KEY_BIT_RATE)) {
+                    val br = runCatching { fmt.getInteger(android.media.MediaFormat.KEY_BIT_RATE).toLong() }.getOrNull()
+                    if (br != null && br > 0L) return br
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        } finally {
+            runCatching { extractor.release() }
+        }
     }
 
     private fun parseFrameRate(raw: String?): Double? {

@@ -45,6 +45,7 @@ import com.example.domain.ResolutionOption
 import com.example.domain.TrimSubMode
 import com.example.domain.VideoCodecOption
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -194,7 +195,7 @@ object Media3TurboEngine {
         ProcessingMode.DISCORD_20MB -> 20.0
         ProcessingMode.WHATSAPP_100MB -> 100.0
         ProcessingMode.GMAIL_25MB -> 25.0
-        ProcessingMode.CUSTOM_SIZE -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 20.0
+        ProcessingMode.CUSTOM_SIZE -> FfmpegMath.parsePositiveDouble(config.targetMbInput) ?: 8.0
         else -> null
     }
 
@@ -224,9 +225,9 @@ object Media3TurboEngine {
             sourceTotalBitrateBps = if (media.sizeBytes > 0L && media.durationSec != null && media.durationSec > 0.5) {
                 ((media.sizeBytes * 8.0) / media.durationSec).roundToInt()
             } else null,
-            sourceAudioBitrateBps = null,
+            sourceAudioBitrateBps = media.audioBitrateKbps?.times(1000),
             sourceAudioMime = null,
-            sourceAudioChannels = 2,
+            sourceAudioChannels = media.audioChannels ?: 2,
             sourceAudioSampleRate = 48_000,
             sourceVideoFps = media.fps
         )
@@ -402,16 +403,19 @@ object Media3TurboEngine {
 
         return when {
             dispH > dispW -> {
+                if (dispW <= targetShort) return makeEven(dispW) to makeEven(dispH)
                 val outW = makeEven(targetShort)
                 val outH = makeEven((dispH.toDouble() * outW.toDouble() / dispW.toDouble()).roundToInt())
                 outW to outH
             }
             dispW.toLong() * 9L > dispH.toLong() * 16L -> {
+                if (dispW <= maxLong) return makeEven(dispW) to makeEven(dispH)
                 val outW = makeEven(maxLong)
                 val outH = makeEven((dispH.toDouble() * outW.toDouble() / dispW.toDouble()).roundToInt())
                 outW to outH
             }
             else -> {
+                if (dispH <= targetShort) return makeEven(dispW) to makeEven(dispH)
                 val outH = makeEven(targetShort)
                 val outW = makeEven((dispW.toDouble() * outH.toDouble() / dispH.toDouble()).roundToInt())
                 outW to outH
@@ -577,6 +581,9 @@ object Media3TurboEngine {
     ): Media3TurboResult = withContext(Dispatchers.IO) {
         val cancelFlag = AtomicBoolean(false)
         activeCancelAction.set { cancelFlag.set(true) }
+        val cancelHook = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) cancelFlag.set(true)
+        }
         try {
             val displayDims = probe.displayDims
             val (outW, outH) = if (displayDims != null) {
@@ -650,6 +657,7 @@ object Media3TurboEngine {
                 onProgress = onProgress
             )
         } finally {
+            cancelHook?.dispose()
             activeCancelAction.set(null)
         }
     }
@@ -665,6 +673,7 @@ object Media3TurboEngine {
             "ERROR_CODE_DECODING_FAILED",
             "ERROR_CODE_AUDIO_PROCESSING_FAILED",
             "ERROR_CODE_MUXING_FAILED",
+            "ERROR_CODE_MUXING_TIMEOUT",
             "ERROR_CODE_UNSPECIFIED"
         )
     }
@@ -1055,7 +1064,7 @@ object Media3TurboEngine {
                 }
                 activeCancelAction.set(cancelBlock)
 
-                // Poll progress smoothly (~12.5 Hz -> interpolated at 120Hz by Compose spring needle)
+                // Poll progress calmly (~4 Hz -> smoothly interpolated at 120Hz in Draw phase without CPU churn)
                 progressPoller = object : Runnable {
                     override fun run() {
                         if (finished.get() || cancelledFlag.get()) return
@@ -1068,13 +1077,13 @@ object Media3TurboEngine {
                             onProgress(-1, elapsedSec, plan.effectiveDurationSec)
                         }
                         if (!finished.get() && !cancelledFlag.get()) {
-                            mainHandler.postDelayed(this, 80L)
+                            mainHandler.postDelayed(this, 250L)
                         }
                     }
                 }
 
                 transformer.start(composition, outputFile.absolutePath)
-                mainHandler.postDelayed(progressPoller!!, 60L)
+                mainHandler.postDelayed(progressPoller!!, 120L)
             } catch (t: Throwable) {
                 val elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                 val isUnsupported = t is ExportException && isUnsupportedFormatException(t) ||
@@ -1115,9 +1124,9 @@ object Media3TurboEngine {
         } else null
         var durationSec: Double? = fallbackMedia.durationSec
         var totalBitrateBps: Int? = null
-        var audioBitrateBps: Int? = null
+        var audioBitrateBps: Int? = fallbackMedia.audioBitrateKbps?.times(1000)
         var audioMime: String? = null
-        var audioChannels: Int? = null
+        var audioChannels: Int? = fallbackMedia.audioChannels
         var audioSampleRate: Int? = null
         var videoFps: Double? = fallbackMedia.fps
 

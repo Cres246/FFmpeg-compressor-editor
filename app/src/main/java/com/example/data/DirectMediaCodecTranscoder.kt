@@ -289,6 +289,7 @@ internal object DirectMediaCodecTranscoder {
             var audioTrackIndexInExtractor = -1
             var audioMuxFormat: MediaFormat? = null
             var audioPtsOffsetUs = 0L
+            var audioUsesOriginalTimeline = false
             var sharedAvBaselineUs: Long? = null
 
             if (request.hasAudio) {
@@ -322,23 +323,38 @@ internal object DirectMediaCodecTranscoder {
                         }
                         if (audioOk && tmpAudio.exists() && tmpAudio.length() > 0L) {
                             val aExt = MediaExtractor()
-                            aExt.setDataSource(tmpAudio.absolutePath)
-                            val idx = findTrackIndex(aExt, "audio/")
-                            if (idx >= 0) {
-                                audioExtractor = aExt
-                                audioTrackIndexInExtractor = idx
-                                audioMuxFormat = aExt.getTrackFormat(idx)
-                                aExt.selectTrack(idx)
-                                audioPtsOffsetUs = 0L
-                                sharedAvBaselineUs = computedBaseline
-                            } else {
+                            try {
+                                aExt.setDataSource(tmpAudio.absolutePath)
+                                val idx = findTrackIndex(aExt, "audio/")
+                                if (idx >= 0) {
+                                    audioExtractor = aExt
+                                    audioTrackIndexInExtractor = idx
+                                    audioMuxFormat = aExt.getTrackFormat(idx)
+                                    aExt.selectTrack(idx)
+                                    audioPtsOffsetUs = 0L
+                                    audioUsesOriginalTimeline = false
+                                    sharedAvBaselineUs = computedBaseline
+                                } else {
+                                    runCatching { aExt.release() }
+                                }
+                            } catch (t: Throwable) {
                                 runCatching { aExt.release() }
+                                throw t
                             }
                         }
-                    }
-
-                    // Pass-through original MP4-safe audio track when re-encode wasn't needed (or fallback if AAC)
-                    if (audioExtractor == null && isMp4SafeAudio) {
+                        // Never silently drop audio or bypass target-size audio bitrate compression
+                        // when audio re-encoding was explicitly required; hand off to Tier 3 / FFmpeg.
+                        if (audioExtractor == null) {
+                            return Media3TurboResult(
+                                success = false,
+                                isUnsupportedFormat = true,
+                                errorCodeName = "DIRECT_AUDIO_TRANSCODE_FAILED",
+                                errorDetail = "Direct audio transcode failed ($srcAudioMime)",
+                                elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                            )
+                        }
+                    } else if (isMp4SafeAudio) {
+                        // Pass-through original MP4-safe audio track when re-encode wasn't needed
                         val (aExt, aPfd) = openExtractor(context, request.sourceUri)
                         audioExtractor = aExt
                         audioPfd = aPfd
@@ -347,6 +363,7 @@ internal object DirectMediaCodecTranscoder {
                             audioTrackIndexInExtractor = idx
                             audioMuxFormat = aExt.getTrackFormat(idx)
                             aExt.selectTrack(idx)
+                            audioUsesOriginalTimeline = true
                             if (clipStartUs > 0L) {
                                 aExt.seekTo(clipStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                                 audioPtsOffsetUs = clipStartUs
@@ -392,6 +409,13 @@ internal object DirectMediaCodecTranscoder {
             // 4. Configure hardware video decoder targeting our OpenGL ES external texture surface
             val outSurf = CodecOutputSurface(encW, encH)
             outputSurface = outSurf
+
+            // Clear KEY_ROTATION on decoder input format so SurfaceTexture does NOT auto-rotate
+            // decoded frames into the raw coded encW x encH surface before MediaMuxer applies
+            // setOrientationHint(rotation) (which otherwise causes double-rotation on portrait clips).
+            if (rotation != 0) {
+                runCatching { inVideoFormat.setInteger(MediaFormat.KEY_ROTATION, 0) }
+            }
 
             if (request.requestSdrToneMap && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching {
@@ -452,11 +476,11 @@ internal object DirectMediaCodecTranscoder {
                         audioDone = true
                         break
                     }
-                    val normalizedAudioPts = (samplePts - audioPtsOffsetUs).coerceAtLeast(0L)
-                    if (clipEndUs != null && audioPtsOffsetUs > 0L && samplePts > clipEndUs) {
+                    if (clipEndUs != null && audioUsesOriginalTimeline && samplePts > clipEndUs) {
                         audioDone = true
                         break
                     }
+                    val normalizedAudioPts = (samplePts - audioPtsOffsetUs).coerceAtLeast(0L)
                     if (targetPtsUs != Long.MAX_VALUE && normalizedAudioPts > targetPtsUs + 250_000L) {
                         break
                     }
@@ -489,11 +513,16 @@ internal object DirectMediaCodecTranscoder {
                 if (endOfStream) {
                     encoder.signalEndOfInputStream()
                 }
+                val eosDeadlineMs = if (endOfStream) SystemClock.elapsedRealtime() + 5_000L else 0L
                 while (!cancelFlag.get()) {
                     val encStatus = encoder.dequeueOutputBuffer(encBufferInfo, if (endOfStream) TIMEOUT_US else 0L)
                     when {
                         encStatus == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                             if (!endOfStream) break
+                            if (SystemClock.elapsedRealtime() >= eosDeadlineMs) {
+                                encoderDone = true
+                                break
+                            }
                         }
                         encStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (!muxerStarted) {
@@ -525,7 +554,7 @@ internal object DirectMediaCodecTranscoder {
                                     pumpAudioUpTo(safePts)
 
                                     val nowMs = SystemClock.elapsedRealtime()
-                                    if (nowMs - lastProgressPostMs >= 80L) {
+                                    if (nowMs - lastProgressPostMs >= 220L) {
                                         lastProgressPostMs = nowMs
                                         val pct = ((safePts.toDouble() / effectiveDurUs.toDouble()) * 100.0)
                                             .roundToInt()
@@ -553,7 +582,7 @@ internal object DirectMediaCodecTranscoder {
                         if (inBuf != null) {
                             val sampleSize = vExt.readSampleData(inBuf, 0)
                             val samplePts = vExt.sampleTime
-                            if (sampleSize < 0 || (clipEndUs != null && samplePts > clipEndUs + 100_000L)) {
+                            if (sampleSize < 0 || (clipEndUs != null && samplePts > clipEndUs + 500_000L)) {
                                 decoder.queueInputBuffer(
                                     inBufIdx,
                                     0,
@@ -647,15 +676,30 @@ internal object DirectMediaCodecTranscoder {
                 )
             }
 
-            // Drain any remaining audio samples cleanly
+            // Drain any remaining audio samples cleanly before finalizing MP4 moov atom
             pumpAudioUpTo(Long.MAX_VALUE)
 
-            if (!muxerStarted || !request.outputFile.exists() || request.outputFile.length() == 0L) {
+            if (!muxerStarted) {
                 return Media3TurboResult(
                     success = false,
                     isUnsupportedFormat = true,
                     errorCodeName = "DIRECT_EMPTY_OUTPUT",
                     errorDetail = "Hardware encoder produced no output frames",
+                    elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                )
+            }
+
+            // Explicitly stop MediaMuxer inside try so moov flush errors surface cleanly instead of
+            // returning success on a truncated file in finally.
+            muxerStarted = false
+            outMuxer.stop()
+
+            if (!request.outputFile.exists() || request.outputFile.length() == 0L) {
+                return Media3TurboResult(
+                    success = false,
+                    isUnsupportedFormat = true,
+                    errorCodeName = "DIRECT_EMPTY_OUTPUT",
+                    errorDetail = "Hardware muxer wrote empty output file",
                     elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                 )
             }
@@ -775,10 +819,10 @@ internal object DirectMediaCodecTranscoder {
 
             val inFmt = ext.getTrackFormat(audioIdx)
             val inMime = inFmt.getString(MediaFormat.KEY_MIME) ?: return false to null
-            val sampleRate = if (inFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+            var encSampleRate = if (inFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
                 inFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceIn(8_000, 48_000)
             } else 48_000
-            val channelCount = if (inFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+            var encChannels = if (inFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
                 inFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceIn(1, 6)
             } else 2
 
@@ -800,16 +844,6 @@ internal object DirectMediaCodecTranscoder {
             dec.configure(inFmt, null, null, 0)
             dec.start()
 
-            val outFmt = MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, channelCount).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, targetBitrateBps)
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 256 * 1024)
-            }
-            val enc = MediaCodec.createEncoderByType("audio/mp4a-latm")
-            encoder = enc
-            enc.configure(outFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            enc.start()
-
             val outMux = MediaMuxer(outAudioFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = outMux
 
@@ -822,102 +856,36 @@ internal object DirectMediaCodecTranscoder {
             var firstPtsUs = if (startUs <= 0L && sharedBaselineUs != null) sharedBaselineUs else Long.MIN_VALUE
             var lastMuxPtsUs = Long.MIN_VALUE
 
-            while (!encoderDone && !cancelFlag.get()) {
-                if (!inputDone) {
-                    val inIdx = dec.dequeueInputBuffer(TIMEOUT_US)
-                    if (inIdx >= 0) {
-                        val buf = dec.getInputBuffer(inIdx)
-                        if (buf != null) {
-                            val size = ext.readSampleData(buf, 0)
-                            val pts = ext.sampleTime
-                            if (size < 0 || (clipEndUs != null && pts > clipEndUs + 100_000L)) {
-                                dec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                inputDone = true
-                            } else {
-                                dec.queueInputBuffer(inIdx, 0, size, pts.coerceAtLeast(0L), mapExtractorFlagsToCodecFlags(ext.sampleFlags))
-                                ext.advance()
-                            }
-                        }
-                    }
+            // Lazily configure the AAC encoder after the decoder reports its real PCM sample rate
+            // and channel count (fixes HE-AAC SBR/PS streams that decode at 2x container rate).
+            fun ensureEncoderStarted(sr: Int, ch: Int): MediaCodec {
+                encoder?.let { return it }
+                encSampleRate = sr.coerceIn(8_000, 48_000)
+                encChannels = ch.coerceIn(1, 6)
+                val outFmt = MediaFormat.createAudioFormat("audio/mp4a-latm", encSampleRate, encChannels).apply {
+                    setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                    setInteger(MediaFormat.KEY_BIT_RATE, targetBitrateBps)
+                    setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 256 * 1024)
                 }
+                val enc = MediaCodec.createEncoderByType("audio/mp4a-latm")
+                encoder = enc
+                enc.configure(outFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                enc.start()
+                return enc
+            }
 
-                if (!decoderDone) {
-                    val decIdx = dec.dequeueOutputBuffer(decInfo, TIMEOUT_US)
-                    if (decIdx >= 0) {
-                        val isEos = (decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                        val pcmBuf = dec.getOutputBuffer(decIdx)
-                        val inRange = decInfo.size > 0 &&
-                            (startUs <= 0L || decInfo.presentationTimeUs >= startUs) &&
-                            (clipEndUs == null || decInfo.presentationTimeUs <= clipEndUs)
-
-                        if (pcmBuf != null && inRange) {
-                            if (firstPtsUs == Long.MIN_VALUE) {
-                                firstPtsUs = if (startUs > 0L) minOf(decInfo.presentationTimeUs, startUs) else decInfo.presentationTimeUs
-                            }
-                            pcmBuf.position(decInfo.offset)
-                            pcmBuf.limit(decInfo.offset + decInfo.size)
-                            val normPts = (decInfo.presentationTimeUs - firstPtsUs).coerceAtLeast(0L)
-                            var remaining = pcmBuf.remaining()
-                            while (remaining > 0 && !cancelFlag.get()) {
-                                val encInIdx = enc.dequeueInputBuffer(TIMEOUT_US)
-                                if (encInIdx >= 0) {
-                                    val encInBuf = enc.getInputBuffer(encInIdx)
-                                    if (encInBuf != null) {
-                                        encInBuf.clear()
-                                        val toCopy = minOf(remaining, encInBuf.remaining())
-                                        val savedLimit = pcmBuf.limit()
-                                        pcmBuf.limit(pcmBuf.position() + toCopy)
-                                        encInBuf.put(pcmBuf)
-                                        pcmBuf.limit(savedLimit)
-                                        enc.queueInputBuffer(encInIdx, 0, toCopy, normPts, 0)
-                                        remaining -= toCopy
-                                    }
-                                } else {
-                                    // Drain encoder to avoid input starvation
-                                    val outIdx = enc.dequeueOutputBuffer(encInfo, 0L)
-                                    if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED && !muxerStarted) {
-                                        muxTrack = outMux.addTrack(enc.outputFormat)
-                                        outMux.start()
-                                        muxerStarted = true
-                                    } else if (outIdx >= 0) {
-                                        val outBuf = enc.getOutputBuffer(outIdx)
-                                        if (outBuf != null && muxerStarted && (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && encInfo.size > 0) {
-                                            outBuf.position(encInfo.offset)
-                                            outBuf.limit(encInfo.offset + encInfo.size)
-                                            val safePts = DirectTranscodeMath.sanitizeMonotonicPtsUs(
-                                                candidatePtsUs = encInfo.presentationTimeUs,
-                                                lastPtsUs = lastMuxPtsUs,
-                                                minStepUs = 1_000L
-                                            )
-                                            encInfo.presentationTimeUs = safePts
-                                            outMux.writeSampleData(muxTrack, outBuf, encInfo)
-                                            lastMuxPtsUs = safePts
-                                        }
-                                        enc.releaseOutputBuffer(outIdx, false)
-                                    }
-                                }
-                            }
-                        }
-                        dec.releaseOutputBuffer(decIdx, false)
-                        if (isEos) {
-                            decoderDone = true
-                            var eosQueued = false
-                            while (!eosQueued && !cancelFlag.get()) {
-                                val encInIdx = enc.dequeueInputBuffer(TIMEOUT_US)
-                                if (encInIdx >= 0) {
-                                    enc.queueInputBuffer(encInIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                    eosQueued = true
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Drain AAC encoder output
+            fun drainAudioEncoder(enc: MediaCodec, endOfStream: Boolean) {
+                val eosDeadlineMs = if (endOfStream) SystemClock.elapsedRealtime() + 5_000L else 0L
                 while (!cancelFlag.get()) {
-                    val encOutIdx = enc.dequeueOutputBuffer(encInfo, if (decoderDone) TIMEOUT_US else 0L)
+                    val encOutIdx = enc.dequeueOutputBuffer(encInfo, if (endOfStream) TIMEOUT_US else 0L)
                     when {
-                        encOutIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                        encOutIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                            if (!endOfStream) break
+                            if (SystemClock.elapsedRealtime() >= eosDeadlineMs) {
+                                encoderDone = true
+                                break
+                            }
+                        }
                         encOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (!muxerStarted) {
                                 muxTrack = outMux.addTrack(enc.outputFormat)
@@ -948,7 +916,116 @@ internal object DirectMediaCodecTranscoder {
                     }
                 }
             }
-            (muxerStarted && !cancelFlag.get()) to sharedBaselineUs
+
+            while (!encoderDone && !cancelFlag.get()) {
+                if (!inputDone) {
+                    val inIdx = dec.dequeueInputBuffer(TIMEOUT_US)
+                    if (inIdx >= 0) {
+                        val buf = dec.getInputBuffer(inIdx)
+                        if (buf != null) {
+                            val size = ext.readSampleData(buf, 0)
+                            val pts = ext.sampleTime
+                            if (size < 0 || (clipEndUs != null && pts > clipEndUs + 200_000L)) {
+                                dec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputDone = true
+                            } else {
+                                dec.queueInputBuffer(inIdx, 0, size, pts.coerceAtLeast(0L), mapExtractorFlagsToCodecFlags(ext.sampleFlags))
+                                ext.advance()
+                            }
+                        }
+                    }
+                }
+
+                if (!decoderDone) {
+                    val decIdx = dec.dequeueOutputBuffer(decInfo, TIMEOUT_US)
+                    if (decIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        val decFmt = dec.outputFormat
+                        val actualSr = if (decFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                            runCatching { decFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrDefault(encSampleRate)
+                        } else encSampleRate
+                        val actualCh = if (decFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                            runCatching { decFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }.getOrDefault(encChannels)
+                        } else encChannels
+                        if (encoder == null) {
+                            ensureEncoderStarted(actualSr, actualCh)
+                        }
+                    } else if (decIdx >= 0) {
+                        val isEos = (decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                        val pcmBuf = dec.getOutputBuffer(decIdx)
+                        val inRange = decInfo.size > 0 &&
+                            (startUs <= 0L || decInfo.presentationTimeUs >= startUs) &&
+                            (clipEndUs == null || decInfo.presentationTimeUs <= clipEndUs)
+
+                        if (pcmBuf != null && inRange) {
+                            val enc = ensureEncoderStarted(encSampleRate, encChannels)
+                            if (firstPtsUs == Long.MIN_VALUE) {
+                                firstPtsUs = if (startUs > 0L) minOf(decInfo.presentationTimeUs, startUs) else decInfo.presentationTimeUs
+                            }
+                            pcmBuf.position(decInfo.offset)
+                            pcmBuf.limit(decInfo.offset + decInfo.size)
+                            val normPts = (decInfo.presentationTimeUs - firstPtsUs).coerceAtLeast(0L)
+                            val bytesPerSec = (encSampleRate.toLong() * encChannels.toLong() * 2L).coerceAtLeast(16_000L)
+                            var chunkOffsetBytes = 0L
+                            var remaining = pcmBuf.remaining()
+                            while (remaining > 0 && !cancelFlag.get()) {
+                                val encInIdx = enc.dequeueInputBuffer(TIMEOUT_US)
+                                if (encInIdx >= 0) {
+                                    val encInBuf = enc.getInputBuffer(encInIdx)
+                                    if (encInBuf != null) {
+                                        encInBuf.clear()
+                                        val toCopy = minOf(remaining, encInBuf.remaining())
+                                        val savedLimit = pcmBuf.limit()
+                                        pcmBuf.limit(pcmBuf.position() + toCopy)
+                                        encInBuf.put(pcmBuf)
+                                        pcmBuf.limit(savedLimit)
+                                        val chunkPtsUs = normPts + (chunkOffsetBytes * 1_000_000L) / bytesPerSec
+                                        enc.queueInputBuffer(encInIdx, 0, toCopy, chunkPtsUs, 0)
+                                        chunkOffsetBytes += toCopy
+                                        remaining -= toCopy
+                                    }
+                                } else {
+                                    // Drain encoder to avoid input starvation
+                                    drainAudioEncoder(enc, endOfStream = false)
+                                }
+                            }
+                        }
+                        dec.releaseOutputBuffer(decIdx, false)
+                        if (isEos) {
+                            decoderDone = true
+                            val enc = encoder
+                            if (enc == null) {
+                                encoderDone = true
+                            } else {
+                                var eosQueued = false
+                                val eosQueueDeadlineMs = SystemClock.elapsedRealtime() + 5_000L
+                                while (!eosQueued && !cancelFlag.get()) {
+                                    val encInIdx = enc.dequeueInputBuffer(TIMEOUT_US)
+                                    if (encInIdx >= 0) {
+                                        enc.queueInputBuffer(encInIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                        eosQueued = true
+                                    } else {
+                                        // Drain encoder output while waiting for an input slot so EOS never deadlocks
+                                        drainAudioEncoder(enc, endOfStream = false)
+                                        if (SystemClock.elapsedRealtime() >= eosQueueDeadlineMs) {
+                                            encoderDone = true
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Drain AAC encoder output
+                encoder?.let { drainAudioEncoder(it, endOfStream = decoderDone) }
+            }
+            if (cancelFlag.get() || !muxerStarted) {
+                return false to null
+            }
+            muxerStarted = false
+            outMux.stop()
+            (outAudioFile.exists() && outAudioFile.length() > 0L) to sharedBaselineUs
         } catch (_: Throwable) {
             false to null
         } finally {
@@ -1049,22 +1126,27 @@ internal object DirectMediaCodecTranscoder {
         private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
 
         init {
-            eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            require(eglDisplay != EGL14.EGL_NO_DISPLAY) { "Unable to get EGL14 display" }
-            val version = IntArray(2)
-            require(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "Unable to initialize EGL14" }
+            try {
+                eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+                require(eglDisplay != EGL14.EGL_NO_DISPLAY) { "Unable to get EGL14 display" }
+                val version = IntArray(2)
+                require(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "Unable to initialize EGL14" }
 
-            val config = chooseEglConfig(eglDisplay)
-            val contextAttribs = intArrayOf(
-                EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
-                EGL14.EGL_NONE
-            )
-            eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-            require(eglContext != EGL14.EGL_NO_CONTEXT) { "Unable to create EGL context" }
+                val config = chooseEglConfig(eglDisplay)
+                val contextAttribs = intArrayOf(
+                    EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
+                    EGL14.EGL_NONE
+                )
+                eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
+                require(eglContext != EGL14.EGL_NO_CONTEXT) { "Unable to create EGL context" }
 
-            val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-            eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, config, surface, surfaceAttribs, 0)
-            require(eglSurface != EGL14.EGL_NO_SURFACE) { "Unable to create EGL window surface" }
+                val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
+                eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, config, surface, surfaceAttribs, 0)
+                require(eglSurface != EGL14.EGL_NO_SURFACE) { "Unable to create EGL window surface" }
+            } catch (t: Throwable) {
+                runCatching { release() }
+                throw t
+            }
         }
 
         private fun chooseEglConfig(display: EGLDisplay): EGLConfig {
@@ -1155,8 +1237,8 @@ internal object DirectMediaCodecTranscoder {
         private val mvpMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
         private val stMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
 
-        private val program: Int
-        private val textureId: Int
+        private var program: Int = 0
+        private var textureId: Int = 0
         private val mvpMatrixHandle: Int
         private val stMatrixHandle: Int
         private val positionHandle: Int
@@ -1166,26 +1248,44 @@ internal object DirectMediaCodecTranscoder {
         val surface: Surface
 
         init {
-            program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
-            positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
-            textureHandle = GLES20.glGetAttribLocation(program, "aTextureCoord")
-            mvpMatrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
-            stMatrixHandle = GLES20.glGetUniformLocation(program, "uSTMatrix")
+            var createdTexId = 0
+            var createdProgram = 0
+            var createdSt: SurfaceTexture? = null
+            var createdSurface: Surface? = null
+            try {
+                createdProgram = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
+                program = createdProgram
+                positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
+                textureHandle = GLES20.glGetAttribLocation(program, "aTextureCoord")
+                mvpMatrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
+                stMatrixHandle = GLES20.glGetUniformLocation(program, "uSTMatrix")
 
-            val textures = IntArray(1)
-            GLES20.glGenTextures(1, textures, 0)
-            textureId = textures[0]
-            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-            GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR.toFloat())
-            GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR.toFloat())
-            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+                val textures = IntArray(1)
+                GLES20.glGenTextures(1, textures, 0)
+                createdTexId = textures[0]
+                textureId = createdTexId
+                GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
+                GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR.toFloat())
+                GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR.toFloat())
+                GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+                GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
-            surfaceTexture = SurfaceTexture(textureId).apply {
-                setDefaultBufferSize(width, height)
-                setOnFrameAvailableListener(this@CodecOutputSurface, callbackHandler)
+                createdSt = SurfaceTexture(textureId).apply {
+                    setDefaultBufferSize(width, height)
+                    setOnFrameAvailableListener(this@CodecOutputSurface, callbackHandler)
+                }
+                surfaceTexture = createdSt
+                createdSurface = Surface(surfaceTexture)
+                surface = createdSurface
+            } catch (t: Throwable) {
+                runCatching { createdSurface?.release() }
+                runCatching { createdSt?.setOnFrameAvailableListener(null) }
+                runCatching { createdSt?.release() }
+                if (createdProgram != 0) runCatching { GLES20.glDeleteProgram(createdProgram) }
+                if (createdTexId != 0) runCatching { GLES20.glDeleteTextures(1, intArrayOf(createdTexId), 0) }
+                runCatching { callbackThread.quitSafely() }
+                throw t
             }
-            surface = Surface(surfaceTexture)
         }
 
         override fun onFrameAvailable(st: SurfaceTexture?) {

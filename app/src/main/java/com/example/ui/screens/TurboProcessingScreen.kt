@@ -62,6 +62,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +105,38 @@ import kotlin.math.sin
 
 private enum class TurboPhase { RUNNING, SUCCESS, FAILED, IDLE }
 
+private class TurboStateCache {
+    var lastRunning: EncodingState.Running? = null
+    var lastSuccess: EncodingState.Success? = null
+    var lastFailed: EncodingState.Failed? = null
+}
+
+private data class GaugeTickSpec(
+    val value: Int,
+    val cosA: Float,
+    val sinA: Float,
+    val isMajor: Boolean,
+    val isMedium: Boolean,
+    val isRedline: Boolean,
+    val label: String?
+)
+
+private val SPEEDOMETER_TICKS: List<GaugeTickSpec> = List(51) { step ->
+    val value = step * 2
+    val angleDeg = 145f + 250f * (value / 100f)
+    val angleRad = angleDeg * (PI / 180.0)
+    val isMajor = value % 10 == 0
+    GaugeTickSpec(
+        value = value,
+        cosA = cos(angleRad).toFloat(),
+        sinA = sin(angleRad).toFloat(),
+        isMajor = isMajor,
+        isMedium = !isMajor && value % 5 == 0,
+        isRedline = value >= 80,
+        label = if (isMajor) value.toString() else null
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TurboProcessingScreen(
@@ -129,6 +163,13 @@ fun TurboProcessingScreen(
         state.isUnsupportedFormat &&
         !state.hasTriedRemux
     var showRemuxPromptDialog by remember(state) { mutableStateOf(canOfferRemux) }
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state !is EncodingState.Running) {
+        if (state !is EncodingState.Running) {
+            showCancelConfirmDialog = false
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -171,7 +212,7 @@ fun TurboProcessingScreen(
                     when (state) {
                         is EncodingState.Running -> {
                             OutlinedButton(
-                                onClick = onCancel,
+                                onClick = { showCancelConfirmDialog = true },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(50.dp)
@@ -272,13 +313,11 @@ fun TurboProcessingScreen(
             }
         }
     ) { innerPadding ->
-        var lastRunning by remember { mutableStateOf<EncodingState.Running?>(null) }
-        var lastSuccess by remember { mutableStateOf<EncodingState.Success?>(null) }
-        var lastFailed by remember { mutableStateOf<EncodingState.Failed?>(null) }
+        val stateCache = remember { TurboStateCache() }
         when (state) {
-            is EncodingState.Running -> lastRunning = state
-            is EncodingState.Success -> lastSuccess = state
-            is EncodingState.Failed -> lastFailed = state
+            is EncodingState.Running -> stateCache.lastRunning = state
+            is EncodingState.Success -> stateCache.lastSuccess = state
+            is EncodingState.Failed -> stateCache.lastFailed = state
             EncodingState.Idle -> Unit
         }
         val phase = when (state) {
@@ -306,7 +345,7 @@ fun TurboProcessingScreen(
             ) {
                 when (targetPhase) {
                     TurboPhase.RUNNING -> {
-                        val running = (state as? EncodingState.Running) ?: lastRunning
+                        val running = (state as? EncodingState.Running) ?: stateCache.lastRunning
                         if (running != null) {
                             item {
                                 TurboSpeedometerHeroCard(state = running)
@@ -318,7 +357,7 @@ fun TurboProcessingScreen(
                     }
 
                     TurboPhase.SUCCESS -> {
-                        val success = (state as? EncodingState.Success) ?: lastSuccess
+                        val success = (state as? EncodingState.Success) ?: stateCache.lastSuccess
                         if (success != null) {
                             item {
                                 TurboSuccessBanner(
@@ -337,7 +376,7 @@ fun TurboProcessingScreen(
                     }
 
                     TurboPhase.FAILED -> {
-                        val failed = (state as? EncodingState.Failed) ?: lastFailed
+                        val failed = (state as? EncodingState.Failed) ?: stateCache.lastFailed
                         if (failed != null) {
                             item {
                                 TurboFailureWarningCard(
@@ -398,6 +437,57 @@ fun TurboProcessingScreen(
                     modifier = Modifier.testTag("turbo_remux_confirm_no")
                 ) {
                     Text(strings.turboRemuxPromptNo)
+                }
+            }
+        )
+    }
+
+    if (showCancelConfirmDialog && isActiveStage && state is EncodingState.Running) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirmDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.WarningAmber,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.cancelConfirmTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = strings.cancelConfirmBody,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirmDialog = false
+                        onCancel()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("cancel_confirm_yes_button")
+                ) {
+                    Text(strings.cancelConfirmYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCancelConfirmDialog = false },
+                    modifier = Modifier.testTag("cancel_confirm_no_button")
+                ) {
+                    Text(strings.cancelConfirmKeepRunning)
                 }
             }
         )
@@ -480,7 +570,7 @@ private fun TurboSpeedometerHeroCard(state: EncodingState.Running) {
 
             Spacer(Modifier.height(12.dp))
 
-            // Classic live telemetry bar: Time processed / total | speed (e.g. 4.20x) | size
+            // Classic live telemetry bar: Time processed / total | speed (e.g. 4.20x) | size (e.g. 15.6mb)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.small,
@@ -507,7 +597,8 @@ private fun TurboSpeedometerHeroCard(state: EncodingState.Running) {
 
 /**
  * Custom Canvas automotive speedometer / tachometer gauge (0..100 scale representing encoding %).
- * Styled in our Cream & Cello Dark-Brown palette with warm bronze active sweep and Sienna redline.
+ * Keeps 120Hz spring needle reads strictly inside the Draw phase and derived integer odometer state
+ * so Compose never recomposes the layout tree on every animation frame.
  */
 @Composable
 private fun CarSpeedometerGauge(
@@ -516,7 +607,7 @@ private fun CarSpeedometerGauge(
     modifier: Modifier = Modifier
 ) {
     val clampedTarget = percent.coerceIn(0, 100).toFloat()
-    val animatedValue by animateFloatAsState(
+    val animatedState = animateFloatAsState(
         targetValue = clampedTarget,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioNoBouncy,
@@ -537,12 +628,28 @@ private fun CarSpeedometerGauge(
     val strings = LocalAppStrings.current
     val density = LocalDensity.current
 
+    val primaryArgb = remember(primary) { primary.toArgb() }
+    val redlineArgb = remember(redline) { redline.toArgb() }
+    val mutedArgb = remember(muted) { muted.toArgb() }
+    val sweepColorStops = remember(secondary, primary, redline) {
+        arrayOf(
+            0.0f to secondary,
+            0.45f to primary,
+            0.80f to primary,
+            1.0f to redline
+        )
+    }
+    val needlePath = remember { Path() }
     val numberPaint = remember(density, ink) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             color = ink.toArgb()
         }
+    }
+
+    val displayedPercent by remember {
+        derivedStateOf { animatedState.value.roundToInt().coerceIn(0, 100) }
     }
 
     BoxWithConstraints(
@@ -557,6 +664,7 @@ private fun CarSpeedometerGauge(
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val animatedValue = animatedState.value
                 val diameter = min(size.width, size.height)
                 val radius = diameter / 2f
                 val center = Offset(size.width / 2f, size.height / 2f)
@@ -629,12 +737,7 @@ private fun CarSpeedometerGauge(
                 val activeSweepDeg = totalSweepDeg * progressFraction
                 if (activeSweepDeg > 0.5f) {
                     val activeBrush = Brush.sweepGradient(
-                        colorStops = arrayOf(
-                            0.0f to secondary,
-                            0.45f to primary,
-                            0.80f to primary,
-                            1.0f to redline
-                        ),
+                        colorStops = sweepColorStops,
                         center = center
                     )
                     // Glow underlay
@@ -663,70 +766,66 @@ private fun CarSpeedometerGauge(
                     )
                 }
 
-                // 4. Automotive tick marks (0..100: major every 10, medium every 5, minor every 2)
+                // 4. Automotive tick marks (0..100 using precomputed cos/sin & labels)
                 val outerTickRadius = radius * 0.805f
                 val labelRadius = radius * 0.625f
+                val majorLen = radius * 0.088f
+                val mediumLen = radius * 0.058f
+                val minorLen = radius * 0.036f
+                val majorStroke = 2.3.dp.toPx()
+                val mediumStroke = 1.5.dp.toPx()
+                val minorStroke = 1.0.dp.toPx()
+                val redlineDim = redline.copy(alpha = 0.55f)
+                val inkMajor = ink.copy(alpha = 0.62f)
+                val mutedMinor = muted.copy(alpha = 0.36f)
                 numberPaint.textSize = radius * 0.105f
+                val fm = numberPaint.fontMetrics
+                val textVerticalOffset = (fm.ascent + fm.descent) / 2f
 
-                for (step in 0..50) {
-                    val value = step * 2
-                    val frac = value / 100f
-                    val angleDeg = startAngleDeg + totalSweepDeg * frac
-                    val angleRad = angleDeg * (PI / 180.0)
-                    val isMajor = value % 10 == 0
-                    val isMedium = !isMajor && value % 5 == 0
-                    val isRedline = value >= 80
-                    val isLit = value <= animatedValue + 0.5f
+                for (i in SPEEDOMETER_TICKS.indices) {
+                    val tick = SPEEDOMETER_TICKS[i]
+                    val isLit = tick.value <= animatedValue + 0.5f
 
                     val tickLen = when {
-                        isMajor -> radius * 0.088f
-                        isMedium -> radius * 0.058f
-                        else -> radius * 0.036f
+                        tick.isMajor -> majorLen
+                        tick.isMedium -> mediumLen
+                        else -> minorLen
                     }
                     val tickStroke = when {
-                        isMajor -> 2.3.dp.toPx()
-                        isMedium -> 1.5.dp.toPx()
-                        else -> 1.0.dp.toPx()
+                        tick.isMajor -> majorStroke
+                        tick.isMedium -> mediumStroke
+                        else -> minorStroke
                     }
                     val tickColor = when {
-                        isRedline && isLit -> redline
-                        isRedline -> redline.copy(alpha = 0.55f)
+                        tick.isRedline && isLit -> redline
+                        tick.isRedline -> redlineDim
                         isLit -> primary
-                        isMajor -> ink.copy(alpha = 0.62f)
-                        else -> muted.copy(alpha = 0.36f)
+                        tick.isMajor -> inkMajor
+                        else -> mutedMinor
                     }
 
                     val innerR = outerTickRadius - tickLen
-                    val startPt = Offset(
-                        x = center.x + (innerR * cos(angleRad)).toFloat(),
-                        y = center.y + (innerR * sin(angleRad)).toFloat()
-                    )
-                    val endPt = Offset(
-                        x = center.x + (outerTickRadius * cos(angleRad)).toFloat(),
-                        y = center.y + (outerTickRadius * sin(angleRad)).toFloat()
-                    )
                     drawLine(
                         color = tickColor,
-                        start = startPt,
-                        end = endPt,
+                        start = Offset(center.x + innerR * tick.cosA, center.y + innerR * tick.sinA),
+                        end = Offset(center.x + outerTickRadius * tick.cosA, center.y + outerTickRadius * tick.sinA),
                         strokeWidth = tickStroke,
                         cap = StrokeCap.Round
                     )
 
-                    if (isMajor) {
-                        val lx = center.x + (labelRadius * cos(angleRad)).toFloat()
-                        val ly = center.y + (labelRadius * sin(angleRad)).toFloat()
+                    val label = tick.label
+                    if (label != null) {
+                        val lx = center.x + labelRadius * tick.cosA
+                        val ly = center.y + labelRadius * tick.sinA
                         numberPaint.color = when {
-                            isRedline -> redline.toArgb()
-                            isLit -> primary.toArgb()
-                            else -> muted.toArgb()
+                            tick.isRedline -> redlineArgb
+                            isLit -> primaryArgb
+                            else -> mutedArgb
                         }
-                        val fm = numberPaint.fontMetrics
-                        val textY = ly - (fm.ascent + fm.descent) / 2f
                         drawContext.canvas.nativeCanvas.drawText(
-                            value.toString(),
+                            label,
                             lx,
-                            textY,
+                            ly - textVerticalOffset,
                             numberPaint
                         )
                     }
@@ -740,43 +839,46 @@ private fun CarSpeedometerGauge(
                     style = Stroke(width = 1.dp.toPx())
                 )
 
-                // 6. Tapered Automotive Needle + Counterweight
+                // 6. Tapered Automotive Needle + Counterweight (reusing single Path instance)
                 val needleAngleDeg = startAngleDeg + totalSweepDeg * progressFraction
                 val needleRad = needleAngleDeg * (PI / 180.0)
-                val perpRad = needleRad + (PI / 2.0)
+                val cosA = cos(needleRad).toFloat()
+                val sinA = sin(needleRad).toFloat()
+                val cosP = -sinA
+                val sinP = cosA
 
                 val tipLength = radius * 0.72f
                 val tailLength = radius * 0.16f
                 val baseHalfWidth = radius * 0.036f
                 val tipHalfWidth = radius * 0.008f
 
-                val cosA = cos(needleRad).toFloat()
-                val sinA = sin(needleRad).toFloat()
-                val cosP = cos(perpRad).toFloat()
-                val sinP = sin(perpRad).toFloat()
-
-                fun needlePath(offset: Offset = Offset.Zero): Path {
-                    val tipCenter = Offset(center.x + tipLength * cosA, center.y + tipLength * sinA) + offset
-                    val tailCenter = Offset(center.x - tailLength * cosA, center.y - tailLength * sinA) + offset
-                    return Path().apply {
-                        moveTo(tipCenter.x + tipHalfWidth * cosP, tipCenter.y + tipHalfWidth * sinP)
-                        lineTo(center.x + offset.x + baseHalfWidth * cosP, center.y + offset.y + baseHalfWidth * sinP)
-                        lineTo(tailCenter.x + baseHalfWidth * 0.65f * cosP, tailCenter.y + baseHalfWidth * 0.65f * sinP)
-                        lineTo(tailCenter.x - baseHalfWidth * 0.65f * cosP, tailCenter.y - baseHalfWidth * 0.65f * sinP)
-                        lineTo(center.x + offset.x - baseHalfWidth * cosP, center.y + offset.y - baseHalfWidth * sinP)
-                        lineTo(tipCenter.x - tipHalfWidth * cosP, tipCenter.y - tipHalfWidth * sinP)
-                        close()
-                    }
+                fun fillNeedlePath(offsetY: Float) {
+                    needlePath.reset()
+                    val cx = center.x
+                    val cy = center.y + offsetY
+                    val tipX = cx + tipLength * cosA
+                    val tipY = cy + tipLength * sinA
+                    val tailX = cx - tailLength * cosA
+                    val tailY = cy - tailLength * sinA
+                    needlePath.moveTo(tipX + tipHalfWidth * cosP, tipY + tipHalfWidth * sinP)
+                    needlePath.lineTo(cx + baseHalfWidth * cosP, cy + baseHalfWidth * sinP)
+                    needlePath.lineTo(tailX + baseHalfWidth * 0.65f * cosP, tailY + baseHalfWidth * 0.65f * sinP)
+                    needlePath.lineTo(tailX - baseHalfWidth * 0.65f * cosP, tailY - baseHalfWidth * 0.65f * sinP)
+                    needlePath.lineTo(cx - baseHalfWidth * cosP, cy - baseHalfWidth * sinP)
+                    needlePath.lineTo(tipX - tipHalfWidth * cosP, tipY - tipHalfWidth * sinP)
+                    needlePath.close()
                 }
 
                 // Soft needle drop shadow
+                fillNeedlePath(offsetY = 3.dp.toPx())
                 drawPath(
-                    path = needlePath(Offset(0f, 3.dp.toPx())),
+                    path = needlePath,
                     color = Color.Black.copy(alpha = 0.14f)
                 )
                 // Main crimson-espresso racing needle
+                fillNeedlePath(offsetY = 0f)
                 drawPath(
-                    path = needlePath(),
+                    path = needlePath,
                     brush = Brush.linearGradient(
                         colors = listOf(primary, redline),
                         start = center,
@@ -810,7 +912,7 @@ private fun CarSpeedometerGauge(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = strings.formatPercent(animatedValue.roundToInt().coerceIn(0, 100)),
+                    text = strings.formatPercent(displayedPercent),
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontFamily = SpaceGroteskFontFamily,
                         fontWeight = FontWeight.Bold,
@@ -818,7 +920,7 @@ private fun CarSpeedometerGauge(
                         lineHeight = 32.sp,
                         letterSpacing = (-0.5).sp
                     ),
-                    color = if (animatedValue >= 80f) redline else primary,
+                    color = if (displayedPercent >= 80) redline else primary,
                     modifier = Modifier.testTag("turbo_percent_readout")
                 )
                 Text(

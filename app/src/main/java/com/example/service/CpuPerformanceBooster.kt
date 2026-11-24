@@ -35,29 +35,48 @@ class CpuPerformanceBooster(private val context: Context) {
         "ConnectivityThr", "OkHttp", "DefaultDispatch"
     )
 
+    private val lock = Any()
+
+    @Volatile
+    private var active: Boolean = false
+
     fun start() {
-        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
-        lastSampledCpuTicks = readProcessThreadTicks()
-        refreshAndPulse(force = true)
+        synchronized(lock) {
+            active = true
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
+            lastSampledCpuTicks = readProcessThreadTicks()
+            refreshAndPulseLocked(force = true)
+        }
     }
 
     fun pulseIfDue() {
+        if (!active) return
         val now = System.currentTimeMillis()
         if (now - lastBoostPulseMs >= 1800L) {
-            refreshAndPulse(force = false)
+            synchronized(lock) {
+                if (!active) return
+                if (System.currentTimeMillis() - lastBoostPulseMs >= 1800L) {
+                    refreshAndPulseLocked(force = false)
+                }
+            }
         }
     }
 
     fun stop() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching { perfHintSession?.close() }
+        synchronized(lock) {
+            active = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                runCatching { perfHintSession?.close() }
+            }
+            perfHintSession = null
+            lastRegisteredTids = IntArray(0)
+            lastSampledCpuTicks = emptyMap()
         }
-        perfHintSession = null
-        lastRegisteredTids = IntArray(0)
-        lastSampledCpuTicks = emptyMap()
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
     }
 
-    private fun refreshAndPulse(force: Boolean) {
+    private fun refreshAndPulseLocked(force: Boolean) {
+        if (!active) return
         lastBoostPulseMs = System.currentTimeMillis()
         val currentTicks = readProcessThreadTicks()
         val mainPid = Process.myPid()
