@@ -44,8 +44,10 @@ import com.example.domain.ProcessingMode
 import com.example.domain.ResolutionOption
 import com.example.domain.TrimSubMode
 import com.example.domain.VideoCodecOption
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.Locale
@@ -447,8 +449,11 @@ object Media3TurboEngine {
         val probe = probeSourceTracks(context, sourceUri, media)
         val plan = computeTurboBitratePlan(media, config, probe, hwCaps, aacCaps)
         onPlanResolved(plan)
+        // Brief calm settle so the UI displays the exact calculated bitrate/specs cleanly
+        // before the hardware decoder/encoder allocates DMA-BUF surfaces.
+        delay(120L)
 
-        // Tier 1: Optimized hardware encoder (CBR for target-size, 2s GOP, safe 4K negotiation)
+        // Tier 1: Optimized Media3 hardware pipeline (CBR for target-size, 2s GOP, safe 4K negotiation)
         val attempt1 = executeSingleAttempt(
             context = context,
             media = media,
@@ -467,32 +472,35 @@ object Media3TurboEngine {
         }
 
         // Wait for Qualcomm/OEM C2 HAL (e.g. vendor.qti.media.c2) to finish asynchronously
-        // releasing Attempt 1's 4K VPU session + EGL surface before allocating Tier 2.
-        // Without this cooldown, Tier 2 collides 0ms later with Tier 1's still-releasing VPU.
+        // releasing Attempt 1's 4K VPU session + EGL surface before launching Tier 2.
+        onProgress(-1, 0.0, plan.effectiveDurationSec)
         runCatching { if (outputFile.exists()) outputFile.delete() }
-        delay(380L)
+        delay(450L)
 
-        // Tier 2: Clean minimal hardware MediaCodec format + universal OpenGL HDR->SDR tone-mapping.
-        // Solves Qualcomm c2.qti.avc.encoder rejections on FFmpeg lossless-cut clips, HDR10/HLG/DV
-        // decoder tone-map failures, and strict OEM profile/level/operating-rate checks.
-        val attempt2 = executeSingleAttempt(
+        // Tier 2: Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0 Surface ->
+        // MediaCodec HW Encoder -> MediaMuxer with strict monotonic PTS sanitization.
+        // Mirrors standalone MediaCodec compressor apps and bypasses Media3 Transformer's edit-list /
+        // lossless-cut timestamp / DefaultCodec quirks on Qualcomm c2.qti.avc.encoder at full HW speed.
+        val attempt2 = executeDirectAttempt(
             context = context,
             media = media,
             sourceUri = sourceUri,
             probe = probe,
             hwCaps = hwCaps,
-            aacCaps = aacCaps,
             plan = plan,
             config = config,
+            videoMime = videoMime,
             outputFile = outputFile,
-            attemptMode = EncoderAttemptMode.CLEAN_MINIMAL_HW,
+            useCbr = plan.useCbr && hwCaps.supportsCbr,
+            dropTo30Fps = false,
             onProgress = onProgress
         )
-        if (attempt2.success || attempt2.cancelled || !isRecoverableAttemptError(attempt2)) {
+        if (attempt2.success || attempt2.cancelled) {
             return attempt2
         }
 
-        // Tier 3: Safe 30 FPS fallback if a 4K60, 2.7K60, or 1080p120+ video exceeded the VPU rate ceiling
+        // Tier 3: Try either Media3 OpenGL HDR->SDR tone-mapping (for 10-bit HDR10/HLG/Dolby Vision)
+        // or Direct MediaCodec 30 FPS VBR fallback (if 4K60 exceeded the VPU rate ceiling).
         val (outW, outH) = if (probe.displayDims != null) {
             resolveTargetDimensionsForDisplay(probe.displayDims.first, probe.displayDims.second, config)
         } else {
@@ -504,45 +512,144 @@ object Media3TurboEngine {
             config.fps != FpsOption.FPS_30 &&
             (outPixels > 1920L * 1080L || srcFps > 61.0 || !hwCaps.areSizeAndRateSupported(outW, outH, srcFps))
 
+        onProgress(-1, 0.0, plan.effectiveDurationSec)
+        runCatching { if (outputFile.exists()) outputFile.delete() }
+        delay(450L)
+
         if (canTryFpsFallback) {
-            runCatching { if (outputFile.exists()) outputFile.delete() }
-            delay(380L)
-            return executeSingleAttempt(
+            val attempt3Direct30 = executeDirectAttempt(
                 context = context,
                 media = media,
                 sourceUri = sourceUri,
                 probe = probe,
                 hwCaps = hwCaps,
-                aacCaps = aacCaps,
                 plan = plan,
                 config = config,
+                videoMime = videoMime,
                 outputFile = outputFile,
-                attemptMode = EncoderAttemptMode.SAFE_FPS_FALLBACK,
+                useCbr = false,
+                dropTo30Fps = true,
                 onProgress = onProgress
             )
-        }
-
-        // Final cold-start transient retry: if Tier 2 failed rapidly on first launch while the
-        // device's MediaCodec HAL was still warming up, give it one clean retry after cooldown.
-        if (attempt2.elapsedSec < 3.0) {
+            if (attempt3Direct30.success || attempt3Direct30.cancelled) {
+                return attempt3Direct30
+            }
+            onProgress(-1, 0.0, plan.effectiveDurationSec)
             runCatching { if (outputFile.exists()) outputFile.delete() }
-            delay(450L)
-            return executeSingleAttempt(
-                context = context,
-                media = media,
-                sourceUri = sourceUri,
-                probe = probe,
-                hwCaps = hwCaps,
-                aacCaps = aacCaps,
-                plan = plan,
-                config = config,
-                outputFile = outputFile,
-                attemptMode = EncoderAttemptMode.CLEAN_MINIMAL_HW,
-                onProgress = onProgress
-            )
+            delay(400L)
         }
 
-        return attempt2
+        val attemptMedia3OpenGl = executeSingleAttempt(
+            context = context,
+            media = media,
+            sourceUri = sourceUri,
+            probe = probe,
+            hwCaps = hwCaps,
+            aacCaps = aacCaps,
+            plan = plan,
+            config = config,
+            outputFile = outputFile,
+            attemptMode = if (canTryFpsFallback) EncoderAttemptMode.SAFE_FPS_FALLBACK else EncoderAttemptMode.CLEAN_MINIMAL_HW,
+            onProgress = onProgress
+        )
+        return if (attemptMedia3OpenGl.success || attemptMedia3OpenGl.cancelled) {
+            attemptMedia3OpenGl
+        } else {
+            attempt1
+        }
+    }
+
+    private suspend fun executeDirectAttempt(
+        context: Context,
+        media: MediaInfo,
+        sourceUri: Uri,
+        probe: SourceTrackProbe,
+        hwCaps: HardwareVideoEncoderCaps,
+        plan: TurboBitratePlan,
+        config: ModeConfigState,
+        videoMime: String,
+        outputFile: File,
+        useCbr: Boolean,
+        dropTo30Fps: Boolean,
+        onProgress: (percent: Int, elapsedSec: Double, effectiveDurationSec: Double) -> Unit
+    ): Media3TurboResult = withContext(Dispatchers.IO) {
+        val cancelFlag = AtomicBoolean(false)
+        activeCancelAction.set { cancelFlag.set(true) }
+        try {
+            val displayDims = probe.displayDims
+            val (outW, outH) = if (displayDims != null) {
+                resolveTargetDimensionsForDisplay(displayDims.first, displayDims.second, config)
+            } else {
+                resolveTargetDimensions(media, config)
+            }
+            val supportsScalingAndFps = isTargetSizeMode(config.mode) ||
+                (config.mode == ProcessingMode.TRIM_VIDEO &&
+                    (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY || config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC))
+            val srcFps = probe.sourceVideoFps ?: media.fps ?: 30.0
+            val wants30Drop = dropTo30Fps ||
+                (supportsScalingAndFps && config.fps == FpsOption.FPS_30 && srcFps > 30.5)
+            val targetFps = if (wants30Drop) {
+                30
+            } else {
+                val maxChip = hwCaps.maxFpsForSize(outW, outH)
+                val bounded = if (maxChip != null && maxChip >= 15.0) minOf(srcFps, maxChip) else srcFps
+                bounded.roundToInt().coerceIn(15, 120)
+            }
+
+            var clipStartUs: Long? = null
+            var clipEndUs: Long? = null
+            if (config.mode == ProcessingMode.TRIM_VIDEO) {
+                val (startStr, endStr, _) = FfmpegMath.resolveTrimRange(config, probe.durationSec ?: media.durationSec)
+                clipStartUs = startStr?.let { FfmpegMath.parseTimestampToSeconds(it) }
+                    ?.coerceAtLeast(0.0)
+                    ?.let { (it * 1_000_000.0).toLong() }
+                clipEndUs = endStr?.let { FfmpegMath.parseTimestampToSeconds(it) }
+                    ?.coerceAtLeast(0.0)
+                    ?.let { (it * 1_000_000.0).toLong() }
+            }
+
+            // If VBR fallback is used in target-size mode, apply the 0.93x safety margin so
+            // hardware VBR stays strictly below the user's MB limit (e.g. <20 MB).
+            val effectiveVideoBps = if (plan.isTargetSizeMode && plan.useCbr && !useCbr) {
+                (plan.videoBitrateBps * 0.93).roundToInt().coerceAtLeast(100_000)
+            } else {
+                plan.videoBitrateBps
+            }
+
+            val wantsSdrToneMap = !(config.codec == VideoCodecOption.H265 &&
+                config.bitDepth == BitDepthOption.BIT_10 &&
+                hwCaps.supportsHevc10Bit)
+
+            val request = DirectTranscodeRequest(
+                sourceUri = sourceUri,
+                outputFile = outputFile,
+                tempDir = outputFile.parentFile ?: context.cacheDir,
+                videoMime = videoMime,
+                preferredEncoderName = hwCaps.codecName,
+                targetDisplayWidth = outW,
+                targetDisplayHeight = outH,
+                videoBitrateBps = effectiveVideoBps,
+                targetFps = targetFps,
+                useCbr = useCbr,
+                dropTo30Fps = wants30Drop,
+                hasAudio = media.hasAudio,
+                forceAudioReencode = plan.forceAudioReencode,
+                audioBitrateBps = plan.audioBitrateBps,
+                clipStartUs = clipStartUs,
+                clipEndUs = clipEndUs,
+                effectiveDurationSec = plan.effectiveDurationSec,
+                requestSdrToneMap = wantsSdrToneMap
+            )
+
+            DirectMediaCodecTranscoder.transcode(
+                context = context,
+                request = request,
+                cancelFlag = cancelFlag,
+                onProgress = onProgress
+            )
+        } finally {
+            activeCancelAction.set(null)
+        }
     }
 
     private fun isRecoverableAttemptError(result: Media3TurboResult): Boolean {

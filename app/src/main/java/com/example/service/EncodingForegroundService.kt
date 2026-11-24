@@ -12,6 +12,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.Process
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.example.MainActivity
@@ -611,13 +613,24 @@ class EncodingForegroundService : Service() {
                 cpuBooster.stop()
                 val previousJob = activeJob
                 previousJob?.cancel()
+                val handoffStartMs = SystemClock.elapsedRealtime()
                 activeJob = serviceScope.launch {
-                    // Allow cancelled FFmpeg native threads and its SAF file descriptor to finish
-                    // unwinding cleanly before Media3 opens the same URI and initializes the hardware VPU.
-                    // This runs silently underneath the vertical slide animation with zero perceived delay.
+                    runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
+                    // 1. Wait until cancelled FFmpeg coroutine AND native FFmpegKit/libx264 C++
+                    //    worker threads have 100% exited, freed 4K lookahead RAM, and closed their
+                    //    SAF file descriptor before MediaCodec touches the file or Qualcomm VPU.
                     if (previousJob != null) {
                         withTimeoutOrNull(450L) { runCatching { previousJob.cancelAndJoin() } }
-                        delay(160L)
+                    }
+                    FfmpegEngine.awaitActiveSessionTermination(timeoutMs = 5_000L)
+
+                    // 2. Wait until the 880ms 120Hz vertical slide animation into the speedometer
+                    //    screen has cleanly settled so Adreno GPU & VPU initialize without rush
+                    //    or contention, while the user calmly sees the Preparing state.
+                    val elapsedMs = SystemClock.elapsedRealtime() - handoffStartMs
+                    val settleRemainingMs = (1_050L - elapsedMs).coerceAtLeast(0L)
+                    if (settleRemainingMs > 0L) {
+                        delay(settleRemainingMs)
                     }
                     if (!EncodingJobController.isRunActive(jobData.runId)) return@launch
                     runTurboPipeline(
@@ -1157,9 +1170,12 @@ class EncodingForegroundService : Service() {
                         resolvedDurationSec = effectiveDur
                     }
                     if (pct >= 0) {
-                        lastKnownPercent = pct.coerceIn(0, 100)
+                        val clampedPct = pct.coerceIn(0, 100)
+                        if (clampedPct >= lastKnownPercent) {
+                            lastKnownPercent = clampedPct
+                        }
                     }
-                    val statusMsg = if (pct < 0 && lastKnownPercent == 0) {
+                    val statusMsg = if (pct < 0 || lastKnownPercent == 0) {
                         liveS.turboStatusPreparing
                     } else {
                         liveS.turboStatusEncoding

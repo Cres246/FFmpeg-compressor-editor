@@ -18,13 +18,16 @@ import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.KeyframePointResult
 import com.example.domain.MediaInfo
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 data class FfmpegStepResult(
@@ -48,6 +51,21 @@ object FfmpegEngine {
     private var logRedirectionConfigured: Boolean = false
 
     private val previewFallbackMutex = Mutex()
+    private val activeSessionCompletion = AtomicReference<CompletableDeferred<Unit>?>(null)
+
+    /**
+     * Cancels any running native FFmpegKit session and suspends until FFmpegKit's native
+     * worker thread actually invokes its completion callback (ensuring all libx264 4K buffers
+     * and SAF file descriptors are fully freed before MediaCodec initializes).
+     */
+    suspend fun awaitActiveSessionTermination(timeoutMs: Long = 5_000L) {
+        val pending = activeSessionCompletion.get() ?: return
+        if (pending.isCompleted) return
+        runCatching { FFmpegKit.cancel() }
+        withTimeoutOrNull(timeoutMs) {
+            runCatching { pending.await() }
+        }
+    }
 
     /**
      * Prevents FFmpegKit from dumping normal stdout/stderr (such as `-h encoder=libx264` probes)
@@ -395,54 +413,65 @@ object FfmpegEngine {
             addAll(args)
         }.toTypedArray()
 
-        val session = FFmpegKit.executeWithArgumentsAsync(
-            fullArgs,
-            { completedSession ->
-                val rc = completedSession.returnCode
-                val isSuccess = ReturnCode.isSuccess(rc)
-                val isCancelled = ReturnCode.isCancel(rc)
-                val codeVal = rc?.value ?: -1
-                if (cont.isActive) {
-                    cont.resume(
-                        FfmpegStepResult(
-                            success = isSuccess,
-                            cancelled = isCancelled,
-                            returnCode = codeVal,
-                            logs = synchronized(logsBuffer) { logsBuffer.toList() }
+        val sessionDone = CompletableDeferred<Unit>()
+        activeSessionCompletion.getAndSet(sessionDone)?.complete(Unit)
+
+        val session = try {
+            FFmpegKit.executeWithArgumentsAsync(
+                fullArgs,
+                { completedSession ->
+                    sessionDone.complete(Unit)
+                    activeSessionCompletion.compareAndSet(sessionDone, null)
+                    val rc = completedSession.returnCode
+                    val isSuccess = ReturnCode.isSuccess(rc)
+                    val isCancelled = ReturnCode.isCancel(rc)
+                    val codeVal = rc?.value ?: -1
+                    if (cont.isActive) {
+                        cont.resume(
+                            FfmpegStepResult(
+                                success = isSuccess,
+                                cancelled = isCancelled,
+                                returnCode = codeVal,
+                                logs = synchronized(logsBuffer) { logsBuffer.toList() }
+                            )
                         )
-                    )
-                }
-            },
-            { log ->
-                val msg = log?.message?.trim() ?: return@executeWithArgumentsAsync
-                if (isImportantLogLine(msg)) {
-                    var added = false
-                    synchronized(logsBuffer) {
-                        if (logsBuffer.lastOrNull() != msg) {
-                            if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
-                            logsBuffer.add(msg)
-                            added = true
+                    }
+                },
+                { log ->
+                    val msg = log?.message?.trim() ?: return@executeWithArgumentsAsync
+                    if (isImportantLogLine(msg)) {
+                        var added = false
+                        synchronized(logsBuffer) {
+                            if (logsBuffer.lastOrNull() != msg) {
+                                if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
+                                logsBuffer.add(msg)
+                                added = true
+                            }
+                        }
+                        if (added) {
+                            onLogLine(msg)
                         }
                     }
-                    if (added) {
-                        onLogLine(msg)
+                },
+                { stats ->
+                    if (stats != null) {
+                        val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
+                        val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
+                        val speedStr = if (stats.speed > 0.0) {
+                            String.format(Locale.US, "%.2fx", stats.speed)
+                        } else {
+                            "..."
+                        }
+                        val kb = (stats.size / 1024L).coerceAtLeast(0L)
+                        onProgress(curSec, pct, speedStr, kb)
                     }
                 }
-            },
-            { stats ->
-                if (stats != null) {
-                    val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
-                    val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
-                    val speedStr = if (stats.speed > 0.0) {
-                        String.format(Locale.US, "%.2fx", stats.speed)
-                    } else {
-                        "..."
-                    }
-                    val kb = (stats.size / 1024L).coerceAtLeast(0L)
-                    onProgress(curSec, pct, speedStr, kb)
-                }
-            }
-        )
+            )
+        } catch (t: Throwable) {
+            sessionDone.complete(Unit)
+            activeSessionCompletion.compareAndSet(sessionDone, null)
+            throw t
+        }
 
         cont.invokeOnCancellation {
             runCatching { FFmpegKit.cancel(session.sessionId) }
