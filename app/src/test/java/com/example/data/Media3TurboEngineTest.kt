@@ -235,4 +235,28 @@ class Media3TurboEngineTest {
             assertTrue(s.errEncodingInProgress.isNotBlank())
         }
     }
+
+    @Test
+    fun turboAppliesSmallTargetNotchOnlyForOneAndTwoMb() {
+        val media = sampleMedia(durationSec = 30.0)
+        val probe = SourceTrackProbe(
+            displayDims = 1280 to 720,
+            durationSec = 30.0,
+            sourceTotalBitrateBps = 4_000_000,
+            sourceAudioBitrateBps = 128_000,
+            sourceAudioMime = "audio/mp4a-latm",
+            sourceAudioChannels = 2,
+            sourceAudioSampleRate = 48_000,
+            sourceVideoFps = 30.0
+        )
+        val plan1Mb = Media3TurboEngine.computeTurboBitratePlan(
+            media = media,
+            config = ModeConfigState(mode = ProcessingMode.CUSTOM_SIZE, targetMbInput = "1", audioBitrateInput = "64"),
+            probe = probe,
+            hwCaps = defaultVideoCaps(supportsCbr = true),
+            aacCaps = defaultAudioCaps()
+        )
+        val projected1MbBytes = ((plan1Mb.videoBitrateBps + plan1Mb.audioBitrateBps).toDouble() / 8.0) * 30.0
+        assertTrue("Expected 1 MB projected bytes ($projected1MbBytes) safely below 940 KB", projected1MbBytes < 940_000.0)
+    }
 }

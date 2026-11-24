@@ -31,7 +31,9 @@ import com.example.domain.FfmpegMath
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
+import com.example.domain.TrimCutStrategy
 import com.example.domain.TrimSubMode
+import com.example.domain.TrimTimeChoice
 import com.example.domain.localizedLabel
 import com.example.domain.localizedTitle
 import com.example.domain.supportsMedia3HardwareTurbo
@@ -40,8 +42,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -784,12 +788,15 @@ class EncodingForegroundService : Service() {
                 return
             }
 
+            val effectiveConfig = resolveAutoTrimKeyframesIfNeeded(media, config)
+            if (!EncodingJobController.isRunActive(runId)) return
+
             val tempOutFile = File(workDir, expectedOutputName)
             val passLogPrefix = File(workDir, "ff2pass").absolutePath
             val inputPlaceholder = "__FFMPEG_LAZY_INPUT__"
             val steps = FfmpegMath.buildFfmpegSteps(
                 media = media,
-                config = config,
+                config = effectiveConfig,
                 inputTokenProvider = { inputPlaceholder },
                 outputPath = tempOutFile.absolutePath,
                 passLogPrefix = passLogPrefix,
@@ -1811,6 +1818,55 @@ class EncodingForegroundService : Service() {
                 logs = currentLogs()
             )
         )
+    }
+
+    /**
+     * Silently snaps lossless trim start -> previous keyframe (+5ms) and end -> next keyframe
+     * when the user launches Trim without opening the keyframe picker, guaranteeing the requested
+     * range is never clipped short.
+     */
+    private suspend fun resolveAutoTrimKeyframesIfNeeded(
+        media: MediaInfo,
+        config: ModeConfigState
+    ): ModeConfigState {
+        if (config.mode != ProcessingMode.TRIM_VIDEO ||
+            config.trimCutStrategy != TrimCutStrategy.LOSSLESS_KEYFRAME ||
+            config.trimTimeChoice != TrimTimeChoice.SNAP_KEYFRAMES ||
+            !media.hasVideo
+        ) {
+            return config
+        }
+        val startRaw = config.startTimeInput.trim().replace(" ", "").replace(',', '.')
+        val endRaw = config.endTimeInput.trim().replace(" ", "").replace(',', '.')
+        val startSec = if (startRaw.isNotEmpty() && config.selectedStartKfSec == null && config.trimScan.startScan == null) {
+            FfmpegMath.parseTimestampToSeconds(startRaw)
+        } else null
+        val endSec = if (endRaw.isNotEmpty() && config.selectedEndKfSec == null && config.trimScan.endScan == null) {
+            FfmpegMath.parseTimestampToSeconds(endRaw)
+        } else null
+
+        if (startSec == null && endSec == null) return config
+
+        return try {
+            coroutineScope {
+                val startDeferred = startSec?.let { st ->
+                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, st, isStart = true) }
+                }
+                val endDeferred = endSec?.let { en ->
+                    async { FfmpegEngine.scanKeyframes(applicationContext, media.uri, en, isStart = false) }
+                }
+                FfmpegMath.applyAutoScannedKeyframes(
+                    config = config,
+                    mediaDurationSec = media.durationSec,
+                    startScan = startDeferred?.await(),
+                    endScan = endDeferred?.await()
+                )
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            config
+        }
     }
 
     private fun resolveContextualHint(config: ModeConfigState, s: AppStrings): String? {

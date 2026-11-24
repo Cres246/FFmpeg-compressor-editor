@@ -749,6 +749,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Loads a completed output file directly back into the Home screen as the selected source media. */
+    fun editCompletedOutput(output: CompletedOutput) {
+        val uri = runCatching { Uri.parse(output.contentUriString) }.getOrNull() ?: return
+        onMediaSelected(uri)
+    }
+
     fun setShowHistorySheet(show: Boolean) {
         _uiState.update { it.copy(showHistorySheet = show) }
     }

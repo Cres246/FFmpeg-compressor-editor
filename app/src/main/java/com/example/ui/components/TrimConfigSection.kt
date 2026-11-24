@@ -871,6 +871,51 @@ fun TrimTimeAndKeyframeSection(
                 }
             }
 
+            val startScan = config.trimScan.startScan
+            val endScan = config.trimScan.endScan
+            if (config.trimCutStrategy == TrimCutStrategy.LOSSLESS_KEYFRAME && (startScan != null || endScan != null)) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.background,
+                    border = BorderStroke(1.dp, extColors.subtleBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (startScan != null) {
+                            val activeStartKf = config.selectedStartKfSec ?: startScan.prevKf
+                            KeyframeGridBlock(
+                                label = strings.startKeyframesLabel,
+                                keyframes = FfmpegMath.selectCenteredKeyframes(
+                                    keyframes = startScan.nearbyKeyframes,
+                                    targetSec = startScan.targetSec,
+                                    maxCount = 12
+                                ),
+                                selectedKf = activeStartKf,
+                                onSelectKeyframe = viewModel::applyNearbyKeyframeToStart
+                            )
+                        }
+                        if (endScan != null) {
+                            val activeEndKf = config.selectedEndKfSec ?: endScan.nextKf
+                            KeyframeGridBlock(
+                                label = strings.endKeyframesLabel,
+                                keyframes = FfmpegMath.selectCenteredKeyframes(
+                                    keyframes = endScan.nearbyKeyframes,
+                                    targetSec = endScan.targetSec,
+                                    maxCount = 12
+                                ),
+                                selectedKf = activeEndKf,
+                                onSelectKeyframe = viewModel::applyNearbyKeyframeToEnd
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
 
             // Two side-by-side strategy cards: Kayıpsız Kes | Hassas Kes
@@ -966,51 +1011,6 @@ fun TrimTimeAndKeyframeSection(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
-                }
-
-                val startScan = config.trimScan.startScan
-                val endScan = config.trimScan.endScan
-                if (startScan != null || endScan != null) {
-                    Spacer(Modifier.height(10.dp))
-                    Surface(
-                        shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colorScheme.background,
-                        border = BorderStroke(1.dp, extColors.subtleBorder)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            if (startScan != null) {
-                                val activeStartKf = config.selectedStartKfSec ?: startScan.prevKf
-                                KeyframeGridBlock(
-                                    label = strings.startKeyframesLabel,
-                                    keyframes = FfmpegMath.selectCenteredKeyframes(
-                                        keyframes = startScan.nearbyKeyframes,
-                                        targetSec = startScan.targetSec,
-                                        maxCount = 12
-                                    ),
-                                    selectedKf = activeStartKf,
-                                    onSelectKeyframe = viewModel::applyNearbyKeyframeToStart
-                                )
-                            }
-                            if (endScan != null) {
-                                val activeEndKf = config.selectedEndKfSec ?: endScan.nextKf
-                                KeyframeGridBlock(
-                                    label = strings.endKeyframesLabel,
-                                    keyframes = FfmpegMath.selectCenteredKeyframes(
-                                        keyframes = endScan.nearbyKeyframes,
-                                        targetSec = endScan.targetSec,
-                                        maxCount = 12
-                                    ),
-                                    selectedKf = activeEndKf,
-                                    onSelectKeyframe = viewModel::applyNearbyKeyframeToEnd
-                                )
-                            }
-                        }
-                    }
                 }
             } else {
                 // Concise explanation for precise CRF re-encoding

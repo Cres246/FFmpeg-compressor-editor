@@ -464,6 +464,7 @@ private fun FFLabAppRoot(
                             isActiveStage = currentStage == AppScreenStage.TURBO_PROCESSING,
                             onCancel = viewModel::cancelEncoding,
                             onOpenOutput = onOpenOutput,
+                            onEditOutput = viewModel::editCompletedOutput,
                             onShareOutput = onShareOutput,
                             onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },
                             onTryRemuxAndRetry = viewModel::tryRemuxThenRetryTurbo,
@@ -484,6 +485,7 @@ private fun FFLabAppRoot(
                             onCancel = viewModel::cancelEncoding,
                             onSwitchToTurbo = viewModel::switchCurrentJobToTurbo,
                             onOpenOutput = onOpenOutput,
+                            onEditOutput = viewModel::editCompletedOutput,
                             onShareOutput = onShareOutput,
                             onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },
                             onRetryEdit = { viewModel.dismissEncodingResult(returnToWorkbench = false) }

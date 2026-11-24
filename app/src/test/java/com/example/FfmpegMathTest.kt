@@ -313,4 +313,72 @@ class FfmpegMathTest {
         val blankCustom = ModeConfigState(mode = ProcessingMode.CUSTOM_SIZE, targetMbInput = "")
         assertEquals("clip_H264_8MB.mp4", FfmpegMath.computeOutputFileName(fakeMedia, blankCustom))
     }
+
+    @Test
+    fun oneAndTwoMbTargetsHaveExtraSafetyNotchWhileLargerTargetsStayUnchanged() {
+        // 1 MB, 30s, 64k audio => 0.91 factor: floor((1 * 8000 * 0.91 / 30) - 64) = floor(242.66 - 64) = 178 kbps
+        assertEquals(178, FfmpegMath.calculateTwoPassVideoBitrateKbps(1.0, 30.0, 64))
+        // 2 MB, 60s, 64k audio => 0.935 factor: floor((2 * 8000 * 0.935 / 60) - 64) = floor(249.33 - 64) = 185 kbps
+        assertEquals(185, FfmpegMath.calculateTwoPassVideoBitrateKbps(2.0, 60.0, 64))
+        // > 2 MB targets stay 100% untouched at 0.96
+        assertEquals(704, FfmpegMath.calculateTwoPassVideoBitrateKbps(3.0, 30.0, 64))
+        assertEquals(1152, FfmpegMath.calculateTwoPassVideoBitrateKbps(20.0, 120.0, 128))
+    }
+
+    @Test
+    fun applyAutoScannedKeyframesSnapsStartBelowAndEndAboveWithoutClobberingManualPick() {
+        val baseCfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            startTimeInput = "00:10.0",
+            endTimeInput = "00:20.0"
+        )
+        val startScan = com.example.domain.KeyframePointResult(
+            targetSec = 10.0,
+            prevKf = 8.0,
+            nextKf = 12.0,
+            recommendedRawSec = 8.005,
+            recommendedDisplay = "00:08.0",
+            nearbyKeyframes = listOf(8.0, 12.0)
+        )
+        val endScan = com.example.domain.KeyframePointResult(
+            targetSec = 20.0,
+            prevKf = 18.0,
+            nextKf = 22.0,
+            recommendedRawSec = 22.0,
+            recommendedDisplay = "00:22.0",
+            nearbyKeyframes = listOf(18.0, 22.0)
+        )
+
+        val snapped = FfmpegMath.applyAutoScannedKeyframes(baseCfg, 60.0, startScan, endScan)
+        val (effStart, effEnd, clipDur) = FfmpegMath.resolveTrimRange(snapped, 60.0)
+        assertEquals("8.005", effStart)
+        assertEquals("22.000", effEnd)
+        assertEquals(13.995, clipDur!!, 0.001)
+
+        // Manual start keyframe selection must be preserved even when auto-scan supplies startScan
+        val manualStart = baseCfg.copy(selectedStartKfSec = 12.0)
+        val snappedManual = FfmpegMath.applyAutoScannedKeyframes(manualStart, 60.0, startScan, endScan)
+        val (manStart, manEnd, _) = FfmpegMath.resolveTrimRange(snappedManual, 60.0)
+        assertEquals("12.005", manStart)
+        assertEquals("22.000", manEnd)
+    }
+
+    @Test
+    fun turkishModeTitlesUseDonusturAndEnglishRemainsUntouched() {
+        assertEquals("Formatı Dönüştür", com.example.domain.TurkishStrings.modeRemuxTitle)
+        assertEquals("Formatı Dönüştür", com.example.domain.TurkishStrings.modeRemuxShortTitle)
+        assertEquals("Sadece Sesi Dönüştür", com.example.domain.TurkishStrings.modeAudioOnlyTitle)
+        assertEquals("Sadece Görüntüyü Dönüştür", com.example.domain.TurkishStrings.modeVideoOnlyTitle)
+        assertEquals("Görüntüyü + Sesi Dönüştür", com.example.domain.TurkishStrings.modeVideoAndAudioTitle)
+        assertEquals("Oynat", com.example.domain.TurkishStrings.actionPlayOutput)
+        assertEquals("Editle", com.example.domain.TurkishStrings.actionEditOutput)
+
+        // English mode titles remain unchanged
+        assertEquals("Change Format", com.example.domain.EnglishStrings.modeRemuxTitle)
+        assertEquals("Re-encode Audio Only", com.example.domain.EnglishStrings.modeAudioOnlyTitle)
+        assertEquals("Re-encode Video Only", com.example.domain.EnglishStrings.modeVideoOnlyTitle)
+        assertEquals("Re-encode Video + Audio", com.example.domain.EnglishStrings.modeVideoAndAudioTitle)
+        assertEquals("Play", com.example.domain.EnglishStrings.actionPlayOutput)
+        assertEquals("Edit", com.example.domain.EnglishStrings.actionEditOutput)
+    }
 }

@@ -91,8 +91,8 @@ flowchart TD
 ## 3. FFmpeg Kuralları ve Değişmezleri (Invariants)
 
 1. **Gerçek 2-Pass ABR Bit Hızı Formülü ([`FfmpegMath.calculateTwoPassVideoBitrateKbps`](app/src/main/java/com/example/domain/FfmpegMath.kt)):**
-   * `totalKb = targetMb * 8000.0 * 0.96`, `vkbps = floor((totalKb / safeDur) - audioBitrateKbps).coerceAtLeast(80)`.
-   * Ondalık `8000` + `%4` (`0.96`) güvenlik payı çıktıyı hem ikili MiB hem ondalık MB sınırlarının (Discord `20 MB`, Gmail `25 MB`, WhatsApp `100 MB`) altında tutar. `CUSTOM_SIZE` için tüm katmanlarda ortak varsayılan `8 MB`'dır.
+   * `totalKb = targetMb * 8000.0 * safetyFactor` (`> 2 MB`: `0.96` standart, `<= 2 MB`: `0.935`, `<= 1 MB`: `0.91` — küçük hedeflerde sabit MP4 `moov` payını karşılar, `> 2 MB` formülüne dokunmaz), `vkbps = floor((totalKb / safeDur) - audioBitrateKbps).coerceAtLeast(80)`.
+   * Ondalık `8000` + güvenlik payı çıktıyı hem ikili MiB hem ondalık MB sınırlarının (1 MB, 2 MB, Discord `20 MB`, Gmail `25 MB`, WhatsApp `100 MB`) altında tutar. `CUSTOM_SIZE` için tüm katmanlarda ortak varsayılan `8 MB`'dır.
    * Düşük bit hızı uyarısı `<= 120 kbps`; `30 FPS + 720p` önerisi `(dur >= 60s && vkbps < [H.265: 950 | H.264: 1400]) || vkbps < 650`.
    * Kullanıcı dokunmadıysa (`*Touched == false`): `<= 3 MB` → `64k` ses (aksi `128k`, kayıplı kaynak bit hızı tavanı uygulanır); `< 5 MB` → `30 FPS` + `720p` (kaynak kısa kenarı `> 720` ise).
 2. **Kodek, CRF, `hvc1` ve Bit Derinliği:**
@@ -104,9 +104,10 @@ flowchart TD
    * Geniş sinema (`width * 9L > height * 16L`, ör. `3840×1600`): `scale=<maxLong>:-2` (`1920×800`, genişlik taşmasını önler)
    * Standart (`16:9` / `4:3` / `1:1`): `scale=-2:<targetShort>`
    * Orijinal çözünürlükte tek sayılı kenar varsa: `scale=trunc(iw/2)*2:trunc(ih/2)*2`
-4. **Keyframe Tarama, Türkçe Ondalık Virgül ve `+0.005s` Tamponu:**
+4. **Keyframe Tarama, Otomatik Alt/Üst Keyframe, Türkçe Ondalık Virgül ve `+0.005s` Tamponu:**
    * `ffprobe -show_packets -read_intervals` ile kare çözmeden tarama yapılır; yoğun 1s-GOP videolarda `selectCenteredKeyframes` hedef etrafından simetrik en fazla 12 keyframe seçer.
    * Başlangıç keyframe değerine `-noaccurate_seek` sırasında bir önceki GOP'a düşmemek için daima **`+0.005s` (+5ms)** eklenir; bitiş ham `nextKf` olarak kalır.
+   * Kullanıcı "Keyframeleri Göster" kutusunu açmadan doğrudan Başlat'a bassa bile [`EncodingForegroundService.resolveAutoTrimKeyframesIfNeeded`](app/src/main/java/com/example/service/EncodingForegroundService.kt) sessizce başlangıcı bir alt keyframe'e (`prevKf + 0.005`), bitişi bir üst keyframe'e (`nextKf`) kilitler (`applyAutoScannedKeyframes`) — böylece kayıpsız kesimde istenen aralık asla eksik kırpılmaz.
    * Alt Mod 1–2 (kayıpsız): `-noaccurate_seek -ss ... -to ... -i ... -avoid_negative_ts make_zero`. Alt Mod 3–4 (hassas CRF): `-noaccurate_seek` olmadan girdi öncesi `-ss` / `-to`. Kesim girdilerindeki Türkçe ondalık virgül (`10,5`) otomatik noktaya (`10.5`) çevrilir.
 5. **Kaynak Ses Kalitesi Algılama, Tavanlama & Akış Temizliği:**
    * `FfmpegEngine.probeMedia`, birincil video akışında `disposition.attached_pic != 1` kuralını katı uygular (kapak resmine fallback yapmaz), döndürme (`rotation`/`rotate`/`MediaMetadataRetriever`) bilgisine göre dikey videoların `width`/`height` boyutlarını takas eder ve ses akışının gerçek bit hızı (`audioBitrateKbps`: stream → MKV `BPS` tag → `MediaExtractor` → salt ses dosya boyutu) ile kanal sayısını (`audioChannels`) çıkarır.
@@ -124,7 +125,7 @@ flowchart TD
 1. **Güvenli FFmpeg → MediaCodec El Değiştirme ([`EncodingForegroundService.kt`](app/src/main/java/com/example/service/EncodingForegroundService.kt)):**
    * `cpuBooster.stop()` + `THREAD_PRIORITY_DEFAULT` → `previousJob.cancelAndJoin(450ms)` → **`FfmpegEngine.awaitActiveSessionTermination(5_000L)`** → `1_050ms` geçiş beklemesi (880ms 120Hz kayma animasyonunun tamamlanması için).
 2. **Katı Ondalık MB & AAC Sızıntı Koruması ([`Media3TurboEngine.computeTurboBitratePlan`](app/src/main/java/com/example/data/Media3TurboEngine.kt)):**
-   * Hedef boyut modlarında `targetMb * 1_000_000.0` byte hesabı, `%1.8 + 64 KB` mux payı, CBR `0.955` / VBR `0.885` marjı (CBR→VBR yedekte `0.93x`).
+   * Hedef boyut modlarında `targetMb * 1_000_000.0` byte hesabı, `%1.8 + 64 KB` mux payı, CBR `0.955` / VBR `0.885` marjı (1 MB ve 2 MB için `-0.025` / `-0.015` ek güvenlik payı; CBR→VBR yedekte `0.93x`).
    * Kaynak AAC hedef bit hızından yüksekse Media3'ün sessiz transmux yapmasını engellemek için [`ForceAudioEncodeProcessor`](app/src/main/java/com/example/data/Media3TurboEngine.kt) takılır.
    * Platform AAC kodlayıcısı kanal başına `160 kbps` (stereo max `320k`) ile sınırlanır (`clampBitrateForChannels`).
 3. **4 Katmanlı Kurtarma Zinciri:**
@@ -159,6 +160,7 @@ flowchart TD
 * **Kesim, Komut Ayrıştırıcı & Döndürme Düzeltmeleri (PR #1):** `MainActivity.onCreate` içinde `savedInstanceState == null` koruması; Türkçe ondalık virgül (`10,5`) normalizasyonu; `validateBeforeLaunch()` ile seçili keyframe tersliği/süre taşması kontrolü ve strateji/alt mod senkronizasyonu; `CustomFfmpegParser` Markdown madde işareti (`- ...`) ve önizleme `-passlogfile` rozeti düzeltmesi.
 * **Trim Kare Önizleme & 120Hz Kaydırma Hızlandırması (Trim Scrubber):** [`VideoFrameScrubber`](app/src/main/java/com/example/data/VideoFrameScrubber.kt) ile tek kalıcı `MediaMetadataRetriever` + `ParcelFileDescriptor` (`moov`/`stbl` yalnızca 1 kez okunur), çift aşamalı kademeli çözme (`FAST_SCRUB`: `256px RGB_565 OPTION_CLOSEST_SYNC` ~8–20ms → duraksama/bırakmada `EXACT_CRISP`: `480px ARGB_8888 OPTION_CLOSEST`), iki katmanlı RAM `LruCache` (6 MB + 8 MB) ve 24 karelik sessiz zaman çizelgesi ön-ısıtması (`prewarmTimeline`, kullanıcı sürüklerken anında öncelik verir, MKV/yazılım yedeğinde devre dışı), MKV/10-bit HEVC için iptal edilebilir `-noaccurate_seek` + `fast_bilinear` FFmpeg yedeği ve [`TrimScrubState`](app/src/main/java/com/example/ui/components/TrimConfigSection.kt) ile 120Hz Canvas çizimi (`ModeConfigScreen` / `buildFfmpegSteps` yalnızca `90ms` aralıklı güncellenir, bırakmada tam değer kesinleştirilir).
 * **Custom FFmpeg AI Uyumluluk & Hata Toleransı Genişletmesi (Custom Parser):** [`CustomFfmpegParser`](app/src/main/java/com/example/domain/CustomFfmpegParser.kt) içine satır içi ters tırnak ayıklama, çok bloklu Markdown'da kurulum bloklarını (`brew`/`apt`) atlama, Bash/PowerShell döngü & `${f%.*}`/`%~n1` dosya kökü genişletme, kapanmamış tırnak onarımı, boşluk/büyük-küçük harf/`--`/`=`/Türkçe virgül/bit hızı birimi normalizasyonu, eksik/boş `-i` kurtarma, tırnaksız boşluklu yol & filtre birleştirme, `-map -0:a` / `-sseof -00:00:10` negatif değer koruması, `-abort_on`'un 0-arg listeden çıkarılması, eksik `-f null` enjeksiyonu, akıllı çıktı uzantısı çıkarımı ve masaüstü GPU/non-free kodeklerinin (`*_nvenc`, `*_videotoolbox`, `*_qsv`, `*_amf`, `*_vaapi`, `libfdk_aac`, `-hwaccel cuda`, `scale_cuda=`) Android GPL karşılıklarına otomatik uyarlanması eklendi (25 birim testle doğrulandı).
+* **Otomatik Kayıpsız Keyframe & 1–2 MB Pay Düzeltmesi:** Kayıpsız kesimde kullanıcı keyframe kutusunu açmadan Başlat'a bastığında ham sürelerle kesip eksik kırpma riski [`resolveAutoTrimKeyframesIfNeeded`](app/src/main/java/com/example/service/EncodingForegroundService.kt) ile giderildi (otomatik `prevKf + 0.005` → `nextKf`); 1 MB hedefte sabit `moov` payı yüzünden `1008 KB` taşması yalnızca `<= 1 MB` (`0.91`) ve `<= 2 MB` (`0.935`) için ek payla giderildi.
 
 ---
 
@@ -168,6 +170,11 @@ flowchart TD
 * **4 Fontlu Tipografi (`Type.kt`):** `Space Grotesk` (büyük yüzdeler ve ana başlıklar), `Plus Jakarta Sans` (gövde ve butonlar), `JetBrains Mono` (teknik veriler, komutlar, rozetler), `Playfair Display Italic SemiBold` (yalnızca kategori başlıkları, jenerik alt başlıkları, aktif preset ve Turbo koruma notu gibi seçkin editoryal vurgular).
 * **İkonlar:** Discord, WhatsApp ve Gmail için özel marka vektörleri (`ic_brand_*.xml`), `CelloBrown` renginde.
 * **Hareket ve Geçiş:** `MainActivity.requestHighestRefreshRate()` ile 120Hz kilitli; 4 aşama arası `880ms` dikey itme (`CubicBezierEasing(0.68f, 0f, 0.32f, 1f)`), çıkış ekranları için recomposition tetiklemeyen düz tutucu (`StageRenderCache` / `ProcessingStateCache` / `TurboStateCache`) önbellekleme.
+* **Düzen & Akış Tercihleri:**
+  * Tamamlanan çıktı kartlarında (hem FFmpeg hem Turbo) düğme sırası daima **Oynat · Editle · Paylaş** şeklindedir (`Paylaş` koyu kahverengi `CelloBrown` `Button` olarak kalır; `Editle` çıktıyı doğrudan ana ekrandaki kaynak medya olarak yükler).
+  * `PresetSection` (Kodlama Hızı) tüm ayar ekranlarında her zaman **en altta** (Ses Bitrate kutusunun altında, komut önizlemesinin üstünde) yer alır.
+  * Trim ekranında açılan keyframe seçme kutusu başlangıç/bitiş süre kutularının hemen altında açılır; `Kayıpsız Kes | Hassas Kes` kutuları stilleri değişmeden onun altında kalır.
+  * Türkçe araç isimleri: **Formatı Dönüştür**, **Sadece Sesi Dönüştür**, **Sadece Görüntüyü Dönüştür**, **Görüntüyü + Sesi Dönüştür** (İngilizce çevirilere dokunulmaz).
 * **Telemetri & Güvenlik:** Canlı boyut her iki işleme ekranında da KB yerine **`15.6mb`** biçiminde gösterilir; `MediaHeroCard` kaynak ses kalitesini (`Ses: AAC 128k` / `· 5.1` / `(Kayıpsız)`) gösterir; yanlışlıkla basmayı önlemek için hem FFmpeg hem Turbo ekranındaki **İptal Et** düğmesi `"Emin misiniz?"` onay penceresi açar; mükerrer özet çipleri veya tekrarlı uyarı butonları eklenmez.
 
 ---

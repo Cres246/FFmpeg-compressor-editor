@@ -41,12 +41,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Lightbulb
-import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
@@ -114,6 +115,7 @@ fun ProcessingScreen(
     onCancel: () -> Unit,
     onSwitchToTurbo: () -> Unit = {},
     onOpenOutput: (CompletedOutput) -> Unit,
+    onEditOutput: (CompletedOutput) -> Unit = {},
     onShareOutput: (CompletedOutput) -> Unit,
     onDoneReturnHome: () -> Unit,
     onRetryEdit: () -> Unit
@@ -332,6 +334,7 @@ fun ProcessingScreen(
                                 CompletedOutputCard(
                                     output = output,
                                     onOpen = { onOpenOutput(output) },
+                                    onEdit = { onEditOutput(output) },
                                     onShare = { onShareOutput(output) }
                                 )
                             }
@@ -729,6 +732,7 @@ private fun SuccessSummaryBanner(summary: String) {
 private fun CompletedOutputCard(
     output: CompletedOutput,
     onOpen: () -> Unit,
+    onEdit: () -> Unit,
     onShare: () -> Unit
 ) {
     val extColors = LocalExtendedColors.current
@@ -799,7 +803,7 @@ private fun CompletedOutputCard(
             Spacer(Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilledTonalButton(
                     onClick = onOpen,
@@ -807,11 +811,35 @@ private fun CompletedOutputCard(
                         .weight(1f)
                         .height(46.dp)
                         .testTag("open_output_button"),
-                    shape = MaterialTheme.shapes.small
+                    shape = MaterialTheme.shapes.small,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                 ) {
-                    Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.actionOpen)
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = strings.actionPlayOutput,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp)
+                        .testTag("edit_output_button"),
+                    shape = MaterialTheme.shapes.small,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = strings.actionEditOutput,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 Button(
                     onClick = onShare,
@@ -819,11 +847,17 @@ private fun CompletedOutputCard(
                         .weight(1f)
                         .height(46.dp)
                         .testTag("share_output_button"),
-                    shape = MaterialTheme.shapes.small
+                    shape = MaterialTheme.shapes.small,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                 ) {
-                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.actionShare)
+                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = strings.actionShare,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

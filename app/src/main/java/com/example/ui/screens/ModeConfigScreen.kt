@@ -305,14 +305,6 @@ fun ModeConfigScreen(
                             calculatedVideoBitrateKbps = vkbps
                         )
                     }
-                    item {
-                        PresetSection(
-                            selectedPreset = config.preset,
-                            recommendedPreset = PresetOption.MEDIUM,
-                            isTargetSizeMode = true,
-                            onSelectPreset = viewModel::updatePreset
-                        )
-                    }
                     if (media.hasAudio) {
                         val targetMb = when (config.mode) {
                             ProcessingMode.DISCORD_20MB -> 20.0
@@ -330,6 +322,14 @@ fun ModeConfigScreen(
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }
+                    }
+                    item {
+                        PresetSection(
+                            selectedPreset = config.preset,
+                            recommendedPreset = PresetOption.MEDIUM,
+                            isTargetSizeMode = true,
+                            onSelectPreset = viewModel::updatePreset
+                        )
                     }
                 }
 
@@ -358,9 +358,9 @@ fun ModeConfigScreen(
                             onSelect = viewModel::updateTrimSubMode
                         )
                     }
-                    if (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
+                    val isTrimCrf = config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
                         config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
-                    ) {
+                    if (isTrimCrf) {
                         item {
                             CodecAndBitDepthSection(
                                 media = media,
@@ -381,14 +381,6 @@ fun ModeConfigScreen(
                                 onSelectResolution = viewModel::updateResolution
                             )
                         }
-                        item {
-                            PresetSection(
-                                selectedPreset = config.preset,
-                                recommendedPreset = PresetOption.FAST,
-                                isTargetSizeMode = false,
-                                onSelectPreset = viewModel::updatePreset
-                            )
-                        }
                     }
                     if (media.hasAudio && (config.trimSubMode == TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC ||
                             config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC)
@@ -401,6 +393,16 @@ fun ModeConfigScreen(
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 sourceAudioCodec = media.audioCodec,
                                 isLosslessSource = media.isLosslessAudio
+                            )
+                        }
+                    }
+                    if (isTrimCrf) {
+                        item {
+                            PresetSection(
+                                selectedPreset = config.preset,
+                                recommendedPreset = PresetOption.FAST,
+                                isTargetSizeMode = false,
+                                onSelectPreset = viewModel::updatePreset
                             )
                         }
                     }
@@ -468,14 +470,6 @@ fun ModeConfigScreen(
                         )
                     }
                     item {
-                        PresetSection(
-                            selectedPreset = config.preset,
-                            recommendedPreset = PresetOption.FAST,
-                            isTargetSizeMode = false,
-                            onSelectPreset = viewModel::updatePreset
-                        )
-                    }
-                    item {
                         ConfigSectionCard(
                             title = strings.videoOnlyAudioTitle,
                             subtitle = if (media.hasAudio) {
@@ -491,6 +485,14 @@ fun ModeConfigScreen(
                             )
                         }
                     }
+                    item {
+                        PresetSection(
+                            selectedPreset = config.preset,
+                            recommendedPreset = PresetOption.FAST,
+                            isTargetSizeMode = false,
+                            onSelectPreset = viewModel::updatePreset
+                        )
+                    }
                 }
 
                 ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
@@ -505,14 +507,6 @@ fun ModeConfigScreen(
                             onSelectBitDepth = viewModel::updateBitDepth
                         )
                     }
-                    item {
-                        PresetSection(
-                            selectedPreset = config.preset,
-                            recommendedPreset = PresetOption.FAST,
-                            isTargetSizeMode = false,
-                            onSelectPreset = viewModel::updatePreset
-                        )
-                    }
                     if (media.hasAudio) {
                         item {
                             AudioBitrateSection(
@@ -524,6 +518,14 @@ fun ModeConfigScreen(
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }
+                    }
+                    item {
+                        PresetSection(
+                            selectedPreset = config.preset,
+                            recommendedPreset = PresetOption.FAST,
+                            isTargetSizeMode = false,
+                            onSelectPreset = viewModel::updatePreset
+                        )
                     }
                 }
 

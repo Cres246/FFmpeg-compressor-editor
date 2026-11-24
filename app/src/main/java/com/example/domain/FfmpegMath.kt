@@ -12,7 +12,10 @@ object FfmpegMath {
 
     /**
      * Exact 2-Pass ABR video bitrate calculation:
-     * total_kb = targetMb * 8000 * 0.96
+     * - Standard targets (> 2 MB): `total_kb = targetMb * 8000 * 0.96` (unchanged).
+     * - Tiny targets (1 MB / 2 MB): MP4 `moov` atom + mux overhead (~40-60 KB) is nearly fixed
+     *   rather than proportional, so `<= 1 MB` uses `0.91` and `<= 2 MB` uses `0.935` so 1 MB
+     *   never creeps past 1000 KB (e.g. 1008 KB).
      * v = floor((total_kb / dur) - audioBitrateKbps), minimum 80 kbps.
      */
     fun calculateTwoPassVideoBitrateKbps(
@@ -21,7 +24,12 @@ object FfmpegMath {
         audioBitrateKbps: Int
     ): Int {
         val safeDur = if (durationSec <= 0.0) 1.0 else durationSec
-        val totalKb = targetMb * 8000.0 * 0.96
+        val safetyFactor = when {
+            targetMb <= 1.0 + 1e-6 -> 0.91
+            targetMb <= 2.0 + 1e-6 -> 0.935
+            else -> 0.96
+        }
+        val totalKb = targetMb * 8000.0 * safetyFactor
         val v = floor((totalKb / safeDur) - audioBitrateKbps).toInt()
         return v.coerceAtLeast(80)
     }
@@ -493,6 +501,43 @@ object FfmpegMath {
         val ee = if (effectiveEnd == null) mediaDurationSec else parseTimestampToSeconds(effectiveEnd)
         val clipDur = if (ss != null && ee != null && ee > ss) ee - ss else null
         return Triple(effectiveStart, effectiveEnd, clipDur)
+    }
+
+    /**
+     * Merges automatically scanned start (`prevKf + 0.005`) and end (`nextKf`) keyframes into a
+     * lossless trim configuration when the user did not manually pick keyframes, preserving any
+     * manual selection and guarding against invalid reversed ranges.
+     */
+    fun applyAutoScannedKeyframes(
+        config: ModeConfigState,
+        mediaDurationSec: Double?,
+        startScan: KeyframePointResult?,
+        endScan: KeyframePointResult?
+    ): ModeConfigState {
+        if (config.mode != ProcessingMode.TRIM_VIDEO ||
+            config.trimCutStrategy != TrimCutStrategy.LOSSLESS_KEYFRAME ||
+            config.trimTimeChoice != TrimTimeChoice.SNAP_KEYFRAMES
+        ) {
+            return config
+        }
+        val mergedStartScan = config.trimScan.startScan ?: startScan
+        val mergedEndScan = config.trimScan.endScan ?: endScan
+        if (mergedStartScan == config.trimScan.startScan && mergedEndScan == config.trimScan.endScan) {
+            return config
+        }
+        val candidate = config.copy(
+            trimScan = config.trimScan.copy(
+                startScan = mergedStartScan,
+                endScan = mergedEndScan
+            )
+        )
+        val (effStart, effEnd, clipDur) = resolveTrimRange(candidate, mediaDurationSec)
+        val startSec = effStart?.let { parseTimestampToSeconds(it) }
+        val endSec = effEnd?.let { parseTimestampToSeconds(it) }
+        if (startSec != null && endSec != null && (clipDur == null || clipDur <= 0.05)) {
+            return config
+        }
+        return candidate
     }
 
     /**

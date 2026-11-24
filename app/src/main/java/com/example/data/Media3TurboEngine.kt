@@ -296,8 +296,16 @@ object Media3TurboEngine {
                 .coerceAtLeast(effectiveDurationSec * 12_500.0)
 
             // Hardware 1-pass CBR holds tightly within ~2-3%; VBR overshoots more on complex scenes.
+            // Tiny 1-2 MB targets get one extra notch of headroom for fixed container/moov overhead
+            // without changing > 2 MB calculations.
             val useCbr = hwCaps.supportsCbr
-            val hwRateControlMargin = if (useCbr) 0.955 else 0.885
+            val baseMargin = if (useCbr) 0.955 else 0.885
+            val smallTargetNotch = when {
+                targetMb <= 1.0 + 1e-6 -> 0.025
+                targetMb <= 2.0 + 1e-6 -> 0.015
+                else -> 0.0
+            }
+            val hwRateControlMargin = (baseMargin - smallTargetNotch).coerceAtLeast(0.80)
             val rawVideoBps = ((availableVideoBytes * hwRateControlMargin * 8.0) / effectiveDurationSec).roundToInt()
 
             // Protect Qualcomm/Exynos/MTK encoders (e.g. AVC Level 5.1) from extreme bitrates on short clips

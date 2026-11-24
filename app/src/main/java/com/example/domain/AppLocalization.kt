@@ -140,6 +140,8 @@ interface AppStrings {
     val actionCancel: String
     val actionStart: String
     val actionOpen: String
+    val actionPlayOutput: String
+    val actionEditOutput: String
     val actionShare: String
     val actionNewTask: String
     val actionHome: String
@@ -479,6 +481,8 @@ object TurkishStrings : AppStrings {
     override val actionCancel = "İptal Et"
     override val actionStart = "İşlemi Başlat"
     override val actionOpen = "Oynat / Aç"
+    override val actionPlayOutput = "Oynat"
+    override val actionEditOutput = "Editle"
     override val actionShare = "Paylaş"
     override val actionNewTask = "Yeni İşlem"
     override val actionHome = "Ana Menü"
@@ -514,16 +518,16 @@ object TurkishStrings : AppStrings {
     override val modeTrimTitle = "Videoyu Kes"
     override val modeTrimSub = "Akıllı Keyframe tarama · Kayıpsız / Hassas"
     override val modeTrimShortSub = "Keyframe · Hassas"
-    override val modeRemuxTitle = "Sadece Format Değiştir"
-    override val modeRemuxShortTitle = "Format Değiştir"
+    override val modeRemuxTitle = "Formatı Dönüştür"
+    override val modeRemuxShortTitle = "Formatı Dönüştür"
     override val modeRemuxSub = "%100 kayıpsız MP4 kutu yenileme (-c copy)"
     override val modeExtractAudioTitle = "Sesi Çıkart"
     override val modeExtractAudioSub = "Orijinal (Kayıpsız) / AAC / MP3"
-    override val modeAudioOnlyTitle = "Sadece Ses Değiştir"
+    override val modeAudioOnlyTitle = "Sadece Sesi Dönüştür"
     override val modeAudioOnlySub = "Görüntü %100 copy · Ses AAC"
-    override val modeVideoOnlyTitle = "Sadece Görüntü Değiştir"
+    override val modeVideoOnlyTitle = "Sadece Görüntüyü Dönüştür"
     override val modeVideoOnlySub = "CRF 16/20 · Ses %100 copy"
-    override val modeVideoAndAudioTitle = "Görüntü + Ses Değiştir"
+    override val modeVideoAndAudioTitle = "Görüntüyü + Sesi Dönüştür"
     override val modeVideoAndAudioSub = "CRF 16/20 · 8/10-bit · AAC"
     override val modeCustomCmdTitle = "Özel FFmpeg Komutu"
     override val modeCustomCmdSub = "Tam komut yapıştır (&& zinciri dahil)"
@@ -715,8 +719,8 @@ object TurkishStrings : AppStrings {
     override val bannerExtractAudio: (String) -> String = { fmt -> "Ses Çıkarma · $fmt" }
     override val bannerCustomCmd = "Özel FFmpeg Komutu (Çıktılar otomatik taşınır)"
     override val hintTrimLosslessAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa (ör. Opus/DTS/EAC3) 2. kesim modunu (Görüntü Kayıpsız + Ses AAC Değiştir) seçin."
-    override val hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 10 · Görüntü + Ses Değiştir seçeneğini kullanın."
-    override val hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 08 · Sadece Ses Değiştir veya 10 · Görüntü + Ses Değiştir seçeneğini deneyin."
+    override val hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 10 · Görüntüyü + Sesi Dönüştür seçeneğini kullanın."
+    override val hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 08 · Sadece Sesi Dönüştür veya 10 · Görüntüyü + Sesi Dönüştür seçeneğini deneyin."
     override val errSafReadFailed = "Dosya okuma erişimi alınamadı (SAF)"
     override val errUnknown = "Bilinmeyen hata"
     override val errMediaStoreInsertFailed = "MediaStore kaydı oluşturulamadı"
@@ -773,7 +777,7 @@ object TurkishStrings : AppStrings {
     override val turboRemuxPromptYes = "Evet, Dene"
     override val turboRemuxPromptNo = "Hayır"
     override val turboTryRemuxButton = "Kayıpsız Format Değişimi Dene"
-    override val turboRemuxModeTitle = "Format Değiştir → Turbo"
+    override val turboRemuxModeTitle = "Formatı Dönüştür → Turbo"
     override val turboRemuxStepStatus = "MediaCodec için kayıpsız MP4 formatına çevriliyor (-c copy)"
     override val turboAfterRemuxFailedTitle = "Donanım Hızlandırma Bu Dosyada Desteklenmiyor"
     override val turboAfterRemuxFailedBody = "Kayıpsız format değişimi denendi ancak bu dosyanın video veya ses akışı cihazdaki Android MediaCodec donanım motoruyla uyumlu değil.\n\nBu dosya için ya önce yeniden dönüştürme yapılması ya da doğrudan FFmpeg motorunun kullanılması gerekiyor."
@@ -810,6 +814,8 @@ object EnglishStrings : AppStrings {
     override val actionCancel = "Cancel"
     override val actionStart = "Start Processing"
     override val actionOpen = "Play / Open"
+    override val actionPlayOutput = "Play"
+    override val actionEditOutput = "Edit"
     override val actionShare = "Share"
     override val actionNewTask = "New Task"
     override val actionHome = "Home"

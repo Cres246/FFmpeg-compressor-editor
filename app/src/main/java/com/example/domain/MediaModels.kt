@@ -145,8 +145,8 @@ enum class ProcessingMode(
     ),
     REMUX_FORMAT(
         number = 6,
-        title = "Sadece Format Değiştir",
-        shortTitle = "Format Değiştir",
+        title = "Formatı Dönüştür",
+        shortTitle = "Formatı Dönüştür",
         subtitle = "%100 kayıpsız MP4 kutu yenileme (-c copy)",
         shortSubtitle = "Kayıpsız MP4",
         badge = "KAYIPSIZ",
@@ -169,8 +169,8 @@ enum class ProcessingMode(
     ),
     AUDIO_ONLY_AAC(
         number = 8,
-        title = "Sadece Ses Değiştir",
-        shortTitle = "Sadece Ses Değiştir",
+        title = "Sadece Sesi Dönüştür",
+        shortTitle = "Sadece Sesi Dönüştür",
         subtitle = "Görüntü %100 copy · Ses AAC",
         shortSubtitle = "Kayıpsız",
         badge = "COPY|AAC",
@@ -182,8 +182,8 @@ enum class ProcessingMode(
     ),
     VIDEO_ONLY_CRF(
         number = 9,
-        title = "Sadece Görüntü Değiştir",
-        shortTitle = "Sadece Görüntü Değiştir",
+        title = "Sadece Görüntüyü Dönüştür",
+        shortTitle = "Sadece Görüntüyü Dönüştür",
         subtitle = "CRF 16/20 · Ses %100 copy",
         shortSubtitle = "Kayıplı",
         badge = "CRF|COPY",
@@ -194,8 +194,8 @@ enum class ProcessingMode(
     ),
     VIDEO_AND_AUDIO_CRF(
         number = 10,
-        title = "Görüntü + Ses Değiştir",
-        shortTitle = "Görüntü + Ses Değiştir",
+        title = "Görüntüyü + Sesi Dönüştür",
+        shortTitle = "Görüntüyü + Sesi Dönüştür",
         subtitle = "CRF 16/20 · 8/10-bit · AAC",
         shortSubtitle = "Kayıplı",
         badge = "CRF+AAC",
