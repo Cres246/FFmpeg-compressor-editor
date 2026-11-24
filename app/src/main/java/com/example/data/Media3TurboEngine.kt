@@ -10,7 +10,9 @@ import android.media.metrics.LogSessionId
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
+import android.os.Process
 import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
@@ -170,7 +172,6 @@ private enum class EncoderAttemptMode {
 object Media3TurboEngine {
 
     private val activeCancelAction = AtomicReference<(() -> Unit)?>(null)
-    private val mainHandler = Handler(Looper.getMainLooper())
     private val videoCapsCache = ConcurrentHashMap<String, HardwareVideoEncoderCaps>()
 
     @Volatile
@@ -178,11 +179,7 @@ object Media3TurboEngine {
 
     fun cancelActive() {
         val action = activeCancelAction.getAndSet(null) ?: return
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            runCatching { action() }
-        } else {
-            mainHandler.post { runCatching { action() } }
-        }
+        runCatching { action() }
     }
 
     fun isTargetSizeMode(mode: ProcessingMode): Boolean =
@@ -702,10 +699,16 @@ object Media3TurboEngine {
         val finished = AtomicBoolean(false)
         val cancelledFlag = AtomicBoolean(false)
         val startUptimeMs = SystemClock.elapsedRealtime()
+        val turboThread = HandlerThread("FFmpegMedia3Turbo", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply {
+            start()
+        }
+        val turboLooper = turboThread.looper
+        val turboHandler = Handler(turboLooper)
 
         fun completeOnce(result: Media3TurboResult) {
             if (finished.compareAndSet(false, true)) {
                 activeCancelAction.set(null)
+                runCatching { turboThread.quitSafely() }
                 if (cont.isActive) {
                     cont.resume(result)
                 }
@@ -909,12 +912,13 @@ object Media3TurboEngine {
                                 settingsBuilder.setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
                             }
 
-                            // Use the hardware VPU's real maximum supported rate for <=1080p
+                            // Use the hardware VPU's real maximum supported rate with realtime priority (0)
+                            // so Qualcomm/OEM VPU drivers sustain full clock speed even when backgrounded.
                             val chipMaxFps = hwCaps.maxFpsForSize(outW, outH)
                             val safeOpRate = chipMaxFps?.roundToInt()?.coerceIn(30, 480) ?: 240
                             settingsBuilder.setEncoderPerformanceParameters(
                                 /* operatingRate= */ safeOpRate,
-                                /* priority= */ 1
+                                /* priority= */ 0
                             )
 
                             val defaultFactory = DefaultEncoderFactory.Builder(context)
@@ -996,11 +1000,12 @@ object Media3TurboEngine {
                 var progressPoller: Runnable? = null
 
                 fun stopPolling() {
-                    progressPoller?.let { mainHandler.removeCallbacks(it) }
+                    progressPoller?.let { turboHandler.removeCallbacks(it) }
                     progressPoller = null
                 }
 
                 val transformerBuilder = Transformer.Builder(context)
+                    .setLooper(turboLooper)
                     .setVideoMimeType(videoMime)
                     .setEncoderFactory(encoderFactory)
                     .setMaxDelayBetweenMuxerSamplesMs(30_000L)
@@ -1056,7 +1061,7 @@ object Media3TurboEngine {
 
                 val transformer = transformerBuilder.build()
 
-                val cancelBlock: () -> Unit = {
+                val cancelOnTurboLooper: () -> Unit = {
                     if (cancelledFlag.compareAndSet(false, true)) {
                         stopPolling()
                         runCatching { transformer.cancel() }
@@ -1066,6 +1071,20 @@ object Media3TurboEngine {
                                 success = false,
                                 cancelled = true,
                                 elapsedSec = elapsedSec
+                            )
+                        )
+                    }
+                }
+                val cancelBlock: () -> Unit = {
+                    if (Looper.myLooper() == turboLooper) {
+                        cancelOnTurboLooper()
+                    } else if (!turboHandler.post { cancelOnTurboLooper() }) {
+                        cancelledFlag.set(true)
+                        completeOnce(
+                            Media3TurboResult(
+                                success = false,
+                                cancelled = true,
+                                elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                             )
                         )
                     }
@@ -1085,13 +1104,13 @@ object Media3TurboEngine {
                             onProgress(-1, elapsedSec, plan.effectiveDurationSec)
                         }
                         if (!finished.get() && !cancelledFlag.get()) {
-                            mainHandler.postDelayed(this, 250L)
+                            turboHandler.postDelayed(this, 250L)
                         }
                     }
                 }
 
                 transformer.start(composition, outputFile.absolutePath)
-                mainHandler.postDelayed(progressPoller!!, 120L)
+                turboHandler.postDelayed(progressPoller!!, 120L)
             } catch (t: Throwable) {
                 val elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
                 val isUnsupported = t is ExportException && isUnsupportedFormatException(t) ||
@@ -1111,11 +1130,33 @@ object Media3TurboEngine {
             }
         }
 
+        // Allow early cancellation even before startRunnable initializes Transformer
+        activeCancelAction.set {
+            cancelledFlag.set(true)
+            completeOnce(
+                Media3TurboResult(
+                    success = false,
+                    cancelled = true,
+                    elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                )
+            )
+        }
+
         cont.invokeOnCancellation {
             cancelActive()
         }
 
-        mainHandler.post(startRunnable)
+        if (!turboHandler.post(startRunnable)) {
+            completeOnce(
+                Media3TurboResult(
+                    success = false,
+                    cancelled = cancelledFlag.get(),
+                    errorCodeName = "TURBO_LOOPER_START_FAILED",
+                    errorDetail = "Failed to schedule Media3 Transformer on worker Looper",
+                    elapsedSec = (SystemClock.elapsedRealtime() - startUptimeMs) / 1000.0
+                )
+            )
+        }
     }
 
     /**

@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.SystemClock
 import android.view.Surface
 import java.io.File
@@ -210,6 +211,7 @@ internal object DirectMediaCodecTranscoder {
         onProgress: (percent: Int, elapsedSec: Double, effectiveDurationSec: Double) -> Unit
     ): Media3TurboResult {
         val startUptimeMs = SystemClock.elapsedRealtime()
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
         var videoPfd: ParcelFileDescriptor? = null
         var audioPfd: ParcelFileDescriptor? = null
         var videoExtractor: MediaExtractor? = null
@@ -736,6 +738,7 @@ internal object DirectMediaCodecTranscoder {
             runCatching { videoPfd?.close() }
             runCatching { audioPfd?.close() }
             runCatching { tempAudioFile?.delete() }
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
         }
     }
 
@@ -1215,7 +1218,10 @@ internal object DirectMediaCodecTranscoder {
     private class CodecOutputSurface(width: Int, height: Int) : SurfaceTexture.OnFrameAvailableListener {
         private val frameSyncObject = Object()
         private var frameAvailable = false
-        private val callbackThread = HandlerThread("DirectMC-SurfaceTex").apply { start() }
+        private val callbackThread = HandlerThread(
+            "DirectMC-SurfaceTex",
+            Process.THREAD_PRIORITY_URGENT_DISPLAY
+        ).apply { start() }
         private val callbackHandler = Handler(callbackThread.looper)
 
         private val triangleVerticesData = floatArrayOf(

@@ -11,7 +11,6 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
@@ -551,9 +550,12 @@ class EncodingForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lifecycleLock = Any()
     private var activeJob: Job? = null
-    private var wakeLock: PowerManager.WakeLock? = null
+    private lateinit var backgroundGuard: BackgroundExecutionGuard
     private lateinit var cpuBooster: CpuPerformanceBooster
-    private var lastNotifyMs = 0L
+    private val lastNotifyElapsedMs = AtomicLong(0L)
+
+    @Volatile
+    private var lastNotification: Notification? = null
 
     @Volatile
     private var activeRunOwnerId: Long = 0L
@@ -563,6 +565,7 @@ class EncodingForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         AppLanguageController.init(applicationContext)
+        backgroundGuard = BackgroundExecutionGuard(applicationContext)
         cpuBooster = CpuPerformanceBooster(applicationContext)
         createNotificationChannel()
     }
@@ -573,10 +576,55 @@ class EncodingForegroundService : Service() {
                 (EncodingJobController.isRunActive(runId) || EncodingJobController.currentActiveRunId() == 0L)
             if (!stillOwner) return
             activeRunOwnerId = 0L
+            lastNotification = null
             cpuBooster.stop()
-            releaseWakeLock()
+            backgroundGuard.stop()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
+        }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android 15+ (API 35+) enforces a cumulative 6-hour limit on mediaProcessing / dataSync FGS.
+        // If a marathon encode is still running, transition cleanly to mediaPlayback (no 6h cap)
+        // instead of letting the OS throw RemoteServiceException.
+        val fallbackType = BackgroundExecutionPolicy.resolveTimeoutFallbackType(Build.VERSION.SDK_INT, fgsType)
+        val hasActiveWork = EncodingJobController.currentActiveRunId() > 0L
+        val notif = lastNotification
+        if (hasActiveWork && fallbackType != null && notif != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val transitioned = runCatching {
+                startForeground(NOTIFICATION_ID, notif, fallbackType)
+                true
+            }.getOrDefault(false)
+            if (transitioned) {
+                backgroundGuard.ensureAlive()
+                return
+            }
+        }
+        synchronized(lifecycleLock) {
+            activeRunOwnerId = 0L
+            lastNotification = null
+            EncodingJobController.cancelActiveRun()
+            activeJob?.cancel()
+            activeJob = null
+            cpuBooster.stop()
+            backgroundGuard.stop()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // If the user swipes the app card away or OEM task cleanup runs during an active encode,
+        // immediately re-assert foreground standing and background anti-freeze anchors.
+        if (EncodingJobController.currentActiveRunId() > 0L) {
+            lastNotification?.let { notif ->
+                runCatching { startForegroundCompat(notif) }
+            }
+            if (::backgroundGuard.isInitialized) {
+                backgroundGuard.ensureAlive()
+            }
         }
     }
 
@@ -588,11 +636,12 @@ class EncodingForegroundService : Service() {
                     val currentRunId = EncodingJobController.currentActiveRunId()
                     if (targetRunId == -1L || currentRunId == 0L || currentRunId == targetRunId) {
                         activeRunOwnerId = 0L
+                        lastNotification = null
                         EncodingJobController.cancelActiveRun()
                         activeJob?.cancel()
                         activeJob = null
                         cpuBooster.stop()
-                        releaseWakeLock()
+                        backgroundGuard.stop()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf(startId)
                     }
@@ -624,7 +673,7 @@ class EncodingForegroundService : Service() {
                             totalPasses = initialPasses
                         )
                     )
-                    acquireWakeLock()
+                    backgroundGuard.start(serviceScope) { refreshNotificationIfSilent() }
                     val prev = activeJob
                     prev?.cancel()
                     prev
@@ -660,7 +709,7 @@ class EncodingForegroundService : Service() {
                             totalPasses = 1
                         )
                     )
-                    acquireWakeLock()
+                    backgroundGuard.start(serviceScope) { refreshNotificationIfSilent() }
                     cpuBooster.stop()
                     val prev = activeJob
                     prev?.cancel()
@@ -719,7 +768,7 @@ class EncodingForegroundService : Service() {
                             totalPasses = 1
                         )
                     )
-                    acquireWakeLock()
+                    backgroundGuard.start(serviceScope) { refreshNotificationIfSilent() }
                     val prev = activeJob
                     prev?.cancel()
                     prev
@@ -746,7 +795,7 @@ class EncodingForegroundService : Service() {
         media: MediaInfo,
         config: ModeConfigState
     ) {
-        cpuBooster.start()
+        cpuBooster.start(CpuPerformanceBooster.BoostMode.FFMPEG_SOFTWARE, serviceScope)
         val s = AppLanguageController.currentStrings()
         val workDir = FfmpegEngine.createWorkDir(applicationContext)
         val collectedLogs = mutableListOf<String>()
@@ -1033,7 +1082,7 @@ class EncodingForegroundService : Service() {
         media: MediaInfo,
         config: ModeConfigState
     ) {
-        cpuBooster.start()
+        cpuBooster.start(CpuPerformanceBooster.BoostMode.FFMPEG_SOFTWARE, serviceScope)
         val s = AppLanguageController.currentStrings()
         val remuxWorkDir = FfmpegEngine.createWorkDir(applicationContext)
         val remuxFile = File(remuxWorkDir, "turbo_remux.mp4")
@@ -1214,6 +1263,7 @@ class EncodingForegroundService : Service() {
             )
             // Ensure native FFmpegKit session has fully released resources and let the 880ms
             // vertical slide back to the speedometer settle before initializing MediaCodec VPU.
+            cpuBooster.stop()
             val slideStartMs = SystemClock.elapsedRealtime()
             FfmpegEngine.awaitActiveSessionTermination(timeoutMs = 3_000L)
             val settleRemainMs = (1_000L - (SystemClock.elapsedRealtime() - slideStartMs)).coerceAtLeast(0L)
@@ -1268,6 +1318,7 @@ class EncodingForegroundService : Service() {
         extraDirToCleanup: File?
     ) {
         EncodingJobController.markTurboEngineActive(true)
+        cpuBooster.start(CpuPerformanceBooster.BoostMode.TURBO_MEDIACODEC, serviceScope)
         val s = AppLanguageController.currentStrings()
         val workDir = FfmpegEngine.createWorkDir(applicationContext)
         val modeLocalizedTitle = config.mode.localizedTitle(s)
@@ -1882,15 +1933,19 @@ class EncodingForegroundService : Service() {
     }
 
     private fun startForegroundCompat(notification: Notification) {
+        lastNotification = notification
+        lastNotifyElapsedMs.set(SystemClock.elapsedRealtime())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+            val typeCandidates = BackgroundExecutionPolicy.resolveForegroundServiceTypes(Build.VERSION.SDK_INT)
+            for (fgsType in typeCandidates) {
+                val started = runCatching {
+                    startForeground(NOTIFICATION_ID, notification, fgsType)
+                    true
+                }.getOrDefault(false)
+                if (started) return
+            }
         }
+        startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun updateNotificationThrottled(
@@ -1903,11 +1958,31 @@ class EncodingForegroundService : Service() {
         force: Boolean
     ) {
         if (!EncodingJobController.isRunActive(runId)) return
-        val now = System.currentTimeMillis()
-        if (!force && now - lastNotifyMs < 500L) return
-        lastNotifyMs = now
+        val now = SystemClock.elapsedRealtime()
+        val prev = lastNotifyElapsedMs.get()
+        if (!force && now - prev < 500L) return
+        if (!force && !lastNotifyElapsedMs.compareAndSet(prev, now)) return
+        if (force) {
+            lastNotifyElapsedMs.set(now)
+        }
+        val notif = buildNotification(title, text, percent, passIndex, totalPasses)
+        lastNotification = notif
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(title, text, percent, passIndex, totalPasses))
+        nm.notify(NOTIFICATION_ID, notif)
+    }
+
+    private fun refreshNotificationIfSilent() {
+        val activeRun = EncodingJobController.currentActiveRunId()
+        if (activeRun <= 0L) return
+        val now = SystemClock.elapsedRealtime()
+        val prev = lastNotifyElapsedMs.get()
+        if (!BackgroundExecutionPolicy.shouldRefreshNotification(prev, now)) return
+        val notif = lastNotification ?: return
+        if (!lastNotifyElapsedMs.compareAndSet(prev, now)) return
+        runCatching {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIFICATION_ID, notif)
+        }
     }
 
     private fun passSmallIconRes(passIndex: Int, totalPasses: Int): Int = when {
@@ -1996,6 +2071,7 @@ class EncodingForegroundService : Service() {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setRequestPromotedOngoing(true)
             .setShortCriticalText(capsulePercentChip)
             .setStyle(progressStyle)
@@ -2029,29 +2105,14 @@ class EncodingForegroundService : Service() {
         }
     }
 
-    private fun acquireWakeLock() {
-        releaseWakeLock()
-        runCatching {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FFmpeg:EncodingWakeLock").apply {
-                // Safety timeout: 4 hours max for huge 4K veryslow encodes
-                acquire(4L * 60L * 60L * 1000L)
-            }
-        }
-    }
-
-    private fun releaseWakeLock() {
-        runCatching {
-            wakeLock?.let { if (it.isHeld) it.release() }
-        }
-        wakeLock = null
-    }
-
     override fun onDestroy() {
+        lastNotification = null
         if (::cpuBooster.isInitialized) {
             cpuBooster.stop()
         }
-        releaseWakeLock()
+        if (::backgroundGuard.isInitialized) {
+            backgroundGuard.stop()
+        }
         serviceScope.cancel()
         super.onDestroy()
     }
