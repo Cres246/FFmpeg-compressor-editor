@@ -547,4 +547,50 @@ class FfmpegMathTest {
         assertTrue("25s keyframe (20s away) must be included in nearby options", endAt5.nearbyKeyframes.contains(25.0))
         assertTrue("50s keyframe must also be included in nearby options", endAt5.nearbyKeyframes.contains(50.0))
     }
+
+    @Test
+    fun videoOnlyCrfEnforcesAvSyncGuardsAndAdtsFilterForTransportStreams() {
+        val mkvAac = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "anime.mkv",
+            baseName = "anime",
+            extension = "mkv",
+            sizeBytes = 90_000_000L,
+            durationSec = 120.0,
+            videoCodec = "h264",
+            width = 1920,
+            height = 1080,
+            pixFmt = "yuv420p10le",
+            audioCodec = "aac",
+            audioBitrateKbps = 256
+        )
+        val mkvSteps = FfmpegMath.buildFfmpegSteps(
+            media = mkvAac,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF, codec = VideoCodecOption.H264),
+            inputTokenProvider = { "in.mkv" },
+            outputPath = "out.mp4",
+            passLogPrefix = "pass"
+        )
+        val mkvArgs = mkvSteps.single().args
+        assertTrue(mkvArgs.contains("-fps_mode"))
+        assertTrue(mkvArgs.contains("passthrough"))
+        assertTrue(mkvArgs.contains("-avoid_negative_ts"))
+        assertTrue(mkvArgs.contains("make_zero"))
+        assertTrue(mkvArgs.contains("-max_muxing_queue_size"))
+        assertTrue(mkvArgs.contains("1024"))
+        assertTrue(mkvArgs.contains("-c:a"))
+        assertTrue(mkvArgs.contains("copy"))
+        assertFalse("MKV AAC should not force aac_adtstoasc", mkvArgs.contains("aac_adtstoasc"))
+
+        // Transport stream (.ts) with AAC requires aac_adtstoasc when copying into MP4
+        val tsAac = mkvAac.copy(fileName = "broadcast.ts", baseName = "broadcast", extension = "ts")
+        val tsArgs = FfmpegMath.buildFfmpegSteps(
+            media = tsAac,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF, codec = VideoCodecOption.H264),
+            inputTokenProvider = { "in.ts" },
+            outputPath = "out.mp4",
+            passLogPrefix = "pass"
+        ).single().args
+        assertTrue("TS AAC must include aac_adtstoasc for MP4 copy", tsArgs.contains("aac_adtstoasc"))
+    }
 }

@@ -39,7 +39,8 @@ data class Media3CompatibilityReport(
     val videoIssueTag: String? = null,
     val audioIssueTag: String? = null,
     val containerIssueTag: String? = null,
-    val recommendedAudioBitrateKbps: Int = 256
+    val recommendedAudioBitrateKbps: Int = 256,
+    val canUseVideoOnlyPrep: Boolean = false
 )
 
 /**
@@ -50,7 +51,8 @@ data class Media3CompatibilityReport(
  *
  * Pinpoints upfront whether an incompatibility lives in the container, audio track, or video track
  * using the metadata already probed into [MediaInfo], and drives the progressive Turbo recovery
- * ladder: Remux -> Audio-Only (source-matched high quality AAC) -> Video+Audio -> Auto-Turbo.
+ * ladder: Remux -> Audio-Only (source-matched high quality AAC) -> Video-Only (when audio is
+ * already MP4/Media3-compatible & sync-safe) -> Video+Audio -> Auto-Turbo.
  */
 object Media3CompatibilityAdvisor {
 
@@ -69,6 +71,12 @@ object Media3CompatibilityAdvisor {
     // officially non-seekable per Android Media3 docs).
     val UNSUPPORTED_CONTAINERS: Set<String> = setOf(
         "wmv", "asf", "vob", "rm", "rmvb", "mxf", "ogv", "f4v", "divx", "m2v", "nut", "y4m", "wtv", "dv", "gxf"
+    )
+
+    // Legacy containers whose audio interleaving / VBR headers / missing PTS frequently drift when
+    // copying audio (`-c:a copy`) into MP4 while re-encoding video; route those to Video+Audio.
+    val LEGACY_SYNC_RISK_CONTAINERS: Set<String> = setOf(
+        "avi", "wmv", "asf", "vob", "mpg", "mpeg", "rm", "rmvb", "dv", "mxf", "divx", "wtv", "gxf"
     )
 
     // Verified from Media3 1.11.1 Mp4Muxer.SUPPORTED_VIDEO_SAMPLE_MIME_TYPES + Android decoders
@@ -139,6 +147,12 @@ object Media3CompatibilityAdvisor {
     // Audio codecs that FFmpeg can cleanly copy into MP4 without re-encoding
     val MP4_COPY_SAFE_AUDIO_CODECS: Set<String> = setOf(
         "aac", "mp3", "ac3", "eac3", "opus", "alac", "flac"
+    )
+
+    // Subset of MP4-copyable audio codecs that are ALSO cleanly accepted inside MP4 by Media3 1.11.1
+    // + Android MediaExtractor without needing audio re-encoding (excludes Vorbis/PCM/FLAC/ALAC).
+    val VIDEO_ONLY_MP4_SAFE_AUDIO_CODECS: Set<String> = setOf(
+        "aac", "mp3", "opus"
     )
 
     private val HIGH_QUALITY_AAC_LADDER = listOf(128, 192, 256, 320, 384, 512)
@@ -276,6 +290,21 @@ object Media3CompatibilityAdvisor {
             else -> Media3IssueKind.COMPATIBLE
         }
 
+        // Video-Only (`-c:a copy`) is eligible when either there is no audio track OR the source
+        // audio is already Media3-compatible + MP4-copy-safe AND the source container is not a
+        // legacy sync-risk container (AVI/VOB/WMV/ASF/MPG) where copying audio can drift.
+        val audioSafeForVideoOnlyMp4Copy = when {
+            !media.hasAudio -> true
+            audioIssue != null -> false
+            ext in LEGACY_SYNC_RISK_CONTAINERS -> false
+            aCodec in VIDEO_ONLY_MP4_SAFE_AUDIO_CODECS -> true
+            aCodec in setOf("ac3", "eac3") -> {
+                val mimes = DEVICE_OPTIONAL_AUDIO_CODECS[aCodec].orEmpty()
+                device.probed && mimes.any { it in device.decoderMimes }
+            }
+            else -> false
+        }
+
         return Media3CompatibilityReport(
             issueKind = kind,
             requiresImmediateRecovery = kind != Media3IssueKind.COMPATIBLE,
@@ -285,7 +314,8 @@ object Media3CompatibilityAdvisor {
             videoIssueTag = videoIssue,
             audioIssueTag = audioIssue,
             containerIssueTag = containerIssue,
-            recommendedAudioBitrateKbps = recommendedAudio
+            recommendedAudioBitrateKbps = recommendedAudio,
+            canUseVideoOnlyPrep = audioSafeForVideoOnlyMp4Copy
         )
     }
 
@@ -306,12 +336,15 @@ object Media3CompatibilityAdvisor {
 
     /**
      * Resolves the exact next progressive recovery action when Media3 Turbo cannot proceed:
-     * 1) If upfront/runtime diagnosis pinpoints VIDEO incompatibility -> OFFER_VIDEO_AND_AUDIO directly.
-     * 2) If diagnosis/error pinpoints AUDIO incompatibility (and audio wasn't converted yet) -> OFFER_AUDIO_CONVERT directly.
-     * 3) If container remux hasn't been tried yet -> OFFER_REMUX.
-     * 4) If Remux was tried & failed (and media has audio, not yet converted) -> OFFER_AUDIO_CONVERT.
-     * 5) If Audio-Only was tried & failed (or no audio) -> OFFER_VIDEO_AND_AUDIO.
-     * 6) If Video+Audio prep was already tried & Turbo still failed -> EXHAUSTED (fall back to FFmpeg).
+     * 1) Video+Audio incompatible -> OFFER_VIDEO_AND_AUDIO directly.
+     * 2) Video-only incompatible -> OFFER_VIDEO_ONLY when audio is already MP4/Media3-compatible
+     *    and sync-safe (skips unnecessary audio re-encoding!), else OFFER_VIDEO_AND_AUDIO.
+     * 3) Audio incompatible (or audio-specific runtime error) -> OFFER_AUDIO_CONVERT directly.
+     * 4) Container remux hasn't been tried yet -> OFFER_REMUX.
+     * 5) Remux tried & failed -> OFFER_AUDIO_CONVERT (if hasAudio) else OFFER_VIDEO_ONLY (if silent).
+     * 6) Audio-Only tried & failed -> OFFER_VIDEO_AND_AUDIO.
+     * 7) Video-Only tried & failed -> OFFER_VIDEO_AND_AUDIO (if hasAudio) else EXHAUSTED.
+     * 8) Video+Audio already tried -> EXHAUSTED.
      */
     fun resolveNextRecoveryStep(
         report: Media3CompatibilityReport,
@@ -320,7 +353,8 @@ object Media3CompatibilityAdvisor {
         errorDetail: String?,
         hasTriedRemux: Boolean,
         hasTriedAudioConvert: Boolean,
-        hasTriedVideoAudioConvert: Boolean
+        hasTriedVideoAudioConvert: Boolean,
+        hasTriedVideoOnlyConvert: Boolean = false
     ): TurboRecoveryStep {
         if (hasTriedVideoAudioConvert) {
             return TurboRecoveryStep.EXHAUSTED
@@ -329,10 +363,14 @@ object Media3CompatibilityAdvisor {
         if (errorCodeName == "ERROR_CODE_10BIT_NOT_PRESERVED") {
             return TurboRecoveryStep.EXHAUSTED
         }
-        if (report.issueKind == Media3IssueKind.VIDEO_INCOMPATIBLE ||
-            report.issueKind == Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE
-        ) {
+        if (report.issueKind == Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE) {
             return TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
+        }
+        if (report.issueKind == Media3IssueKind.VIDEO_INCOMPATIBLE) {
+            if (!hasTriedVideoOnlyConvert && report.canUseVideoOnlyPrep) {
+                return TurboRecoveryStep.OFFER_VIDEO_ONLY
+            }
+            return if (hasAudio) TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO else TurboRecoveryStep.EXHAUSTED
         }
         if (hasAudio && !hasTriedAudioConvert &&
             (report.issueKind == Media3IssueKind.AUDIO_INCOMPATIBLE ||
@@ -343,7 +381,14 @@ object Media3CompatibilityAdvisor {
         if (!hasTriedRemux) {
             return TurboRecoveryStep.OFFER_REMUX
         }
-        if (hasAudio && !hasTriedAudioConvert) {
+        if (!hasAudio) {
+            return if (!hasTriedVideoOnlyConvert) {
+                TurboRecoveryStep.OFFER_VIDEO_ONLY
+            } else {
+                TurboRecoveryStep.EXHAUSTED
+            }
+        }
+        if (!hasTriedAudioConvert && !hasTriedVideoOnlyConvert) {
             return TurboRecoveryStep.OFFER_AUDIO_CONVERT
         }
         return TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO

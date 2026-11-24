@@ -156,6 +156,7 @@ fun TurboProcessingScreen(
     onDoneReturnHome: () -> Unit,
     onTryRemuxAndRetry: () -> Unit = {},
     onTryAudioConvertAndRetry: (Int) -> Unit = {},
+    onOpenVideoOnlyPrep: () -> Unit = {},
     onOpenVideoAudioPrep: () -> Unit = {},
     onFallbackToFfmpeg: () -> Unit,
     onFallbackToFfmpegFast: () -> Unit = onFallbackToFfmpeg
@@ -180,10 +181,12 @@ fun TurboProcessingScreen(
     }
     val canOfferRemux = effectiveRecoveryStep == TurboRecoveryStep.OFFER_REMUX
     val canOfferAudioConvert = effectiveRecoveryStep == TurboRecoveryStep.OFFER_AUDIO_CONVERT
+    val canOfferVideoOnly = effectiveRecoveryStep == TurboRecoveryStep.OFFER_VIDEO_ONLY
     val canOfferVideoAndAudio = effectiveRecoveryStep == TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
 
     var showRemuxPromptDialog by remember(state) { mutableStateOf(canOfferRemux) }
     var showAudioConvertDialog by remember(state) { mutableStateOf(canOfferAudioConvert) }
+    var showVideoOnlyDialog by remember(state) { mutableStateOf(canOfferVideoOnly) }
     var showVideoAudioDialog by remember(state) { mutableStateOf(canOfferVideoAndAudio) }
     var selectedRecoveryAudioKbps by remember(state) {
         mutableIntStateOf(failedState?.recommendedAudioBitrateKbps ?: 256)
@@ -280,6 +283,7 @@ fun TurboProcessingScreen(
                         is EncodingState.Failed -> {
                             val preferFastFfmpeg = state.hasTriedRemux ||
                                 state.hasTriedAudioConvert ||
+                                state.hasTriedVideoOnlyConvert ||
                                 state.hasTriedVideoAudioConvert
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -320,6 +324,26 @@ fun TurboProcessingScreen(
                                             Spacer(Modifier.width(8.dp))
                                             Text(
                                                 text = strings.turboTryAudioConvertButton,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    canOfferVideoOnly -> {
+                                        FilledTonalButton(
+                                            onClick = { showVideoOnlyDialog = true },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .testTag("turbo_try_video_only_button"),
+                                            shape = MaterialTheme.shapes.small,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+                                        ) {
+                                            Icon(Icons.Rounded.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = strings.turboTryVideoOnlyButton,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
@@ -601,6 +625,59 @@ fun TurboProcessingScreen(
                 TextButton(
                     onClick = { showAudioConvertDialog = false },
                     modifier = Modifier.testTag("turbo_audio_convert_confirm_no")
+                ) {
+                    Text(strings.turboRemuxPromptNo)
+                }
+            }
+        )
+    }
+
+    if (showVideoOnlyDialog && canOfferVideoOnly && failedState != null && isActiveStage) {
+        AlertDialog(
+            onDismissRequest = { showVideoOnlyDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.AutoFixHigh,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = strings.turboVideoOnlyPromptTitle,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val diag = failedState.diagnosisSummary
+                    if (!diag.isNullOrBlank()) {
+                        TurboDiagnosisBannerChip(text = diag)
+                    }
+                    Text(
+                        text = strings.turboVideoOnlyPromptBody(failedState.hasSourceAudio),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showVideoOnlyDialog = false
+                        onOpenVideoOnlyPrep()
+                    },
+                    modifier = Modifier.testTag("turbo_video_only_confirm_yes")
+                ) {
+                    Text(strings.turboVideoOnlyPromptYes)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showVideoOnlyDialog = false },
+                    modifier = Modifier.testTag("turbo_video_only_confirm_no")
                 ) {
                     Text(strings.turboRemuxPromptNo)
                 }
@@ -1484,7 +1561,7 @@ private fun TurboFailureWarningCard(
     val titleText = when {
         failed.diagnosisSummary == strings.turbo10BitNotPreservedTitle -> strings.turbo10BitNotPreservedTitle
         failed.hasTriedVideoAudioConvert -> strings.turboAfterVideoAudioFailedTitle
-        failed.hasTriedRemux || failed.hasTriedAudioConvert -> strings.turboAfterRemuxFailedTitle
+        failed.hasTriedRemux || failed.hasTriedAudioConvert || failed.hasTriedVideoOnlyConvert -> strings.turboAfterRemuxFailedTitle
         failed.isUnsupportedFormat -> strings.turboUnsupportedTitle
         else -> strings.failedErrorTitle
     }

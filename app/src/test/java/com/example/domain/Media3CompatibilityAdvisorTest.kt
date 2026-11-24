@@ -128,14 +128,48 @@ class Media3CompatibilityAdvisorTest {
 
     @Test
     fun pinpointsVideoIncompatibilitiesIncludingHi10PAndNon420Chroma() {
-        // 10-bit H.264 (Hi10P) is unsupported on Android HW decoders
+        // 10-bit H.264 (Hi10P) + healthy AAC in MKV -> Video-Only (keeps AAC 100% lossless!)
         val hi10p = media(ext = "mkv", vCodec = "h264", pixFmt = "yuv420p10le", vProfile = "High 10", aCodec = "aac")
         val hi10Report = Media3CompatibilityAdvisor.diagnose(hi10p, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), sampleDevice())
         assertEquals(Media3IssueKind.VIDEO_INCOMPATIBLE, hi10Report.issueKind)
+        assertTrue(hi10Report.canUseVideoOnlyPrep)
+        assertEquals(
+            TurboRecoveryStep.OFFER_VIDEO_ONLY,
+            Media3CompatibilityAdvisor.resolveNextRecoveryStep(
+                report = hi10Report,
+                hasAudio = true,
+                errorCodeName = null,
+                errorDetail = null,
+                hasTriedRemux = false,
+                hasTriedAudioConvert = false,
+                hasTriedVideoAudioConvert = false,
+                hasTriedVideoOnlyConvert = false
+            )
+        )
+        // If Video-Only prep was tried and Turbo still failed, escalate cleanly to Video+Audio
         assertEquals(
             TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO,
             Media3CompatibilityAdvisor.resolveNextRecoveryStep(
                 report = hi10Report,
+                hasAudio = true,
+                errorCodeName = "ERROR_CODE_AUDIO_PROCESSING_FAILED",
+                errorDetail = null,
+                hasTriedRemux = true,
+                hasTriedAudioConvert = false,
+                hasTriedVideoAudioConvert = false,
+                hasTriedVideoOnlyConvert = true
+            )
+        )
+
+        // ProRes + MP4-incompatible audio (PCM 16-bit) -> cannot copy into MP4, routes to Video+Audio
+        val proresPcm = media(ext = "mov", vCodec = "prores", pixFmt = "yuv422p10le", aCodec = "pcm_s16le")
+        val proresPcmReport = Media3CompatibilityAdvisor.diagnose(proresPcm, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), sampleDevice())
+        assertEquals(Media3IssueKind.VIDEO_INCOMPATIBLE, proresPcmReport.issueKind)
+        assertFalse(proresPcmReport.canUseVideoOnlyPrep)
+        assertEquals(
+            TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO,
+            Media3CompatibilityAdvisor.resolveNextRecoveryStep(
+                report = proresPcmReport,
                 hasAudio = true,
                 errorCodeName = null,
                 errorDetail = null,
@@ -145,27 +179,37 @@ class Media3CompatibilityAdvisorTest {
             )
         )
 
-        // ProRes & 4:2:2 chroma subsampling
-        val prores = media(ext = "mov", vCodec = "prores", pixFmt = "yuv422p10le", aCodec = "aac")
+        // Legacy sync-risk container (AVI with MPEG-2 + MP3) -> routes to Video+Audio to avoid A/V drift
+        val legacyAvi = media(ext = "avi", vCodec = "mpeg2video", pixFmt = "yuv420p", aCodec = "mp3")
+        val legacyAviReport = Media3CompatibilityAdvisor.diagnose(legacyAvi, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), sampleDevice())
+        assertEquals(Media3IssueKind.VIDEO_INCOMPATIBLE, legacyAviReport.issueKind)
+        assertFalse(legacyAviReport.canUseVideoOnlyPrep)
         assertEquals(
-            Media3IssueKind.VIDEO_INCOMPATIBLE,
-            Media3CompatibilityAdvisor.diagnose(prores, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), sampleDevice()).issueKind
+            TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO,
+            Media3CompatibilityAdvisor.resolveNextRecoveryStep(
+                report = legacyAviReport,
+                hasAudio = true,
+                errorCodeName = null,
+                errorDetail = null,
+                hasTriedRemux = false,
+                hasTriedAudioConvert = false,
+                hasTriedVideoAudioConvert = false
+            )
         )
 
-        // Both video (MPEG-2) + audio (DTS) incompatible
+        // Both video (MPEG-2) + audio (DTS) incompatible -> Video+Audio
         val mpeg2Dts = media(ext = "mkv", vCodec = "mpeg2video", pixFmt = "yuv420p", aCodec = "dts")
         assertEquals(
             Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE,
             Media3CompatibilityAdvisor.diagnose(mpeg2Dts, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), sampleDevice()).issueKind
         )
 
-        // Device missing AV1 decoder pinpoints video incompatibility
+        // Device missing AV1 decoder + healthy Opus audio in MKV -> Video-Only eligible
         val av1Clip = media(ext = "mkv", vCodec = "av1", pixFmt = "yuv420p", aCodec = "opus")
         val noAv1Device = sampleDevice().copy(decoderMimes = setOf("video/avc", "video/hevc", "audio/opus"))
-        assertEquals(
-            Media3IssueKind.VIDEO_INCOMPATIBLE,
-            Media3CompatibilityAdvisor.diagnose(av1Clip, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), noAv1Device).issueKind
-        )
+        val av1Report = Media3CompatibilityAdvisor.diagnose(av1Clip, ModeConfigState(mode = ProcessingMode.DISCORD_20MB), noAv1Device)
+        assertEquals(Media3IssueKind.VIDEO_INCOMPATIBLE, av1Report.issueKind)
+        assertTrue(av1Report.canUseVideoOnlyPrep)
     }
 
     @Test
@@ -230,9 +274,9 @@ class Media3CompatibilityAdvisorTest {
                 hasTriedVideoAudioConvert = false
             )
         )
-        // Step 2 (no audio): Skips Audio-Only straight to Video+Audio
+        // Step 2 (no audio): Skips Audio-Only straight to Video-Only (and exhausts once tried)
         assertEquals(
-            TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO,
+            TurboRecoveryStep.OFFER_VIDEO_ONLY,
             Media3CompatibilityAdvisor.resolveNextRecoveryStep(
                 report = compatible,
                 hasAudio = false,
@@ -240,7 +284,21 @@ class Media3CompatibilityAdvisorTest {
                 errorDetail = null,
                 hasTriedRemux = true,
                 hasTriedAudioConvert = false,
-                hasTriedVideoAudioConvert = false
+                hasTriedVideoAudioConvert = false,
+                hasTriedVideoOnlyConvert = false
+            )
+        )
+        assertEquals(
+            TurboRecoveryStep.EXHAUSTED,
+            Media3CompatibilityAdvisor.resolveNextRecoveryStep(
+                report = compatible,
+                hasAudio = false,
+                errorCodeName = "ERROR_CODE_ENCODING_FAILED",
+                errorDetail = null,
+                hasTriedRemux = true,
+                hasTriedAudioConvert = false,
+                hasTriedVideoAudioConvert = false,
+                hasTriedVideoOnlyConvert = true
             )
         )
         // Step 3: Audio-Only tried & still fails -> Offer Video+Audio

@@ -470,6 +470,7 @@ private fun FFLabAppRoot(
                             onDoneReturnHome = { viewModel.dismissEncodingResult(returnToWorkbench = true) },
                             onTryRemuxAndRetry = viewModel::tryRemuxThenRetryTurbo,
                             onTryAudioConvertAndRetry = viewModel::tryAudioConvertThenRetryTurbo,
+                            onOpenVideoOnlyPrep = viewModel::openVideoOnlyPrepForTurbo,
                             onOpenVideoAudioPrep = viewModel::openVideoAudioPrepForTurbo,
                             onFallbackToFfmpeg = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = false) },
                             onFallbackToFfmpegFast = { viewModel.fallbackFromTurboToFfmpeg(useFastPreset = true) }

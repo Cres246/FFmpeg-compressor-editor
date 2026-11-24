@@ -909,7 +909,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val media = _uiState.value.mediaInfo ?: return
         val cfg = _uiState.value.activeConfig ?: return
         val continuation = _uiState.value.pendingTurboContinuation
-        if (continuation != null && cfg.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF) {
+        if (continuation != null &&
+            (cfg.mode == ProcessingMode.VIDEO_ONLY_CRF || cfg.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF)
+        ) {
             _uiState.update { it.copy(pendingTurboContinuation = null) }
             EncodingForegroundService.startVideoAudioPrepThenTurbo(
                 context = appContext,
@@ -954,7 +956,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun openVideoOnlyPrepForTurbo() {
+        openVideoPrepForTurbo(includeAudioEncode = false)
+    }
+
     fun openVideoAudioPrepForTurbo() {
+        openVideoPrepForTurbo(includeAudioEncode = true)
+    }
+
+    private fun openVideoPrepForTurbo(includeAudioEncode: Boolean) {
         val cur = EncodingJobController.state.value
         if (cur !is EncodingState.Failed || !cur.isHardwareTurbo) return
         val snapshot = EncodingJobController.activeJobSnapshot
@@ -970,7 +980,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val recommendedAudio = Media3CompatibilityAdvisor.recommendHighQualityAudioBitrateKbps(media)
 
         val prepConfig = ModeConfigState(
-            mode = ProcessingMode.VIDEO_AND_AUDIO_CRF,
+            mode = if (includeAudioEncode) ProcessingMode.VIDEO_AND_AUDIO_CRF else ProcessingMode.VIDEO_ONLY_CRF,
             codec = prepCodec,
             bitDepth = prepBitDepth,
             fps = FpsOption.ORIGINAL,
@@ -980,7 +990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         // Update activeConfig & pendingTurboContinuation before resetting EncodingJobController
-        // so Compose slides cleanly from Turbo Failed -> Video+Audio Config without flashing Home.
+        // so Compose slides cleanly from Turbo Failed -> Config without flashing Home.
         _uiState.update {
             it.copy(
                 mediaInfo = media,

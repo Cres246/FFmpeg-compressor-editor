@@ -308,8 +308,14 @@ class EncodingForegroundService : Service() {
                 s.turboDiagContainerOnly(report.containerIssueTag ?: report.containerName)
             Media3IssueKind.AUDIO_INCOMPATIBLE ->
                 s.turboDiagAudioIncompatible(report.audioIssueTag ?: report.audioCodecName ?: "AUDIO")
-            Media3IssueKind.VIDEO_INCOMPATIBLE ->
-                s.turboDiagVideoIncompatible(report.videoIssueTag ?: report.videoCodecName ?: "VIDEO")
+            Media3IssueKind.VIDEO_INCOMPATIBLE -> {
+                val vTag = report.videoIssueTag ?: report.videoCodecName ?: "VIDEO"
+                if (report.canUseVideoOnlyPrep) {
+                    s.turboDiagVideoOnlyIncompatible(vTag, report.audioCodecName)
+                } else {
+                    s.turboDiagVideoIncompatible(vTag)
+                }
+            }
             Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE ->
                 s.turboDiagVideoAndAudioIncompatible(
                     report.videoIssueTag ?: report.videoCodecName ?: "VIDEO",
@@ -483,11 +489,14 @@ class EncodingForegroundService : Service() {
             turboTargetConfig: ModeConfigState
         ) {
             val s = AppLanguageController.currentStrings()
+            val isVideoOnlyPrep = prepConfig.mode == ProcessingMode.VIDEO_ONLY_CRF
+            val prepTitle = if (isVideoOnlyPrep) s.turboVideoOnlyPrepModeTitle else s.turboVideoAudioPrepModeTitle
+            val prepFileName = if (isVideoOnlyPrep) "turbo_video_only_prep.mp4" else "turbo_video_audio_prep.mp4"
             val summaryBanner = buildSummaryBanner(media, prepConfig, s)
             val presetLabel = resolvePresetDisplayLabel(prepConfig)
             val initialPrep = EncodingState.Running(
-                modeTitle = s.turboVideoAudioPrepModeTitle,
-                outputFileName = "turbo_video_audio_prep.mp4",
+                modeTitle = prepTitle,
+                outputFileName = prepFileName,
                 passIndex = 1,
                 totalPasses = 1,
                 statusMessage = s.notifPreparing,
@@ -1012,11 +1021,16 @@ class EncodingForegroundService : Service() {
                     return START_NOT_STICKY
                 }
                 val s = AppLanguageController.currentStrings()
+                val prepTitle = if (jobData.config.mode == ProcessingMode.VIDEO_ONLY_CRF) {
+                    s.turboVideoOnlyPrepModeTitle
+                } else {
+                    s.turboVideoAudioPrepModeTitle
+                }
                 val previousJob = synchronized(lifecycleLock) {
                     activeRunOwnerId = jobData.runId
                     startForegroundCompat(
                         buildNotification(
-                            title = "FFmpeg · ${s.turboVideoAudioPrepModeTitle}",
+                            title = "FFmpeg · $prepTitle",
                             text = s.notifPreparing,
                             percent = 0,
                             passIndex = 1,
@@ -1487,6 +1501,7 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = report.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = false,
                         hasTriedVideoAudioConvert = false
                     )
@@ -1537,7 +1552,8 @@ class EncodingForegroundService : Service() {
                         diagnosisSummary = formatDiagnosisSummary(report, curS),
                         recommendedAudioBitrateKbps = report.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
-                        isLosslessSourceAudio = media.isLosslessAudio
+                        isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio
                     )
                 )
             }
@@ -1696,6 +1712,7 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = safeAb,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = true,
                         hasTriedVideoAudioConvert = false
                     )
@@ -1738,6 +1755,7 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = safeAb,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = true
                     )
                 )
@@ -1764,8 +1782,14 @@ class EncodingForegroundService : Service() {
     ) {
         cpuBooster.start(CpuPerformanceBooster.BoostMode.FFMPEG_SOFTWARE, serviceScope)
         val s = AppLanguageController.currentStrings()
+        val isVideoOnlyPrep = prepConfig.mode == ProcessingMode.VIDEO_ONLY_CRF
+        fun resolvePrepTitle(strings: AppStrings): String =
+            if (isVideoOnlyPrep) strings.turboVideoOnlyPrepModeTitle else strings.turboVideoAudioPrepModeTitle
         val prepWorkDir = FfmpegEngine.createWorkDir(applicationContext)
-        val prepFile = File(prepWorkDir, "turbo_video_audio_prep.mp4")
+        val prepFile = File(
+            prepWorkDir,
+            if (isVideoOnlyPrep) "turbo_video_only_prep.mp4" else "turbo_video_audio_prep.mp4"
+        )
         val collectedLogs = mutableListOf<String>()
         var logsSnapshot: List<String> = emptyList()
         val summaryBanner = buildSummaryBanner(media, prepConfig, s)
@@ -1783,7 +1807,7 @@ class EncodingForegroundService : Service() {
 
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
-        appendLog("${s.logTagStarted} ${s.turboVideoAudioPrepModeTitle} — $summaryBanner")
+        appendLog("${s.logTagStarted} ${resolvePrepTitle(s)} — $summaryBanner")
         var handedOffToTurbo = false
 
         try {
@@ -1823,6 +1847,7 @@ class EncodingForegroundService : Service() {
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
                         cpuBooster.pulseIfDue()
                         val liveS = AppLanguageController.currentStrings()
+                        val liveTitle = resolvePrepTitle(liveS)
                         val nowMs = SystemClock.elapsedRealtime()
                         val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
                         val tenthMb = (kb * 10L) / 1024L
@@ -1836,7 +1861,7 @@ class EncodingForegroundService : Service() {
                             EncodingJobController.updateStateIfActive(
                                 runId,
                                 EncodingState.Running(
-                                    modeTitle = liveS.turboVideoAudioPrepModeTitle,
+                                    modeTitle = liveTitle,
                                     outputFileName = prepFile.name,
                                     passIndex = passNum,
                                     totalPasses = totalPasses,
@@ -1858,7 +1883,7 @@ class EncodingForegroundService : Service() {
                         }
                         updateNotificationThrottled(
                             runId = runId,
-                            title = "FFmpeg · ${liveS.turboVideoAudioPrepModeTitle}",
+                            title = "FFmpeg · $liveTitle",
                             text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), step.expectedDurationSec, pct, spd, kb, includePercent = false, strings = liveS),
                             percent = pct,
                             passIndex = passNum,
@@ -1887,15 +1912,33 @@ class EncodingForegroundService : Service() {
                 if (!stepResult.success) {
                     val curS = AppLanguageController.currentStrings()
                     appendLog("${curS.logTagError} ${curS.errFfmpegExitCode(stepResult.returnCode)}")
-                    EncodingJobController.updateStateIfActive(
-                        runId,
-                        EncodingState.Failed(
-                            modeTitle = curS.turboVideoAudioPrepModeTitle,
-                            errorMessage = curS.errFfmpegExitCode(stepResult.returnCode),
-                            hint = curS.turboAfterRemuxFastHint,
-                            logs = currentLogs()
+                    if (isVideoOnlyPrep && media.hasAudio) {
+                        // Video-Only (`-c:a copy`) couldn't mux cleanly into MP4; escalate to Video+Audio
+                        EncodingJobController.updateStateIfActive(
+                            runId,
+                            EncodingState.Failed(
+                                modeTitle = targetModeTitle,
+                                errorMessage = curS.turboVideoAudioPromptBody(false),
+                                hint = curS.turboAfterRemuxFastHint,
+                                logs = currentLogs(),
+                                isHardwareTurbo = true,
+                                isUnsupportedFormat = true,
+                                hasTriedRemux = true,
+                                hasTriedVideoOnlyConvert = true,
+                                recoveryStep = TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
+                            )
                         )
-                    )
+                    } else {
+                        EncodingJobController.updateStateIfActive(
+                            runId,
+                            EncodingState.Failed(
+                                modeTitle = resolvePrepTitle(curS),
+                                errorMessage = curS.errFfmpegExitCode(stepResult.returnCode),
+                                hint = curS.turboAfterRemuxFastHint,
+                                logs = currentLogs()
+                            )
+                        )
+                    }
                     return
                 }
             }
@@ -1904,6 +1947,11 @@ class EncodingForegroundService : Service() {
 
             if (!prepFile.exists() || prepFile.length() == 0L) {
                 val curS = AppLanguageController.currentStrings()
+                val nextStep = if (isVideoOnlyPrep && media.hasAudio) {
+                    TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
+                } else {
+                    TurboRecoveryStep.EXHAUSTED
+                }
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
@@ -1913,9 +1961,10 @@ class EncodingForegroundService : Service() {
                         logs = currentLogs(),
                         isHardwareTurbo = true,
                         hasTriedRemux = true,
-                        hasTriedAudioConvert = true,
-                        hasTriedVideoAudioConvert = true,
-                        recoveryStep = TurboRecoveryStep.EXHAUSTED
+                        hasTriedAudioConvert = !isVideoOnlyPrep,
+                        hasTriedVideoOnlyConvert = true,
+                        hasTriedVideoAudioConvert = !isVideoOnlyPrep,
+                        recoveryStep = nextStep
                     )
                 )
                 return
@@ -1937,7 +1986,11 @@ class EncodingForegroundService : Service() {
                     extension = "mp4",
                     videoCodec = if (prepConfig.codec == VideoCodecOption.H265) "hevc" else "h264",
                     pixFmt = prepConfig.bitDepth.pixFmt,
-                    audioCodec = if (media.hasAudio) "aac" else null
+                    audioCodec = when {
+                        !media.hasAudio -> null
+                        isVideoOnlyPrep -> media.audioCodec
+                        else -> "aac"
+                    }
                 )
             }
 
@@ -1948,8 +2001,9 @@ class EncodingForegroundService : Service() {
                 config = turboTargetConfig,
                 preparedFile = prepFile,
                 hasTriedRemux = true,
-                hasTriedAudioConvert = true,
-                hasTriedVideoAudioConvert = true,
+                hasTriedAudioConvert = !isVideoOnlyPrep,
+                hasTriedVideoOnlyConvert = true,
+                hasTriedVideoAudioConvert = !isVideoOnlyPrep,
                 extraDirToCleanup = prepWorkDir
             )
             handedOffToTurbo = true
@@ -1967,9 +2021,14 @@ class EncodingForegroundService : Service() {
                         logs = currentLogs(),
                         isHardwareTurbo = true,
                         hasTriedRemux = true,
-                        hasTriedAudioConvert = true,
-                        hasTriedVideoAudioConvert = true,
-                        recoveryStep = TurboRecoveryStep.EXHAUSTED
+                        hasTriedAudioConvert = !isVideoOnlyPrep,
+                        hasTriedVideoOnlyConvert = true,
+                        hasTriedVideoAudioConvert = !isVideoOnlyPrep,
+                        recoveryStep = if (isVideoOnlyPrep && media.hasAudio) {
+                            TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO
+                        } else {
+                            TurboRecoveryStep.EXHAUSTED
+                        }
                     )
                 )
             }
@@ -1983,7 +2042,7 @@ class EncodingForegroundService : Service() {
 
     /**
      * Common seamless Slide-2 handoff from any FFmpeg preparation step (Remux, Audio-Only,
-     * or Video+Audio) straight back onto the Turbo speedometer screen without prompting again.
+     * Video-Only, or Video+Audio) straight back onto the Turbo speedometer without prompting again.
      */
     private suspend fun slideBackToTurboAndRun(
         runId: Long,
@@ -1994,7 +2053,8 @@ class EncodingForegroundService : Service() {
         hasTriedRemux: Boolean,
         hasTriedAudioConvert: Boolean,
         hasTriedVideoAudioConvert: Boolean,
-        extraDirToCleanup: File
+        extraDirToCleanup: File,
+        hasTriedVideoOnlyConvert: Boolean = false
     ) {
         cpuBooster.stop()
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
@@ -2057,6 +2117,7 @@ class EncodingForegroundService : Service() {
             inputUriOverride = Uri.fromFile(preparedFile),
             hasTriedRemux = hasTriedRemux,
             hasTriedAudioConvert = hasTriedAudioConvert,
+            hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert,
             hasTriedVideoAudioConvert = hasTriedVideoAudioConvert,
             extraDirToCleanup = extraDirToCleanup
         )
@@ -2166,6 +2227,7 @@ class EncodingForegroundService : Service() {
         hasTriedRemux: Boolean,
         extraDirToCleanup: File?,
         hasTriedAudioConvert: Boolean = false,
+        hasTriedVideoOnlyConvert: Boolean = false,
         hasTriedVideoAudioConvert: Boolean = false
     ) {
         EncodingJobController.markTurboEngineActive(true)
@@ -2196,7 +2258,12 @@ class EncodingForegroundService : Service() {
             // Upfront embedded Media3 1.11.1 + device MediaCodec compatibility diagnosis:
             // Immediately pinpoints container, audio, or video incompatibilities using already-probed
             // metadata and routes straight to the exact matching recovery step.
-            if (!hasTriedRemux && !hasTriedAudioConvert && !hasTriedVideoAudioConvert && compatReport.requiresImmediateRecovery) {
+            if (!hasTriedRemux &&
+                !hasTriedAudioConvert &&
+                !hasTriedVideoOnlyConvert &&
+                !hasTriedVideoAudioConvert &&
+                compatReport.requiresImmediateRecovery
+            ) {
                 val immediateStep = Media3CompatibilityAdvisor.resolveNextRecoveryStep(
                     report = compatReport,
                     hasAudio = media.hasAudio,
@@ -2204,10 +2271,12 @@ class EncodingForegroundService : Service() {
                     errorDetail = null,
                     hasTriedRemux = false,
                     hasTriedAudioConvert = false,
-                    hasTriedVideoAudioConvert = false
+                    hasTriedVideoAudioConvert = false,
+                    hasTriedVideoOnlyConvert = false
                 )
                 val immediateBody = when (immediateStep) {
                     TurboRecoveryStep.OFFER_AUDIO_CONVERT -> s.turboAudioConvertPromptBody(false)
+                    TurboRecoveryStep.OFFER_VIDEO_ONLY -> s.turboVideoOnlyPromptBody(media.hasAudio)
                     TurboRecoveryStep.OFFER_VIDEO_AND_AUDIO -> s.turboVideoAudioPromptBody(false)
                     else -> s.turboUnsupportedBody
                 }
@@ -2227,7 +2296,9 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = false,
+                        hasTriedVideoOnlyConvert = false,
                         hasTriedVideoAudioConvert = false
                     )
                 )
@@ -2407,7 +2478,8 @@ class EncodingForegroundService : Service() {
                     errorDetail = result.errorDetail,
                     hasTriedRemux = hasTriedRemux,
                     hasTriedAudioConvert = hasTriedAudioConvert,
-                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
+                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert,
+                    hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert
                 )
                 val detailSuffix = listOfNotNull(result.errorCodeName, result.errorDetail)
                     .filter { it.isNotBlank() }
@@ -2418,9 +2490,9 @@ class EncodingForegroundService : Service() {
                         if (detailSuffix.isNotBlank()) "${curS.turboAfterVideoAudioFailedBody}\n($detailSuffix)"
                         else curS.turboAfterVideoAudioFailedBody
                     }
-                    hasTriedAudioConvert -> {
-                        if (detailSuffix.isNotBlank()) "${curS.turboVideoAudioPromptBody(true)}\n($detailSuffix)"
-                        else curS.turboVideoAudioPromptBody(true)
+                    hasTriedVideoOnlyConvert || hasTriedAudioConvert -> {
+                        if (detailSuffix.isNotBlank()) "${curS.turboVideoAudioPromptBody(hasTriedAudioConvert)}\n($detailSuffix)"
+                        else curS.turboVideoAudioPromptBody(hasTriedAudioConvert)
                     }
                     hasTriedRemux -> {
                         if (detailSuffix.isNotBlank()) "${curS.turboAfterRemuxFailedBody}\n($detailSuffix)"
@@ -2434,7 +2506,7 @@ class EncodingForegroundService : Service() {
                 }
                 val hint = when {
                     isTenBitBlocked -> curS.turbo10BitNotPreservedHint
-                    hasTriedRemux || hasTriedAudioConvert || hasTriedVideoAudioConvert -> curS.turboAfterRemuxFastHint
+                    hasTriedRemux || hasTriedAudioConvert || hasTriedVideoOnlyConvert || hasTriedVideoAudioConvert -> curS.turboAfterRemuxFastHint
                     result.isUnsupportedFormat -> curS.turboUnsupportedHint
                     else -> curS.turboErrorGenericHint
                 }
@@ -2454,7 +2526,9 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,
+                        hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert,
                         hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
                     )
                 )
@@ -2470,7 +2544,8 @@ class EncodingForegroundService : Service() {
                     errorDetail = null,
                     hasTriedRemux = hasTriedRemux,
                     hasTriedAudioConvert = hasTriedAudioConvert,
-                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
+                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert,
+                    hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert
                 )
                 EncodingJobController.updateStateIfActive(
                     runId,
@@ -2487,7 +2562,9 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,
+                        hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert,
                         hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
                     )
                 )
@@ -2547,7 +2624,9 @@ class EncodingForegroundService : Service() {
                                 recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 isLosslessSourceAudio = media.isLosslessAudio,
+                                hasSourceAudio = media.hasAudio,
                                 hasTriedAudioConvert = hasTriedAudioConvert,
+                                hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert,
                                 hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
                             )
                         )
@@ -2622,7 +2701,8 @@ class EncodingForegroundService : Service() {
                     errorDetail = t.message,
                     hasTriedRemux = hasTriedRemux,
                     hasTriedAudioConvert = hasTriedAudioConvert,
-                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
+                    hasTriedVideoAudioConvert = hasTriedVideoAudioConvert,
+                    hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert
                 )
                 EncodingJobController.updateStateIfActive(
                     runId,
@@ -2639,7 +2719,9 @@ class EncodingForegroundService : Service() {
                         recommendedAudioBitrateKbps = compatReport.recommendedAudioBitrateKbps,
                         sourceAudioBitrateKbps = media.audioBitrateKbps,
                         isLosslessSourceAudio = media.isLosslessAudio,
+                        hasSourceAudio = media.hasAudio,
                         hasTriedAudioConvert = hasTriedAudioConvert,
+                        hasTriedVideoOnlyConvert = hasTriedVideoOnlyConvert,
                         hasTriedVideoAudioConvert = hasTriedVideoAudioConvert
                     )
                 )

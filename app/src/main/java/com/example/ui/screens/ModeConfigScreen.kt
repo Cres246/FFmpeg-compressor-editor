@@ -253,7 +253,9 @@ fun ModeConfigScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (pendingTurboContinuation != null && config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF) {
+            if (pendingTurboContinuation != null &&
+                (config.mode == ProcessingMode.VIDEO_ONLY_CRF || config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF)
+            ) {
                 item {
                     val targetTitle = pendingTurboContinuation.targetConfig.mode.localizedTitle(strings)
                     Surface(

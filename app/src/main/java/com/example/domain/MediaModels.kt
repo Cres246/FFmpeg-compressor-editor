@@ -379,6 +379,7 @@ enum class TurboRecoveryStep {
     NONE,
     OFFER_REMUX,
     OFFER_AUDIO_CONVERT,
+    OFFER_VIDEO_ONLY,
     OFFER_VIDEO_AND_AUDIO,
     EXHAUSTED
 }
@@ -435,7 +436,9 @@ sealed interface EncodingState {
         val recommendedAudioBitrateKbps: Int = 256,
         val sourceAudioBitrateKbps: Int? = null,
         val isLosslessSourceAudio: Boolean = false,
+        val hasSourceAudio: Boolean = true,
         val hasTriedAudioConvert: Boolean = false,
+        val hasTriedVideoOnlyConvert: Boolean = false,
         val hasTriedVideoAudioConvert: Boolean = false
     ) : EncodingState
 }

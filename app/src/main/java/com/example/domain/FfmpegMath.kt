@@ -1135,10 +1135,16 @@ object FfmpegMath {
             ProcessingMode.VIDEO_ONLY_CRF -> {
                 val vf = buildScaleFilter(media.width, media.height, ResolutionOption.ORIGINAL, media.needsEvenScale)
                 val args = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                args.addAll(listOf("-map", "0:v:0"))
+                if (media.hasAudio) {
+                    args.addAll(listOf("-map", "0:a:0?"))
+                }
                 vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                 args.addAll(
                     listOf(
                         "-sn", "-dn",
+                        // Keep exact original video frame PTS so -c:a copy never drifts on VFR clips
+                        "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
                         "-threads", "0",
                         "-preset", preset,
@@ -1147,8 +1153,25 @@ object FfmpegMath {
                     )
                 )
                 addH265CrfArgs(args)
-                if (!media.hasAudio) args.add("-an") else args.addAll(listOf("-c:a", "copy"))
-                args.addAll(listOf("-movflags", "+faststart", outputPath))
+                if (!media.hasAudio) {
+                    args.add("-an")
+                } else {
+                    args.addAll(listOf("-c:a", "copy"))
+                    val ext = media.extension.lowercase(Locale.US)
+                    if (media.audioCodec.equals("aac", ignoreCase = true) &&
+                        ext in setOf("ts", "m2ts", "mts", "flv", "aac")
+                    ) {
+                        args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
+                    }
+                }
+                args.addAll(
+                    listOf(
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        outputPath
+                    )
+                )
                 listOf(
                     FfmpegStepSpec(
                         strings.stepVideoOnly(codec.tag, config.bitDepth.tag, codec.crf, preset),
@@ -1161,10 +1184,15 @@ object FfmpegMath {
             ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
                 val vf = buildScaleFilter(media.width, media.height, ResolutionOption.ORIGINAL, media.needsEvenScale)
                 val args = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                args.addAll(listOf("-map", "0:v:0"))
+                if (media.hasAudio) {
+                    args.addAll(listOf("-map", "0:a:0?"))
+                }
                 vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                 args.addAll(
                     listOf(
                         "-sn", "-dn",
+                        "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
                         "-threads", "0",
                         "-preset", preset,
@@ -1179,7 +1207,14 @@ object FfmpegMath {
                     val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                     args.addAll(listOf("-c:a", "aac", "-b:a", "${ab}k"))
                 }
-                args.addAll(listOf("-movflags", "+faststart", outputPath))
+                args.addAll(
+                    listOf(
+                        "-avoid_negative_ts", "make_zero",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        outputPath
+                    )
+                )
                 listOf(
                     FfmpegStepSpec(
                         "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} + AAC",

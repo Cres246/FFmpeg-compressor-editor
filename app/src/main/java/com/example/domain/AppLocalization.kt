@@ -473,6 +473,12 @@ interface AppStrings {
     val turboVideoAudioPrepBannerTitle: String
     val turboVideoAudioPrepBannerBody: (targetModeTitle: String) -> String
     val turboVideoAudioPrepModeTitle: String
+    val turboVideoOnlyPromptTitle: String
+    val turboVideoOnlyPromptBody: (hasAudio: Boolean) -> String
+    val turboVideoOnlyPromptYes: String
+    val turboTryVideoOnlyButton: String
+    val turboVideoOnlyPrepModeTitle: String
+    val turboDiagVideoOnlyIncompatible: (vCodec: String, aCodec: String?) -> String
     val turboAfterVideoAudioFailedTitle: String
     val turboAfterVideoAudioFailedBody: String
 }
@@ -852,6 +858,24 @@ object TurkishStrings : AppStrings {
         "Bu dönüştürme bittiğinde otomatik olarak Turbo (MediaCodec) hız göstergesine dönülecek ve «$target» işlemi bu uyumlu dosya üzerinde çalıştırılacak."
     }
     override val turboVideoAudioPrepModeTitle = "Görüntü + Ses Hazırla → Turbo"
+    override val turboVideoOnlyPromptTitle = "Sadece Görüntüyü Dönüştürmek Yeterli"
+    override val turboVideoOnlyPromptBody: (Boolean) -> String = { hasAudio ->
+        if (hasAudio) {
+            "Bu dosyanın ses akışı zaten Media3 ile uyumlu; sesi boş yere yeniden kodlamaya gerek yok.\n\nSadece Görüntüyü Dönüştür ekranına geçip sesi %100 kayıpsız kopyalayarak (-c:a copy · senkron korumalı) yalnızca görüntüyü uyumlu hâle getirelim mi? Bitince otomatik olarak hız göstergesi ekranına dönüp asıl işleminiz denenecek."
+        } else {
+            "Bu dosyanın görüntü akışı cihazdaki Media3 / MediaCodec donanım motoruyla uyumlu değil.\n\nSadece Görüntüyü Dönüştür ekranında görüntüyü uyumlu hâle getirelim mi? Kodlama bitince otomatik olarak hız göstergesi ekranına dönüp asıl işleminiz denenecek."
+        }
+    }
+    override val turboVideoOnlyPromptYes = "Sadece Görüntüyü Dönüştür"
+    override val turboTryVideoOnlyButton = "Sadece Görüntüyü Dönüştür → Turbo"
+    override val turboVideoOnlyPrepModeTitle = "Görüntü Hazırla → Turbo"
+    override val turboDiagVideoOnlyIncompatible: (String, String?) -> String = { v, a ->
+        if (!a.isNullOrBlank()) {
+            "Tespit: Görüntü akışı ($v) uyumsuz, ancak ses ($a) uyumlu. Sesi yeniden kodlamadan yalnızca görüntü dönüştürülebilir."
+        } else {
+            "Tespit: Görüntü akışı ($v) Media3 / MediaCodec donanım motoruyla uyumlu değil."
+        }
+    }
     override val turboAfterVideoAudioFailedTitle = "Donanım Motoru Bu Dosyada Başarısız Oldu"
     override val turboAfterVideoAudioFailedBody = "Görüntü ve ses uyumlu biçime dönüştürüldü ancak cihazdaki MediaCodec donanım kodlayıcısı yine de işlemi tamamlayamadı.\n\nDoğrudan FFmpeg yazılım motoruyla sorunsuz devam edebilirsiniz."
 }
@@ -1233,6 +1257,24 @@ object EnglishStrings : AppStrings {
         "When this conversion finishes, you'll automatically return to the Turbo (MediaCodec) speedometer to run «$target» on the prepared file."
     }
     override val turboVideoAudioPrepModeTitle = "Prepare Video + Audio → Turbo"
+    override val turboVideoOnlyPromptTitle = "Convert Video Only"
+    override val turboVideoOnlyPromptBody: (Boolean) -> String = { hasAudio ->
+        if (hasAudio) {
+            "This file's audio stream is already compatible with Media3 — no need to re-encode audio.\n\nOpen Re-encode Video Only to keep audio 100% lossless (-c:a copy · sync-locked) and convert only the video? Once finished, you'll automatically return to the speedometer to run your original target."
+        } else {
+            "This file's video stream is incompatible with Media3 / MediaCodec.\n\nOpen Re-encode Video Only to prepare a compatible stream? Once finished, you'll automatically return to the speedometer to run your original target."
+        }
+    }
+    override val turboVideoOnlyPromptYes = "Open Video Only"
+    override val turboTryVideoOnlyButton = "Convert Video Only → Turbo"
+    override val turboVideoOnlyPrepModeTitle = "Prepare Video → Turbo"
+    override val turboDiagVideoOnlyIncompatible: (String, String?) -> String = { v, a ->
+        if (!a.isNullOrBlank()) {
+            "Detected: Video stream ($v) is incompatible, while audio ($a) is already compatible. Only video needs converting (audio stays lossless)."
+        } else {
+            "Detected: Video stream ($v) is incompatible with the Media3 / MediaCodec hardware engine."
+        }
+    }
     override val turboAfterVideoAudioFailedTitle = "Hardware Engine Failed on Prepared File"
     override val turboAfterVideoAudioFailedBody = "Video and audio were converted to a compatible format, yet the device's MediaCodec hardware encoder still could not complete the job.\n\nYou can continue reliably with the FFmpeg software engine."
 }
