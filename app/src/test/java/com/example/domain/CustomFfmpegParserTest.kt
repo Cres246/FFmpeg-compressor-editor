@@ -221,4 +221,249 @@ class CustomFfmpegParserTest {
         assertTrue(previewPlan.adaptations.autoConfiguredTwoPassLogs)
         assertTrue(previewPlan.steps[0].args.contains("custom"))
     }
+
+    @Test
+    fun extractsInlineBacktickCommandFromProse() {
+        val paste = "Videoyu küçültmek için `ffmpeg -i video.mp4 -c:v libx264 -crf 25 kucuk.mp4` komutunu çalıştırabilirsin."
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.adaptations.strippedMarkdownOrProse)
+        assertEquals("kucuk.mp4", plan.primaryFinalOutputName)
+        assertEquals("/cache/work/kucuk.mp4", plan.steps[0].args.last())
+    }
+
+    @Test
+    fun skipsNonFfmpegInstallCodeBlockAndPicksFfmpegBlock() {
+        val paste = """
+            Önce FFmpeg kur:
+            ```bash
+            brew install ffmpeg
+            ```
+            Sonra dönüştür:
+            ~~~bash
+            ffmpeg -i input.mp4 -c:v libx264 -crf 22 sonuc.mp4
+            ~~~
+        """.trimIndent()
+
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.adaptations.strippedMarkdownOrProse)
+        assertEquals("sonuc.mp4", plan.primaryFinalOutputName)
+        assertFalse(plan.steps[0].args.contains("brew"))
+    }
+
+    @Test
+    fun adaptsDesktopNvencCudaAndFdkAacCommandToAndroidGpl() {
+        val paste = """
+            ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 \
+              -vf "hwupload_cuda,scale_cuda=1280:-2,hwdownload" \
+              -c:v h264_nvenc -preset p5 -rc vbr -cq 22 -spatial-aq 1 \
+              -c:a libfdk_aac -vbr 4 output.mp4
+        """.trimIndent()
+
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.adaptations.adaptedDesktopCodecCount > 0)
+        val args = plan.steps[0].args
+        assertFalse(args.contains("-hwaccel"))
+        assertFalse(args.contains("-hwaccel_output_format"))
+        assertFalse(args.contains("-rc"))
+        assertFalse(args.contains("-spatial-aq"))
+        assertFalse(args.contains("-cq"))
+        assertFalse(args.contains("-vbr"))
+        assertTrue(args.contains("libx264"))
+        assertTrue(args.contains("slow"))
+        assertTrue(args.contains("-crf"))
+        assertTrue(args.contains("22"))
+        assertTrue(args.contains("scale=1280:-2"))
+        assertTrue(args.contains("aac"))
+        assertTrue(args.contains("192k"))
+        assertEquals("/cache/work/output.mp4", args.last())
+    }
+
+    @Test
+    fun repairsMobileKeyboardSpacesCasingDoubleDashEqualsTurkishCommasAndUnits() {
+        val paste = "\u200BFFmpeg - I input.mp4 --C: v libx264 -CRF=23,5 -Preset=fast -fps 29,97 -b: a 128 kbps -ss 00: 00: 05,5 -faststart out.mp4."
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.adaptations.fixedSyntaxOrTyposCount > 0)
+        val args = plan.steps[0].args
+        assertTrue(args.contains("-i"))
+        assertTrue(args.contains("saf_1"))
+        assertTrue(args.contains("-c:v"))
+        assertTrue(args.contains("libx264"))
+        assertTrue(args.contains("-crf"))
+        assertTrue(args.contains("23.5"))
+        assertTrue(args.contains("-preset"))
+        assertTrue(args.contains("fast"))
+        assertTrue(args.contains("-r"))
+        assertTrue(args.contains("29.97"))
+        assertTrue(args.contains("-b:a"))
+        assertTrue(args.contains("128k"))
+        assertTrue(args.contains("-ss"))
+        assertTrue(args.contains("00:00:05.5"))
+        assertTrue(args.contains("-movflags"))
+        assertTrue(args.contains("+faststart"))
+        assertEquals("/cache/work/out.mp4", args.last())
+        assertEquals(54.5, plan.steps[0].expectedDurationSec ?: -1.0, 0.05)
+    }
+
+    @Test
+    fun handlesOmittedInputFlagUnquotedSpacesAndUnquotedFilterCommas() {
+        val paste = "ffmpeg my raw video.mp4 -vf scale=1280:-2, fps=30 -c:v x264 -o yeni sonuc.mp4"
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        assertEquals(listOf("-y", "-i", "saf_1", "-vf", "scale=1280:-2,fps=30", "-c:v", "libx264", "/cache/work/yeni sonuc.mp4"), args)
+        assertEquals("yeni sonuc.mp4", plan.primaryFinalOutputName)
+    }
+
+    @Test
+    fun recoversFromMissingFilenameAfterInputFlagAndUnclosedQuote() {
+        val paste = """ffmpeg -i -vf "scale=720:-2,fps=30 -c:v libx264 -crf 24 out.mp4"""
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        assertEquals(listOf("-y", "-i", "saf_1", "-vf", "scale=720:-2,fps=30", "-c:v", "libx264", "-crf", "24", "/cache/work/out.mp4"), args)
+    }
+
+    @Test
+    fun parsesBashForLoopWithFilenameStemExpansion() {
+        val paste = """for f in *.mp4; do ffmpeg -i "${'$'}f" -c:v libx264 -crf 23 "${'$'}{f%.*}_small.mp4"; done"""
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertEquals("VID_20261123_194200_small.mp4", plan.primaryFinalOutputName)
+        assertEquals("/cache/work/VID_20261123_194200_small.mp4", plan.steps[0].args.last())
+    }
+
+    @Test
+    fun preservesNegativeStreamSpecifiersAndSseofValues() {
+        val paste = "ffmpeg -sseof -00:00:10 -i input.mp4 -map 0 -map -0:s? -map -0:a -c:v copy clip.mp4"
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        val sseofIdx = args.indexOf("-sseof")
+        assertEquals("-00:00:10", args[sseofIdx + 1])
+        assertTrue(args.contains("-0:s?"))
+        assertTrue(args.contains("-0:a"))
+        assertEquals("/cache/work/clip.mp4", args.last())
+    }
+
+    @Test
+    fun preservesUnquotedFilterComplexSemicolon() {
+        val paste = "ffmpeg -i in.mp4 -filter_complex [0:v]fps=15,scale=480:-1[x];[x]split[a][b];[a]palettegen[p];[b][p]paletteuse out.gif"
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        val fcIdx = args.indexOf("-filter_complex")
+        assertEquals("[0:v]fps=15,scale=480:-1[x];[x]split[a][b];[a]palettegen[p];[b][p]paletteuse", args[fcIdx + 1])
+        assertEquals("/cache/work/out.gif", args.last())
+    }
+
+    @Test
+    fun injectsMissingNullMuxerBeforeDevNullAndSmartExtensionForAudio() {
+        val paste = """
+            ffmpeg -i input.mp4 -c:v libx264 -b:v 1500k -pass 1 -an /dev/null
+            ffmpeg -i input.mp4 -vn -c:a mp3 -b:a 320kbps
+        """.trimIndent()
+
+        var idx = 0
+        val plan = buildSamplePlan(paste) { "saf_${++idx}" }
+
+        assertEquals(2, plan.steps.size)
+        val s1 = plan.steps[0].args
+        assertTrue(s1.contains("-f"))
+        assertEquals("null", s1[s1.indexOf("-f") + 1])
+        assertEquals("/dev/null", s1.last())
+
+        val s2 = plan.steps[1].args
+        assertTrue(s2.contains("libmp3lame"))
+        assertTrue(s2.contains("320k"))
+        assertEquals("/cache/work/cikti.mp3", s2.last())
+    }
+
+    @Test
+    fun repairsMissingOutputExtensionAndUnresolvedOutputVariable() {
+        val planNoExt = buildSamplePlan("ffmpeg -i in.mp4 -c:v libx264 -crf 23 sonuc") { "saf_1" }
+        assertEquals("/cache/work/sonuc.mp4", planNoExt.steps[0].args.last())
+
+        val planUnresolvedVar = buildSamplePlan("""ffmpeg -i "${'$'}INPUT" -c:v libx264 -crf 23 "${'$'}OUTPUT"""") { "saf_1" }
+        assertEquals("/cache/work/cikti.mp4", planUnresolvedVar.steps[0].args.last())
+    }
+
+    @Test
+    fun stripsAiMobileCopyChromeProsePrefixAndBlankLineInsideContinuation() {
+        val paste = """
+            bash
+            Copy code
+            1. Adım: **ffmpeg** -i clip.mp4 \
+
+              -c:v libx265 \
+              -crf 24 \
+              result.mp4 // sıkıştırılmış video
+        """.trimIndent()
+
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.adaptations.strippedMarkdownOrProse)
+        assertTrue(plan.adaptations.joinedMultiline)
+        val args = plan.steps[0].args
+        assertTrue(args.contains("libx265"))
+        assertTrue(args.contains("24"))
+        assertEquals("/cache/work/result.mp4", args.last())
+    }
+
+    @Test
+    fun parsesWindowsQuotedSetVariablesPowerShellAndDuplicateFfmpegPrefix() {
+        val paste = """
+            set "BIT=2,5 mbps"
+            PS C:\Users\Ali> & ffmpeg ffmpeg -i video.mp4 -c:v h265 -b:v %BIT% "%~n1_h265.mp4"
+        """.trimIndent()
+
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        assertTrue(args.contains("libx265"))
+        assertTrue(args.contains("2.5M"))
+        assertEquals("/cache/work/VID_20261123_194200_h265.mp4", args.last())
+    }
+
+    @Test
+    fun preservesExplicitNegativeMovflagsAndZeroArgFlagsWithoutSwallowingOutput() {
+        val paste = "ffmpeg -i input.mp4 -c copy -movflags -faststart -sn -dn -y clean.mp4"
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        val mfIdx = args.indexOf("-movflags")
+        assertEquals("-faststart", args[mfIdx + 1])
+        assertEquals("/cache/work/clean.mp4", args.last())
+    }
+
+    @Test
+    fun handlesUnquotedWindowsPathsGluedQuotesAndStrayCommas() {
+        val paste = """ffmpeg -i"C:\Users\Ali\clip.mp4" -vf"scale=720:-2" -crf 23, -r 30, C:\Users\Ali\Desktop\final_win.mp4"""
+        val plan = buildSamplePlan(paste) { "saf_1" }
+
+        assertEquals(1, plan.steps.size)
+        val args = plan.steps[0].args
+        assertTrue(args.contains("-i"))
+        assertTrue(args.contains("saf_1"))
+        assertTrue(args.contains("scale=720:-2"))
+        assertEquals("23", args[args.indexOf("-crf") + 1])
+        assertEquals("30", args[args.indexOf("-r") + 1])
+        assertEquals("/cache/work/final_win.mp4", args.last())
+        assertEquals("final_win.mp4", plan.primaryFinalOutputName)
+    }
 }

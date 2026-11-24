@@ -899,6 +899,8 @@ private fun CustomCommandSection(
                     if (adapt.strippedMarkdownOrProse) add(strings.customCmdBadgeMarkdownCleaned)
                     if (adapt.mappedWindowsNull) add(strings.customCmdBadgeWindowsNullFixed)
                     if (adapt.autoAddedOutputFileName != null) add(strings.customCmdBadgeOutputAutoAdded)
+                    if (adapt.fixedSyntaxOrTyposCount > 0) add(strings.customCmdBadgeSyntaxFixed)
+                    if (adapt.adaptedDesktopCodecCount > 0) add(strings.customCmdBadgeAndroidCodecAdapted)
                 }
 
                 FlowRow(

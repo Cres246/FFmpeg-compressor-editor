@@ -1750,9 +1750,13 @@ class EncodingForegroundService : Service() {
             val isTempPassArtifact = n.endsWith(".log") ||
                 n.endsWith(".log.temp") ||
                 n.endsWith(".log.mbtree") ||
+                n.endsWith(".log.mbtree.temp") ||
                 n.endsWith(".log.cutree") ||
+                n.endsWith(".log.cutree.temp") ||
                 n.endsWith(".cutree") ||
+                n.endsWith(".cutree.temp") ||
                 n.endsWith(".mbtree") ||
+                n.endsWith(".mbtree.temp") ||
                 n.startsWith("ffmpeg2pass") ||
                 n.startsWith("x265_2pass") ||
                 n == "nul"

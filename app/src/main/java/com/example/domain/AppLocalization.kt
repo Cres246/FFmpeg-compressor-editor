@@ -315,6 +315,8 @@ interface AppStrings {
     val customCmdBadgeMarkdownCleaned: String
     val customCmdBadgeWindowsNullFixed: String
     val customCmdBadgeOutputAutoAdded: String
+    val customCmdBadgeSyntaxFixed: String
+    val customCmdBadgeAndroidCodecAdapted: String
     val customCmdNoValidCommandWarning: String
 
     // Processing screen
@@ -649,6 +651,8 @@ object TurkishStrings : AppStrings {
     override val customCmdBadgeMarkdownCleaned = "Kod bloğu / açıklamalar temizlendi"
     override val customCmdBadgeWindowsNullFixed = "NUL → /dev/null"
     override val customCmdBadgeOutputAutoAdded = "Çıktı adı otomatik eklendi"
+    override val customCmdBadgeSyntaxFixed = "Yazım / boşluk düzeltildi"
+    override val customCmdBadgeAndroidCodecAdapted = "Android kodeğine uyarlandı"
     override val customCmdNoValidCommandWarning = "Metinde çalıştırılabilir FFmpeg komutu bulunamadı."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "GEÇİŞ $p/$t" }
@@ -978,6 +982,8 @@ object EnglishStrings : AppStrings {
     override val customCmdBadgeMarkdownCleaned = "Markdown / prose cleaned"
     override val customCmdBadgeWindowsNullFixed = "NUL → /dev/null"
     override val customCmdBadgeOutputAutoAdded = "Output filename auto-added"
+    override val customCmdBadgeSyntaxFixed = "Syntax / spacing auto-fixed"
+    override val customCmdBadgeAndroidCodecAdapted = "Adapted to Android codec"
     override val customCmdNoValidCommandWarning = "No runnable FFmpeg command found in this text."
 
     override val passBadge: (Int, Int) -> String = { p, t -> "PASS $p/$t" }
