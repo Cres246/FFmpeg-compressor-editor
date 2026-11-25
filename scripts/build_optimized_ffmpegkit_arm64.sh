@@ -232,23 +232,155 @@ add_first_supported "--enable-lib-zimg" "--enable-zimg" "--enable-libzimg" || tr
 
 echo "[flags] Final build flags (${#BUILD_FLAGS[@]}): ${BUILD_FLAGS[*]}"
 
+# Proactively ensure host Android SDK licenses & required compileSdk/buildTools exist
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+if [[ -d "${ANDROID_SDK_ROOT}" ]]; then
+  echo "[sdk] Host ANDROID_SDK_ROOT = ${ANDROID_SDK_ROOT}"
+  SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+  if [[ -x "${SDKMANAGER}" ]]; then
+    yes | "${SDKMANAGER}" --licenses >/dev/null 2>&1 || true
+    REQ_SDK_PKGS="$(python3 - "${WORK_DIR}/ffmpeg-kit-next/android" <<'PYEOF'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+if not root.is_dir():
+    sys.exit(0)
+pkgs = set()
+for f in root.rglob("build.gradle*"):
+    text = f.read_text(encoding="utf-8", errors="replace")
+    for m in re.finditer(r"compileSdk(?:Version)?\s*[= ]+\s*(\d+)", text):
+        pkgs.add(f"platforms;android-{m.group(1)}")
+    for m in re.finditer(r'buildToolsVersion\s*[= ]+\s*["\']([0-9.]+)["\']', text):
+        pkgs.add(f"build-tools;{m.group(1)}")
+for p in sorted(pkgs):
+    print(p)
+PYEOF
+)"
+    if [[ -n "${REQ_SDK_PKGS}" ]]; then
+      while IFS= read -r pkg; do
+        [[ -z "${pkg}" ]] && continue
+        pkg_rel="${pkg//;//}"
+        if [[ ! -d "${ANDROID_SDK_ROOT}/${pkg_rel}" ]]; then
+          echo "[sdk] Installing missing Android SDK component: ${pkg}"
+          yes | "${SDKMANAGER}" "${pkg}" >/dev/null || true
+        fi
+      done <<< "${REQ_SDK_PKGS}"
+    fi
+  fi
+fi
+
+set +e
 if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
   echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} -- ${BUILD_FLAGS[*]}"
   ./nix-android.sh -p "${NIX_PROFILE}" -- "${BUILD_FLAGS[@]}"
+  BUILD_RC=$?
 else
   echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} ${BUILD_FLAGS[*]}"
   ./nix-android.sh -p "${NIX_PROFILE}" "${BUILD_FLAGS[@]}"
+  BUILD_RC=$?
+fi
+set -e
+
+if (( BUILD_RC != 0 )); then
+  echo "==================================================================" >&2
+  echo " [warn] ./nix-android.sh exited with code ${BUILD_RC}." >&2
+  if [[ -f "${WORK_DIR}/ffmpeg-kit-next/build.log" ]]; then
+    echo " === build.log (last 120 lines) ===" >&2
+    tail -n 120 "${WORK_DIR}/ffmpeg-kit-next/build.log" >&2 || true
+  fi
+  echo "==================================================================" >&2
+
+  # Check if all native arm64-v8a .so libraries actually compiled 100% and only Gradle AAR
+  # archiving inside the Nix shell failed (common due to read-only /nix/store SDK, aapt2, or JDK).
+  BUILT_FFMPEGKIT_SO="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android" \
+    -type f -name 'libffmpegkit.so' 2>/dev/null | head -n 1 || true)"
+  BUILT_AVCODEC_SO="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android" \
+    -type f -name 'libavcodec.so' 2>/dev/null | head -n 1 || true)"
+
+  if [[ -z "${BUILT_FFMPEGKIT_SO}" ]] || [[ -z "${BUILT_AVCODEC_SO}" ]]; then
+    echo "[error] Native arm64-v8a libraries did not finish compiling; aborting." >&2
+    exit "${BUILD_RC}"
+  fi
+
+  echo "[aar-recovery] Native libraries compiled 100%:"
+  echo "  - ${BUILT_FFMPEGKIT_SO}"
+  echo "  - ${BUILT_AVCODEC_SO}"
+  echo "[aar-recovery] Retrying Gradle AAR packaging outside Nix using host Android SDK..."
+
+  ANDROID_GRADLE_DIR="${WORK_DIR}/ffmpeg-kit-next/android"
+  if [[ ! -d "${ANDROID_GRADLE_DIR}" ]]; then
+    echo "[error] Expected Gradle directory not found at ${ANDROID_GRADLE_DIR}" >&2
+    exit "${BUILD_RC}"
+  fi
+
+  # Ensure arm64-v8a .so files are present inside the library module's jniLibs/libs directory
+  ANDROID_EXISTING_SO="$(find "${ANDROID_GRADLE_DIR}" -type f -name 'libffmpegkit.so' 2>/dev/null | head -n 1 || true)"
+  if [[ -z "${ANDROID_EXISTING_SO}" ]]; then
+    LIB_MOD_DIR="$(find "${ANDROID_GRADLE_DIR}" -maxdepth 2 -type d -name 'ffmpeg-kit*lib*' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${LIB_MOD_DIR}" ]]; then
+      TARGET_JNI_DIR="${LIB_MOD_DIR}/src/main/jniLibs/arm64-v8a"
+      if [[ -d "${ANDROID_GRADLE_DIR}/libs" ]] || grep -q '\.\./libs' "${LIB_MOD_DIR}/build.gradle"* 2>/dev/null; then
+        TARGET_JNI_DIR="${ANDROID_GRADLE_DIR}/libs/arm64-v8a"
+      fi
+      mkdir -p "${TARGET_JNI_DIR}"
+      echo "[aar-recovery] Staging compiled arm64-v8a .so files into ${TARGET_JNI_DIR}..."
+      find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" -type f -name '*.so' -exec cp -f {} "${TARGET_JNI_DIR}/" \;
+    fi
+  fi
+
+  printf 'sdk.dir=%s\n' "${ANDROID_SDK_ROOT}" > "${ANDROID_GRADLE_DIR}/local.properties"
+
+  # Try host JAVA_HOME first, then fallback to JDK 17 / JDK 11 if upstream Gradle wrapper needs older JDK
+  JDK_CANDIDATES=()
+  [[ -n "${JAVA_HOME:-}" ]] && JDK_CANDIDATES+=("${JAVA_HOME}")
+  [[ -n "${JAVA_HOME_17_X64:-}" ]] && JDK_CANDIDATES+=("${JAVA_HOME_17_X64}")
+  [[ -d "/usr/lib/jvm/temurin-17-jdk-amd64" ]] && JDK_CANDIDATES+=("/usr/lib/jvm/temurin-17-jdk-amd64")
+  [[ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]] && JDK_CANDIDATES+=("/usr/lib/jvm/java-17-openjdk-amd64")
+  [[ -n "${JAVA_HOME_21_X64:-}" ]] && JDK_CANDIDATES+=("${JAVA_HOME_21_X64}")
+
+  GRADLE_OK="false"
+  pushd "${ANDROID_GRADLE_DIR}" >/dev/null
+  [[ -f "./gradlew" ]] && chmod +x ./gradlew
+  for candidate_jdk in "${JDK_CANDIDATES[@]}"; do
+    [[ ! -d "${candidate_jdk}" ]] && continue
+    echo "[aar-recovery] Running Gradle assembleRelease with JAVA_HOME=${candidate_jdk}..."
+    set +e
+    if [[ -x "./gradlew" ]]; then
+      JAVA_HOME="${candidate_jdk}" PATH="${candidate_jdk}/bin:${PATH}" \
+        ./gradlew assembleRelease --no-daemon --stacktrace
+      G_RC=$?
+    else
+      JAVA_HOME="${candidate_jdk}" PATH="${candidate_jdk}/bin:${PATH}" \
+        gradle assembleRelease --no-daemon --stacktrace
+      G_RC=$?
+    fi
+    set -e
+    if (( G_RC == 0 )); then
+      GRADLE_OK="true"
+      break
+    fi
+    echo "[aar-recovery] Gradle failed with JAVA_HOME=${candidate_jdk} (rc=${G_RC}); trying next JDK if available..." >&2
+  done
+  popd >/dev/null
+
+  if [[ "${GRADLE_OK}" != "true" ]]; then
+    echo "[error] Both Nix archive step and host-SDK Gradle AAR packaging failed!" >&2
+    exit 1
+  fi
 fi
 
-# 6. Locate produced AAR (prefer prebuilt/bundle-android-aar)
+# 6. Locate produced AAR (prefer prebuilt/bundle-android-aar, then release AAR under android/)
 BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" -maxdepth 5 -type f -name '*.aar' 2>/dev/null | head -n 1 || true)"
+if [[ -z "${BUILT_AAR}" ]]; then
+  BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit-next/android" -maxdepth 6 -type f -name '*-release.aar' ! -name '*test*' 2>/dev/null | head -n 1 || true)"
+fi
 if [[ -z "${BUILT_AAR}" ]]; then
   BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit-next/android" -maxdepth 6 -type f -name '*.aar' ! -name '*test*' 2>/dev/null | head -n 1 || true)"
 fi
 
 if [[ -z "${BUILT_AAR}" ]] || [[ ! -f "${BUILT_AAR}" ]]; then
   echo "[error] FFmpegKit Next build finished but no .aar artifact was found!" >&2
-  find "${WORK_DIR}/ffmpeg-kit-next" -maxdepth 4 -name '*.aar' 2>/dev/null || true
+  find "${WORK_DIR}/ffmpeg-kit-next" -maxdepth 6 -name '*.aar' 2>/dev/null || true
   exit 1
 fi
 
@@ -275,6 +407,8 @@ for req_class in \
   "com/arthenica/ffmpegkit/StreamInformation.class"; do
   if ! grep -qF "${req_class}" <<< "${CLASSES_LIST}"; then
     echo "[error] classes.jar is missing required API class: ${req_class}!" >&2
+    echo "[debug] Sample classes in classes.jar:" >&2
+    grep -E '\.class$' <<< "${CLASSES_LIST}" | head -n 30 >&2 || true
     exit 1
   fi
 done
