@@ -552,6 +552,19 @@ class EncodingForegroundService : Service() {
             runCatching { context.startService(intent) }
         }
 
+        private fun formatCompactDimension(width: Int, height: Int): String {
+            val longEdge = maxOf(width, height)
+            val shortEdge = minOf(width, height)
+            return when {
+                longEdge == 3840 && shortEdge == 2160 -> "4K"
+                longEdge == 2560 && shortEdge == 1440 -> "1440p"
+                longEdge == 1920 && shortEdge == 1080 -> "1080p"
+                longEdge == 1280 && shortEdge == 720 -> "720p"
+                longEdge in 848..854 && shortEdge == 480 -> "480p"
+                else -> "${width}×${height}"
+            }
+        }
+
         internal fun formatCompactVideoSpecsParts(
             media: MediaInfo,
             config: ModeConfigState,
@@ -582,26 +595,26 @@ class EncodingForegroundService : Service() {
                 }
                 isTurbo -> {
                     val (outW, outH) = Media3TurboEngine.resolveTargetDimensions(media, config, displayDimsOverride)
-                    "${outW}×${outH}"
+                    formatCompactDimension(outW, outH)
                 }
-                media.width != null && media.height != null -> "${media.width}×${media.height}"
+                media.width != null && media.height != null -> formatCompactDimension(media.width, media.height)
                 else -> null
             }
 
             val fpsPart = when {
-                supportsFpsAndRes && config.fps == com.example.domain.FpsOption.FPS_30 -> "30 FPS"
+                supportsFpsAndRes && config.fps == com.example.domain.FpsOption.FPS_30 -> "30fps"
                 media.fps != null -> {
                     val rounded = kotlin.math.round(media.fps)
-                    if (kotlin.math.abs(media.fps - rounded) < 0.08) "${rounded.toInt()} FPS"
-                    else "${String.format(java.util.Locale.US, "%.2f", media.fps).trimEnd('0').trimEnd('.')} FPS"
+                    if (kotlin.math.abs(media.fps - rounded) < 0.08) "${rounded.toInt()}fps"
+                    else "${String.format(java.util.Locale.US, "%.2f", media.fps).trimEnd('0').trimEnd('.')}fps"
                 }
                 else -> null
             }
 
             val bitPart = if (isVideoReencode) {
-                if (config.bitDepth == com.example.domain.BitDepthOption.BIT_10) "10b" else "8b"
+                if (config.bitDepth == com.example.domain.BitDepthOption.BIT_10) "10bit" else "8bit"
             } else {
-                media.bitShort.ifBlank { "8b" }
+                media.bitShort.ifBlank { "8bit" }
             }
 
             return listOfNotNull(resPart, fpsPart, bitPart)
@@ -609,7 +622,7 @@ class EncodingForegroundService : Service() {
 
         /**
          * Unified Turbo strip format:
-         * <20MB · H264 635k · AAC · 1080p · 30 FPS · 8b
+         * <20MB · H264 635k · AAC · 1080p · 30fps · 8bit
          */
         internal fun buildTurboUnifiedSpecs(
             media: MediaInfo,

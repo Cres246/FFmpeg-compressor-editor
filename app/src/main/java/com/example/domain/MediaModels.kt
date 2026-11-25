@@ -38,10 +38,10 @@ data class MediaInfo(
 
     val bitShort: String
         get() = when {
-            pixFmt?.contains("10") == true -> "10b"
-            pixFmt?.contains("12") == true -> "12b"
-            !pixFmt.isNullOrBlank() -> "8b"
-            videoProfile?.contains("10") == true -> "10b"
+            pixFmt?.contains("10") == true -> "10bit"
+            pixFmt?.contains("12") == true -> "12bit"
+            !pixFmt.isNullOrBlank() -> "8bit"
+            videoProfile?.contains("10") == true -> "10bit"
             else -> ""
         }
 

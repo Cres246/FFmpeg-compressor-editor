@@ -383,6 +383,7 @@ fun ModeConfigScreen(
                                 onBitrateChange = viewModel::updateAudioBitrate,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 sourceAudioCodec = media.audioCodec,
+                                sourceAudioChannels = media.audioChannels,
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }
@@ -456,6 +457,7 @@ fun ModeConfigScreen(
                                 onBitrateChange = viewModel::updateAudioBitrate,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 sourceAudioCodec = media.audioCodec,
+                                sourceAudioChannels = media.audioChannels,
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }
@@ -516,6 +518,7 @@ fun ModeConfigScreen(
                             onBitrateChange = viewModel::updateAudioBitrate,
                             sourceAudioBitrateKbps = media.audioBitrateKbps,
                             sourceAudioCodec = media.audioCodec,
+                            sourceAudioChannels = media.audioChannels,
                             isLosslessSource = media.isLosslessAudio
                         )
                     }
@@ -579,6 +582,7 @@ fun ModeConfigScreen(
                                 onBitrateChange = viewModel::updateAudioBitrate,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 sourceAudioCodec = media.audioCodec,
+                                sourceAudioChannels = media.audioChannels,
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }
@@ -615,6 +619,7 @@ fun ModeConfigScreen(
                                 maxKbps = if (config.audioExtractFormat == AudioExtractFormat.MP3) 320 else 768,
                                 sourceAudioBitrateKbps = media.audioBitrateKbps,
                                 sourceAudioCodec = media.audioCodec,
+                                sourceAudioChannels = media.audioChannels,
                                 isLosslessSource = media.isLosslessAudio
                             )
                         }

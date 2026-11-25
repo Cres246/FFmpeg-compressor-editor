@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.FilterChip
@@ -36,10 +38,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.domain.BitDepthOption
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
@@ -100,6 +109,7 @@ fun CodecAndBitDepthSection(
     onSelectBitDepth: (BitDepthOption) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
     val supports10Bit = selectedCodec == VideoCodecOption.H265 && capabilities.x265Supports10Bit
     val inputHighBit = media.bitDepthIn == "10bit" || media.bitDepthIn == "12bit"
 
@@ -160,7 +170,40 @@ fun CodecAndBitDepthSection(
                 )
             }
 
-            if (!inputHighBit && selectedBitDepth == BitDepthOption.BIT_10) {
+            if (inputHighBit) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("native_10bit_source_banner"),
+                    shape = MaterialTheme.shapes.small,
+                    color = extColors.losslessContainer,
+                    border = BorderStroke(1.dp, extColors.lossless.copy(alpha = 0.42f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = extColors.lossless,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .size(16.dp)
+                        )
+                        Text(
+                            text = strings.nativeTenBitSourceBanner(
+                                media.bitDepthIn,
+                                selectedBitDepth == BitDepthOption.BIT_10
+                            ),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = extColors.lossless
+                        )
+                    }
+                }
+            } else if (selectedBitDepth == BitDepthOption.BIT_10) {
                 Spacer(Modifier.height(10.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -188,6 +231,36 @@ fun CodecAndBitDepthSection(
                             modifier = Modifier.testTag("non_native_10bit_warning")
                         )
                     }
+                }
+            }
+        } else if (inputHighBit && capabilities.x265Supports10Bit) {
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("native_10bit_source_banner"),
+                shape = MaterialTheme.shapes.small,
+                color = extColors.losslessContainer,
+                border = BorderStroke(1.dp, extColors.lossless.copy(alpha = 0.42f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = extColors.lossless,
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(16.dp)
+                    )
+                    Text(
+                        text = strings.nativeTenBitSwitchToHevcHint(media.bitDepthIn),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                        color = extColors.lossless
+                    )
                 }
             }
         }
@@ -410,9 +483,11 @@ fun AudioBitrateSection(
     maxKbps: Int = 768,
     sourceAudioBitrateKbps: Int? = null,
     sourceAudioCodec: String? = null,
+    sourceAudioChannels: Int? = null,
     isLosslessSource: Boolean = false
 ) {
     val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
     val isMp3 = maxKbps <= 320
     val resolvedTitle = title ?: strings.audioBitrateTitle
     val effectiveDefaultKbps = FfmpegMath.resolveDefaultAudioBitrate(
@@ -428,6 +503,7 @@ fun AudioBitrateSection(
     )
     val normalized = FfmpegMath.normalizeAudioBitrate(bitrateInput, effectiveDefaultKbps, maxKbps)
     val typedKbps = FfmpegMath.parseAudioBitrateInput(bitrateInput)
+    val effectiveRequestedKbps = typedKbps ?: normalized
     val isCappedBySource = !isLosslessSource &&
         sourceAudioBitrateKbps != null &&
         sourceAudioBitrateKbps > 0 &&
@@ -437,8 +513,11 @@ fun AudioBitrateSection(
         isMp3 -> strings.audioBitrateMp3Sub(normalized)
         else -> strings.audioBitrateSub(normalized)
     }
-    val showUpscaleWarning = typedKbps != null && FfmpegMath.isAudioBitrateAboveSource(
-        requestedKbps = typedKbps,
+    val hasSourceAudioInfo = !sourceAudioCodec.isNullOrBlank() ||
+        (sourceAudioBitrateKbps != null && sourceAudioBitrateKbps > 0) ||
+        isLosslessSource
+    val showUpscaleWarning = FfmpegMath.isAudioBitrateAboveSource(
+        requestedKbps = effectiveRequestedKbps,
         sourceKbps = sourceAudioBitrateKbps,
         isLosslessSource = isLosslessSource
     )
@@ -447,6 +526,41 @@ fun AudioBitrateSection(
         title = resolvedTitle,
         subtitle = subtitleText
     ) {
+        if (hasSourceAudioInfo) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("audio_source_quality_banner"),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, extColors.subtleBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = strings.audioSourceQualityBanner(
+                            sourceAudioCodec,
+                            sourceAudioBitrateKbps,
+                            isLosslessSource,
+                            sourceAudioChannels
+                        ),
+                        style = MonoLabelStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -511,7 +625,7 @@ fun AudioBitrateSection(
                         text = strings.audioBitrateUpscaleWarning(
                             sourceAudioBitrateKbps,
                             sourceAudioCodec?.uppercase() ?: "?",
-                            normalized
+                            effectiveRequestedKbps
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer
@@ -643,3 +757,45 @@ fun OutputAndCommandPreviewCard(
         }
     }
 }
+
+/**
+ * Single-line text that smoothly shrinks down to [minFontSize] whenever a long monospace spec strip
+ * would otherwise wrap onto a second line or clip on narrow phone screens.
+ */
+@Composable
+fun AutoFitSingleLineText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    minFontSize: TextUnit = 7.5.sp,
+    stepGranularity: TextUnit = 0.5.sp,
+    textAlign: TextAlign? = null
+) {
+    val baseFontSize = if (style.fontSize != TextUnit.Unspecified) style.fontSize else 11.5.sp
+    var currentFontSize by remember(text, baseFontSize) { mutableStateOf(baseFontSize) }
+    var readyToDraw by remember(text, baseFontSize) { mutableStateOf(false) }
+
+    Text(
+        text = text,
+        style = style.copy(fontSize = currentFontSize),
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        overflow = if (currentFontSize.value <= minFontSize.value) TextOverflow.Ellipsis else TextOverflow.Clip,
+        textAlign = textAlign,
+        onTextLayout = { result ->
+            if (result.didOverflowWidth && currentFontSize.value > minFontSize.value) {
+                val nextSize = (currentFontSize.value - stepGranularity.value)
+                    .coerceAtLeast(minFontSize.value)
+                currentFontSize = nextSize.sp
+            } else {
+                readyToDraw = true
+            }
+        },
+        modifier = modifier.drawWithContent {
+            if (readyToDraw) drawContent()
+        }
+    )
+}
+

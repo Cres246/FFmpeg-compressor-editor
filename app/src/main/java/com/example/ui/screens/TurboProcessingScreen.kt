@@ -111,6 +111,7 @@ import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.domain.Media3CompatibilityAdvisor
 import com.example.domain.TurboRecoveryStep
+import com.example.ui.components.AutoFitSingleLineText
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -607,6 +608,42 @@ fun TurboProcessingScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    if (!failedState.sourceAudioCodec.isNullOrBlank() ||
+                        (failedState.sourceAudioBitrateKbps != null && failedState.sourceAudioBitrateKbps > 0) ||
+                        failedState.isLosslessSourceAudio
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("turbo_audio_source_quality_banner"),
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.GraphicEq,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = strings.audioSourceQualityBanner(
+                                        failedState.sourceAudioCodec,
+                                        failedState.sourceAudioBitrateKbps,
+                                        failedState.isLosslessSourceAudio,
+                                        null
+                                    ),
+                                    style = MonoLabelStyle.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
                     Text(
                         text = strings.turboAudioConvertSourceHint(
                             failedState.sourceAudioBitrateKbps,
@@ -1332,9 +1369,10 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -1347,7 +1385,9 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
                     Text(
                         text = state.modeTitle,
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Text(
@@ -1357,7 +1397,9 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
                         fontStyle = FontStyle.Italic,
                         fontSize = 12.sp
                     ),
-                    color = MaterialTheme.colorScheme.secondary
+                    color = MaterialTheme.colorScheme.secondary,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
@@ -1369,7 +1411,7 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     border = BorderStroke(1.dp, extColors.subtleBorder)
                 ) {
-                    Text(
+                    AutoFitSingleLineText(
                         text = stripText,
                         style = MonoLabelStyle.copy(
                             fontSize = 11.5.sp,
@@ -1377,8 +1419,6 @@ private fun TurboPreservedSpecsCard(state: EncodingState.Running) {
                             lineHeight = 16.sp
                         ),
                         color = MaterialTheme.colorScheme.primary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 10.dp, vertical = 6.dp)

@@ -204,6 +204,8 @@ interface AppStrings {
     val bit8Default: String
     val bit10Preserve: String
     val nonNativeTenBitWarning: (sourceBitDepth: String) -> String
+    val nativeTenBitSourceBanner: (sourceBitDepth: String, isTenBitSelected: Boolean) -> String
+    val nativeTenBitSwitchToHevcHint: (sourceBitDepth: String) -> String
     val fpsResSectionTitle: String
     val fpsResSectionSub: String
     val recommend30Fps720pText: (vkbps: Int) -> String
@@ -222,6 +224,7 @@ interface AppStrings {
     val audioBitrateSub: (activeKbps: Int) -> String
     val audioBitrateMp3Sub: (activeKbps: Int) -> String
     val audioBitrateSourceCapSub: (sourceKbps: Int, activeKbps: Int) -> String
+    val audioSourceQualityBanner: (codec: String?, bitrateKbps: Int?, isLossless: Boolean, channels: Int?) -> String
     val audioBitrateUpscaleWarning: (sourceKbps: Int, codec: String, requestedKbps: Int) -> String
     val customBitrateLabel: String
     val customBitrateMp3Label: String
@@ -585,6 +588,16 @@ object TurkishStrings : AppStrings {
     override val bit8Default = "8-bit (Varsayılan)"
     override val bit10Preserve = "10-bit (Koru)"
     override val nonNativeTenBitWarning: (String) -> String = { src -> "Uyarı: Orijinal kaynak video $src (10-bit değil). 8-bit kaynaktan 10-bit kodlamak ekstra renk derinliği katmaz, kodlama süresini uzatır ve bazı cihazlarda uyumluluğu düşürebilir." }
+    override val nativeTenBitSourceBanner: (String, Boolean) -> String = { src, tenBitSelected ->
+        if (tenBitSelected) {
+            "Kaynak video $src: Orijinal 10-bit renk derinliği korunacak (yuv420p10le)."
+        } else {
+            "Kaynak video $src: Orijinal 10-bit renk derinliğini korumak için 10-bit (Koru) seçeneğini kullanabilirsiniz."
+        }
+    }
+    override val nativeTenBitSwitchToHevcHint: (String) -> String = { src ->
+        "Kaynak video $src: Orijinal 10-bit renk derinliğini korumak için H.265 (HEVC) seçip 10-bit kullanabilirsiniz."
+    }
     override val fpsResSectionTitle = "FPS & Akıllı Çözünürlük"
     override val fpsResSectionSub = "3 yönlü oran koruması: Dikey (9:16 / 4:5), Sinema (2.39:1) ve 16:9 otomatik algılanır"
     override val recommend30Fps720pText: (Int) -> String = { vkbps -> "Video uzunluğuna göre bitrate aşırı düşüyor (${vkbps}k). Daha net görüntü için 30 FPS ve 720p tavsiye edilir." }
@@ -603,6 +616,22 @@ object TurkishStrings : AppStrings {
     override val audioBitrateSub: (Int) -> String = { kbps -> "32k – 768k aralığı desteklenir (5.1 surround için 320k/384k+ dahil) · Aktif: ${kbps}k" }
     override val audioBitrateMp3Sub: (Int) -> String = { kbps -> "MP3 için 32k – 320k aralığı desteklenir · Aktif: ${kbps}k" }
     override val audioBitrateSourceCapSub: (Int, Int) -> String = { src, kbps -> "Kaynak ses: ${src}k · Hızlı seçenekler kaynak kalitesine göre ayarlandı · Aktif: ${kbps}k" }
+    override val audioSourceQualityBanner: (String?, Int?, Boolean, Int?) -> String = { codec, kbps, isLossless, channels ->
+        val parts = buildList {
+            codec?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
+            when {
+                isLossless && kbps != null && kbps > 0 -> add("Kayıpsız (${kbps}k)")
+                isLossless -> add("Kayıpsız")
+                kbps != null && kbps > 0 -> add("${kbps}k")
+            }
+            when {
+                channels != null && channels >= 8 -> add("7.1")
+                channels != null && channels >= 6 -> add("5.1")
+            }
+        }
+        val detail = parts.joinToString(" · ").ifBlank { "Bilinmiyor" }
+        "Kaynak ses kalitesi: $detail"
+    }
     override val audioBitrateUpscaleWarning: (Int, String, Int) -> String = { src, codec, req -> "Uyarı: Kaynağın sesi ${src}k ($codec) seviyesinde. Bundan yüksek bitrate (${req}k) girmek ses kalitesini artırmaz, yalnızca dosya boyutunu gereksiz büyütür." }
     override val customBitrateLabel = "Özel Bitrate (32..768 kbps)"
     override val customBitrateMp3Label = "Özel Bitrate (32..320 kbps)"
@@ -994,6 +1023,16 @@ object EnglishStrings : AppStrings {
     override val bit8Default = "8-bit (Default)"
     override val bit10Preserve = "10-bit (Preserve)"
     override val nonNativeTenBitWarning: (String) -> String = { src -> "Warning: Source video is $src (not 10-bit). Encoding an 8-bit source as 10-bit adds no real color depth, slows down encoding, and may reduce device compatibility." }
+    override val nativeTenBitSourceBanner: (String, Boolean) -> String = { src, tenBitSelected ->
+        if (tenBitSelected) {
+            "Source video is $src: Native 10-bit color depth will be preserved (yuv420p10le)."
+        } else {
+            "Source video is $src: Select 10-bit (Preserve) to retain native color depth."
+        }
+    }
+    override val nativeTenBitSwitchToHevcHint: (String) -> String = { src ->
+        "Source video is $src: Switch to H.265 (HEVC) to enable 10-bit and preserve native color depth."
+    }
     override val fpsResSectionTitle = "Frame Rate & Smart Scaling"
     override val fpsResSectionSub = "3-way aspect preservation: Portrait (9:16 / 4:5), CinemaScope (2.39:1), and 16:9 auto-detected"
     override val recommend30Fps720pText: (Int) -> String = { vkbps -> "Bitrate drops too low for this video length (${vkbps}k). 30 FPS and 720p are recommended for cleaner visual quality." }
@@ -1012,6 +1051,22 @@ object EnglishStrings : AppStrings {
     override val audioBitrateSub: (Int) -> String = { kbps -> "Supports 32k – 768k (including 320k/384k+ for 5.1 surround) · Active: ${kbps}k" }
     override val audioBitrateMp3Sub: (Int) -> String = { kbps -> "Supports 32k – 320k for MP3 · Active: ${kbps}k" }
     override val audioBitrateSourceCapSub: (Int, Int) -> String = { src, kbps -> "Source audio: ${src}k · Quick presets capped to source quality · Active: ${kbps}k" }
+    override val audioSourceQualityBanner: (String?, Int?, Boolean, Int?) -> String = { codec, kbps, isLossless, channels ->
+        val parts = buildList {
+            codec?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
+            when {
+                isLossless && kbps != null && kbps > 0 -> add("Lossless (${kbps}k)")
+                isLossless -> add("Lossless")
+                kbps != null && kbps > 0 -> add("${kbps}k")
+            }
+            when {
+                channels != null && channels >= 8 -> add("7.1")
+                channels != null && channels >= 6 -> add("5.1")
+            }
+        }
+        val detail = parts.joinToString(" · ").ifBlank { "Unknown" }
+        "Source audio quality: $detail"
+    }
     override val audioBitrateUpscaleWarning: (Int, String, Int) -> String = { src, codec, req -> "Warning: Source audio is ${src}k ($codec). Entering a higher bitrate (${req}k) does not improve audio quality and only inflates file size." }
     override val customBitrateLabel = "Custom Bitrate (32–768 kbps)"
     override val customBitrateMp3Label = "Custom Bitrate (32–320 kbps)"

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.example.R
+import com.example.domain.BitDepthOption
 import com.example.domain.EnglishStrings
 import com.example.domain.FpsOption
 import com.example.domain.MediaInfo
@@ -30,7 +31,8 @@ class Media3TurboEngineTest {
         height: Int = 1080,
         durationSec: Double = 60.0,
         audioCodec: String? = "aac",
-        fps: Double? = 60.0
+        fps: Double? = 60.0,
+        pixFmt: String? = "yuv420p"
     ) = MediaInfo(
         uri = Uri.EMPTY,
         fileName = "sample.mp4",
@@ -41,7 +43,7 @@ class Media3TurboEngineTest {
         videoCodec = "h264",
         width = width,
         height = height,
-        pixFmt = "yuv420p",
+        pixFmt = pixFmt,
         audioCodec = audioCodec,
         fps = fps
     )
@@ -395,4 +397,64 @@ class Media3TurboEngineTest {
             assertTrue(s.turboAfterVideoAudioFailedBody.isNotBlank())
         }
     }
+
+    @Test
+    fun bitShortAndCompactSpecsUseFullBitSuffixAndSourceBannersExist() {
+        val m8 = sampleMedia(pixFmt = "yuv420p", width = 1920, height = 1080)
+        val m10 = sampleMedia(pixFmt = "yuv420p10le", width = 3840, height = 2160)
+        val m12 = sampleMedia(pixFmt = "yuv420p12le", width = 3840, height = 1600)
+
+        assertEquals("8bit", m8.bitShort)
+        assertEquals("10bit", m10.bitShort)
+        assertEquals("12bit", m12.bitShort)
+
+        val ffmpegBanner8 = com.example.service.EncodingForegroundService.buildSummaryBanner(
+            media = m8,
+            config = ModeConfigState(mode = ProcessingMode.DISCORD_20MB, fps = FpsOption.FPS_30),
+            s = TurkishStrings
+        )
+        assertTrue("Expected 8bit in '$ffmpegBanner8'", ffmpegBanner8.contains("8bit"))
+        assertTrue("Expected 1080p in '$ffmpegBanner8'", ffmpegBanner8.contains("1080p"))
+        assertTrue("Expected 30fps in '$ffmpegBanner8'", ffmpegBanner8.contains("30fps"))
+        assertFalse("Did not expect abbreviated '8b' in '$ffmpegBanner8'", Regex("\\b8b\\b").containsMatchIn(ffmpegBanner8))
+
+        val turboSpecs10 = com.example.service.EncodingForegroundService.buildTurboUnifiedSpecs(
+            media = m10,
+            config = ModeConfigState(
+                mode = ProcessingMode.VIDEO_ONLY_CRF,
+                codec = VideoCodecOption.H265,
+                bitDepth = BitDepthOption.BIT_10
+            ),
+            s = EnglishStrings
+        )
+        assertTrue("Expected 10bit in '$turboSpecs10'", turboSpecs10.contains("10bit"))
+        assertTrue("Expected 4K in '$turboSpecs10'", turboSpecs10.contains("4K"))
+        assertFalse("Did not expect abbreviated '10b' in '$turboSpecs10'", Regex("\\b10b\\b").containsMatchIn(turboSpecs10))
+
+        // Non-standard CinemaScope dimensions stay explicit
+        val cinemaParts = com.example.service.EncodingForegroundService.formatCompactVideoSpecsParts(
+            media = m12,
+            config = ModeConfigState(mode = ProcessingMode.REMUX_FORMAT),
+            isTurbo = false
+        )
+        assertTrue(cinemaParts.contains("3840×1600"))
+        assertTrue(cinemaParts.contains("12bit"))
+
+        // Green 10-bit source banner + universal source audio quality banner in both TR & EN
+        listOf(TurkishStrings, EnglishStrings).forEach { s ->
+            assertTrue(s.nativeTenBitSourceBanner("10bit", true).contains("10bit"))
+            assertTrue(s.nativeTenBitSourceBanner("10bit", false).contains("10bit"))
+            assertTrue(s.nativeTenBitSwitchToHevcHint("10bit").contains("H.265"))
+
+            val dtsBanner = s.audioSourceQualityBanner("dts", 754, false, 6)
+            assertTrue("Expected DTS in '$dtsBanner'", dtsBanner.contains("DTS"))
+            assertTrue("Expected 754k in '$dtsBanner'", dtsBanner.contains("754k"))
+            assertTrue("Expected 5.1 in '$dtsBanner'", dtsBanner.contains("5.1"))
+
+            val flacBanner = s.audioSourceQualityBanner("flac", 980, true, 2)
+            assertTrue("Expected FLAC in '$flacBanner'", flacBanner.contains("FLAC"))
+            assertTrue("Expected 980k in '$flacBanner'", flacBanner.contains("980k"))
+        }
+    }
 }
+

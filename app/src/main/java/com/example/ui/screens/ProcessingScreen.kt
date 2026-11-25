@@ -100,6 +100,7 @@ import com.example.domain.EncodingState
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.service.CpuPerformanceBooster
+import com.example.ui.components.AutoFitSingleLineText
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -580,10 +581,13 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
 
             Spacer(Modifier.height(4.dp))
 
-            Text(
+            AutoFitSingleLineText(
                 text = state.summaryBanner,
                 style = MonoLabelStyle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ffmpeg_running_summary_banner")
             )
 
             Spacer(Modifier.height(16.dp))
