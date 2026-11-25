@@ -1243,15 +1243,23 @@ object FfmpegMath {
         inputTokenProvider: () -> String,
         outputPath: String,
         passLogPrefix: String,
-        strings: AppStrings = AppLanguageController.currentStrings()
+        strings: AppStrings = AppLanguageController.currentStrings(),
+        cpuTopology: CpuTopology = CpuTopology.current()
     ): List<FfmpegStepSpec> {
         val codec = config.codec
         val pixFmt = config.bitDepth.pixFmt
         val preset = config.preset.value
+        val threadProfile = cpuTopology.computeEncoderThreadProfile()
+        val x265BaseParams = threadProfile.buildX265BaseParams()
+        val videoEncoderThreads = if (codec == VideoCodecOption.H264) {
+            threadProfile.x264EncoderThreads.toString()
+        } else {
+            "0"
+        }
 
         fun addH265CrfArgs(args: MutableList<String>) {
             if (codec == VideoCodecOption.H265) {
-                args.addAll(listOf("-tag:v", "hvc1", "-x265-params", "log-level=warning:pools=+"))
+                args.addAll(listOf("-tag:v", "hvc1", "-x265-params", x265BaseParams))
             }
         }
 
@@ -1296,7 +1304,7 @@ object FfmpegMath {
                     listOf(
                         "-sn", "-dn",
                         "-c:v", codec.encoder,
-                        "-threads", "0",
+                        "-threads", videoEncoderThreads,
                         "-preset", preset,
                         "-b:v", "${vkbps}k",
                         "-pix_fmt", pixFmt
@@ -1309,7 +1317,7 @@ object FfmpegMath {
                     pass1.addAll(
                         listOf(
                             "-x265-params",
-                            "log-level=warning:pools=+:pass=1:stats=$passLogPrefix.log$vbvSuffix"
+                            "$x265BaseParams:pass=1:stats=$passLogPrefix.log$vbvSuffix"
                         )
                     )
                 } else {
@@ -1327,7 +1335,7 @@ object FfmpegMath {
                     listOf(
                         "-sn", "-dn",
                         "-c:v", codec.encoder,
-                        "-threads", "0",
+                        "-threads", videoEncoderThreads,
                         "-preset", preset,
                         "-b:v", "${vkbps}k",
                         "-pix_fmt", pixFmt
@@ -1341,7 +1349,7 @@ object FfmpegMath {
                         listOf(
                             "-tag:v", "hvc1",
                             "-x265-params",
-                            "log-level=warning:pools=+:pass=2:stats=$passLogPrefix.log$vbvSuffix"
+                            "$x265BaseParams:pass=2:stats=$passLogPrefix.log$vbvSuffix"
                         )
                     )
                 } else {
@@ -1437,7 +1445,7 @@ object FfmpegMath {
                             listOf(
                                 "-sn", "-dn",
                                 "-c:v", codec.encoder,
-                                "-threads", "0",
+                                "-threads", videoEncoderThreads,
                                 "-preset", preset,
                                 "-crf", codec.crf.toString(),
                                 "-pix_fmt", pixFmt
@@ -1465,7 +1473,7 @@ object FfmpegMath {
                             listOf(
                                 "-sn", "-dn",
                                 "-c:v", codec.encoder,
-                                "-threads", "0",
+                                "-threads", videoEncoderThreads,
                                 "-preset", preset,
                                 "-crf", codec.crf.toString(),
                                 "-pix_fmt", pixFmt
@@ -1552,7 +1560,7 @@ object FfmpegMath {
                         // Keep exact original video frame PTS so -c:a copy never drifts on VFR clips
                         "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
-                        "-threads", "0",
+                        "-threads", videoEncoderThreads,
                         "-preset", preset,
                         "-crf", codec.crf.toString(),
                         "-pix_fmt", pixFmt
@@ -1600,7 +1608,7 @@ object FfmpegMath {
                         "-sn", "-dn",
                         "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
-                        "-threads", "0",
+                        "-threads", videoEncoderThreads,
                         "-preset", preset,
                         "-crf", codec.crf.toString(),
                         "-pix_fmt", pixFmt

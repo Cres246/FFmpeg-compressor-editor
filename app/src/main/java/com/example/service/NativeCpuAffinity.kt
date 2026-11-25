@@ -1,0 +1,55 @@
+package com.example.service
+
+/**
+ * Thin, crash-safe JNI bridge to Linux `sched_setaffinity` / `sched_getaffinity`.
+ *
+ * Gracefully degrades to a no-op (`isLoaded == false`) on JVM unit tests (Robolectric) or any
+ * environment where the native library is unavailable.
+ */
+object NativeCpuAffinity {
+
+    val isLoaded: Boolean = runCatching {
+        System.loadLibrary("cpu_affinity")
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Pins thread [tid] (0 = current thread) to the intersection of [cpuIds] and the process's
+     * currently permitted cgroup CPU set.
+     */
+    fun pinThreadToCpus(tid: Int, cpuIds: IntArray): Boolean {
+        if (!isLoaded || cpuIds.isEmpty()) return false
+        return runCatching {
+            nativeSetThreadAffinity(tid, cpuIds) == 0
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Restores thread [tid]'s affinity across all [totalCpus] cores.
+     */
+    fun resetThreadAffinity(tid: Int, totalCpus: Int): Boolean {
+        if (!isLoaded || totalCpus <= 0) return false
+        return runCatching {
+            nativeResetThreadAffinity(tid, totalCpus) == 0
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Returns the CPU IDs currently allowed for this process by the Android kernel / cgroup.
+     */
+    fun getAllowedCpus(): IntArray {
+        if (!isLoaded) return IntArray(0)
+        return runCatching {
+            nativeGetProcessAllowedCpus()
+        }.getOrDefault(IntArray(0))
+    }
+
+    @JvmStatic
+    private external fun nativeSetThreadAffinity(tid: Int, cpuIds: IntArray): Int
+
+    @JvmStatic
+    private external fun nativeResetThreadAffinity(tid: Int, cpuCount: Int): Int
+
+    @JvmStatic
+    private external fun nativeGetProcessAllowedCpus(): IntArray
+}

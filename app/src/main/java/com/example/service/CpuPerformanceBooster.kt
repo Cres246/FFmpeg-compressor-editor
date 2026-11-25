@@ -7,6 +7,7 @@ import android.os.Process
 import android.os.SystemClock
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
+import com.example.domain.CpuTopology
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,11 +22,14 @@ import java.io.File
  * backgrounded:
  * 1. Inspects `/proc/self/task` (sandbox-local, zero permissions) to discover active native
  *    FFmpeg, MediaCodec, GL, and demuxer worker threads and measure their CPU tick deltas.
- * 2. Continuously re-applies the highest allowed Linux nice priority (`-10` on top 2 workers,
+ * 2. Detects the host phone's real CPU cluster topology via [CpuTopology] (supporting big.LITTLE,
+ *    Prime+Big+Little, all-big-core flagships, and symmetric SoCs) and pins hot encoder/feeder
+ *    threads onto Prime + Performance (Big) cores via JNI `sched_setaffinity` ([NativeCpuAffinity]),
+ *    preventing slow Efficiency (Little) cores from stalling `x264`/`x265` sync barriers.
+ * 3. Continuously re-applies the highest allowed Linux nice priority (`-10` on top 2 workers,
  *    `THREAD_PRIORITY_URGENT_DISPLAY` on next 6, `THREAD_PRIORITY_DISPLAY` across remaining pool)
- *    every 1.2s via a dedicated ticker so OEM schedulers (Honor MagicOS `iAware` / Qualcomm WALT)
- *    cannot silently demote background encoding threads onto efficiency Little cores.
- * 3. Registers active encoder TIDs into Android's ADPF [PerformanceHintManager.Session], sets
+ *    every 1.2s via a dedicated ticker so OEM schedulers cannot silently demote encoding threads.
+ * 4. Registers active encoder TIDs into Android's ADPF [PerformanceHintManager.Session], sets
  *    `setPreferPowerEfficiency(false)` on Android 15+ (API 35+), updates threads via `setThreads()`
  *    on Android 14+, and pulses aggressive work-duration overruns (`8ms` target / `24ms` actual)
  *    so PowerHAL sustains Prime + Performance core clocks even when no Activity is visible.
@@ -40,6 +44,7 @@ class CpuPerformanceBooster(private val context: Context) {
     private var perfHintSession: PerformanceHintManager.Session? = null
     private var lastRegisteredTids: IntArray = IntArray(0)
     private var lastSampledCpuTicks: Map<Int, Long> = emptyMap()
+    private val pinnedTids: MutableSet<Int> = HashSet()
     private var lastBoostPulseElapsedMs: Long = 0L
     private var lastSessionReassertElapsedMs: Long = 0L
     private var tickerJob: Job? = null
@@ -106,6 +111,13 @@ class CpuPerformanceBooster(private val context: Context) {
             active = false
             tickerJob?.cancel()
             tickerJob = null
+            if (pinnedTids.isNotEmpty()) {
+                val totalCores = CpuTopology.current().totalCores
+                pinnedTids.forEach { tid ->
+                    NativeCpuAffinity.resetThreadAffinity(tid, totalCores)
+                }
+                pinnedTids.clear()
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching { perfHintSession?.close() }
             }
@@ -125,6 +137,9 @@ class CpuPerformanceBooster(private val context: Context) {
         val currentTicks = readProcessThreadTicks()
         val mainPid = Process.myPid()
         val maxThreads = if (currentMode == BoostMode.FFMPEG_SOFTWARE) 32 else 16
+
+        // Prune dead TIDs from affinity tracking set
+        pinnedTids.retainAll(currentTicks.keys)
 
         // Rank worker threads by CPU delta since last sample (falling back to total ticks on first sample)
         val rankedEncoderTids = currentTicks.entries
@@ -146,9 +161,20 @@ class CpuPerformanceBooster(private val context: Context) {
             intArrayOf(Process.myTid())
         }
 
-        // Priority tiering so the kernel places the heaviest threads on Prime + Big cores first,
-        // while keeping the full multi-core pool boosted and preventing OEM background demotion.
+        // Priority tiering + adaptive Prime/Big CPU affinity pinning across all Android SoCs.
         val isSoftwareFfmpeg = currentMode == BoostMode.FFMPEG_SOFTWARE
+        val topology = CpuTopology.current()
+        val pinLimit = when {
+            !NativeCpuAffinity.isLoaded -> 0
+            isSoftwareFfmpeg && topology.shouldPinEncoderPoolToPerformanceCores ->
+                (topology.performanceCpuIds.size + 4).coerceAtMost(targetTids.size)
+            isSoftwareFfmpeg && topology.shouldPinLeadThreadOnly ->
+                1.coerceAtMost(targetTids.size)
+            !isSoftwareFfmpeg && !topology.allBigCore && topology.isHeterogeneous && topology.performanceCpuIds.isNotEmpty() ->
+                2.coerceAtMost(targetTids.size)
+            else -> 0
+        }
+
         targetTids.forEachIndexed { index, tid ->
             if (isSoftwareFfmpeg) {
                 when {
@@ -182,6 +208,12 @@ class CpuPerformanceBooster(private val context: Context) {
                         preferredNice = Process.THREAD_PRIORITY_DISPLAY,
                         fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
                     )
+                }
+            }
+
+            if (index < pinLimit) {
+                if (NativeCpuAffinity.pinThreadToCpus(tid, topology.performanceCpuIds)) {
+                    pinnedTids.add(tid)
                 }
             }
         }
@@ -320,16 +352,9 @@ class CpuPerformanceBooster(private val context: Context) {
         fun describeCpuBoostSummary(
             strings: AppStrings = AppLanguageController.currentStrings()
         ): String {
-            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-            val maxFreqKhz = runCatching {
-                (0 until cores).mapNotNull { idx ->
-                    File("/sys/devices/system/cpu/cpu$idx/cpufreq/cpuinfo_max_freq")
-                        .takeIf { it.canRead() }
-                        ?.readText()
-                        ?.trim()
-                        ?.toLongOrNull()
-                }.maxOrNull()
-            }.getOrNull()
+            val topology = CpuTopology.current()
+            val cores = topology.totalCores.coerceAtLeast(1)
+            val maxFreqKhz = topology.maxFreqKhz
 
             return if (maxFreqKhz != null && maxFreqKhz > 0L) {
                 val ghz = String.format(java.util.Locale.US, "%.2f GHz", maxFreqKhz / 1_000_000.0)

@@ -69,6 +69,11 @@ android {
       useLegacyPackaging = false
     }
   }
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
