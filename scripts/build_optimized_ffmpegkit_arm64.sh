@@ -112,14 +112,52 @@ if [[ -z "${NIX_PROFILE}" ]]; then
 fi
 echo "[nix] Selected Android NDK profile: ${NIX_PROFILE}"
 
-# 5. Inspect ./android.sh options dynamically so we match exact upstream flag names
-#    (handles both --disable-arch-arm-v7a and legacy --disable-arm-v7a cleanly)
+# 5. Detect whether ./nix-android.sh uses `--` separator and capture the REAL android.sh --help
+#    output from inside Nix (plus scripts/function*.sh where display_help & library options live)
+USE_DOUBLE_DASH="$(python3 - "./nix-android.sh" <<'PYEOF'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+has_double_dash = bool(
+    re.search(r"^\s*--\)", text, flags=re.MULTILINE)
+    or re.search(r'["\']--["\']', text)
+)
+print("true" if has_double_dash else "false")
+PYEOF
+)"
+
 HELP_TEXT=""
-if [[ -f "./android.sh" ]]; then
-  HELP_TEXT="$(ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/tmp}" ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-/tmp}" ./android.sh --help 2>&1 || true)"
-  HELP_TEXT+=$'\n'"$(cat ./android.sh 2>/dev/null || true)"
+if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
+  NIX_HELP="$(./nix-android.sh -p "${NIX_PROFILE}" -- --help 2>&1 || true)"
+  if grep -q -- "--enable-" <<< "${NIX_HELP}"; then
+    HELP_TEXT+="${NIX_HELP}"$'\n'
+  else
+    ALT_HELP="$(./nix-android.sh -p "${NIX_PROFILE}" --help 2>&1 || true)"
+    if grep -q -- "--enable-" <<< "${ALT_HELP}"; then
+      USE_DOUBLE_DASH="false"
+      HELP_TEXT+="${ALT_HELP}"$'\n'
+    fi
+  fi
+else
+  NIX_HELP="$(./nix-android.sh -p "${NIX_PROFILE}" --help 2>&1 || true)"
+  if grep -q -- "--enable-" <<< "${NIX_HELP}"; then
+    HELP_TEXT+="${NIX_HELP}"$'\n'
+  else
+    ALT_HELP="$(./nix-android.sh -p "${NIX_PROFILE}" -- --help 2>&1 || true)"
+    if grep -q -- "--enable-" <<< "${ALT_HELP}"; then
+      USE_DOUBLE_DASH="true"
+      HELP_TEXT+="${ALT_HELP}"$'\n'
+    fi
+  fi
 fi
-HELP_TEXT+=$'\n'"$(./nix-android.sh --help 2>&1 || true)"
+
+# Also include upstream shell definitions (android.sh + scripts/function*.sh) so library flags
+# defined inside helper scripts are always visible.
+for helper_file in ./android.sh ./scripts/function-android.sh ./scripts/function.sh ./scripts/function-common.sh; do
+  if [[ -f "${helper_file}" ]]; then
+    HELP_TEXT+="$(cat "${helper_file}" 2>/dev/null || true)"$'\n'
+  fi
+done
+HELP_TEXT+="$(./nix-android.sh --help 2>&1 || true)"$'\n'
 
 BUILD_FLAGS=()
 
@@ -167,35 +205,31 @@ if (( DISABLED_ABIS < 3 )); then
   exit 1
 fi
 
-# Mandatory GPL + core encoders required by our 11 modes
+# Mandatory GPL + core encoders required by our 11 modes (supports both short and lib-prefixed names)
 MISSING_MANDATORY=()
-for req_flag in "--enable-gpl" "--enable-x264" "--enable-x265" "--enable-lame"; do
-  if ! add_flag_if_supported "${req_flag}"; then
-    MISSING_MANDATORY+=("${req_flag}")
-  fi
-done
+add_flag_if_supported "--enable-gpl" || MISSING_MANDATORY+=("--enable-gpl")
+add_first_supported "--enable-x264" "--enable-libx264" || MISSING_MANDATORY+=("--enable-x264")
+add_first_supported "--enable-x265" "--enable-libx265" || MISSING_MANDATORY+=("--enable-x265")
+add_first_supported "--enable-lame" "--enable-libmp3lame" || MISSING_MANDATORY+=("--enable-lame")
+
 if (( ${#MISSING_MANDATORY[@]} > 0 )); then
-  echo "[error] Missing mandatory codec flags in upstream android.sh: ${MISSING_MANDATORY[*]}" >&2
+  echo "[error] Missing mandatory codec flags in upstream ffmpeg-kit-next: ${MISSING_MANDATORY[*]}" >&2
+  echo "[debug] Sample --enable-* tokens found in upstream scripts:" >&2
+  grep -oE -- '--enable-[a-zA-Z0-9_-]+' <<< "${HELP_TEXT}" | sort -u | head -n 60 >&2 || true
   exit 1
 fi
 
 # Full codec suite required by all 11 modes + Custom Commands
 add_flag_if_supported "--enable-android-zlib" || true
 add_flag_if_supported "--enable-android-media-codec" || true
-add_flag_if_supported "--enable-opus" || true
+add_first_supported "--enable-opus" "--enable-libopus" || true
 add_first_supported "--enable-libvorbis" "--enable-vorbis" || true
-add_flag_if_supported "--enable-libvpx" || true
-add_flag_if_supported "--enable-dav1d" || true
-add_flag_if_supported "--enable-libwebp" || true
-add_flag_if_supported "--enable-zimg" || true
+add_first_supported "--enable-libvpx" "--enable-vpx" || true
+add_first_supported "--enable-dav1d" "--enable-libdav1d" || true
+add_first_supported "--enable-libwebp" "--enable-webp" || true
+add_first_supported "--enable-zimg" "--enable-libzimg" || true
 
-# Detect whether ./nix-android.sh expects `--` separator before android.sh arguments
-USE_DOUBLE_DASH="$(python3 - "./nix-android.sh" <<'PYEOF'
-import pathlib, re, sys
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
-print("true" if re.search(r"^\s*--\)", text, flags=re.MULTILINE) else "false")
-PYEOF
-)"
+echo "[flags] Final build flags (${#BUILD_FLAGS[@]}): ${BUILD_FLAGS[*]}"
 
 if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
   echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} -- ${BUILD_FLAGS[*]}"

@@ -101,7 +101,10 @@ def patch_ffmpeg_script(root: Path) -> None:
         match = re.search(r"^([ \t]*)\./configure\b", updated, flags=re.MULTILINE)
         if match:
             indent = match.group(1)
-            replacement = f'{hook}\n{indent}./configure "${{FFMPEG_EXTRA_SIMD_ARGS[@]}}"'
+            replacement = (
+                f'{hook}\n'
+                f'{indent}./configure ${{FFMPEG_EXTRA_SIMD_ARGS[@]+"${{FFMPEG_EXTRA_SIMD_ARGS[@]}}"}}'
+            )
             updated = updated[: match.start()] + replacement + updated[match.end() :]
         else:
             print(f"[patch] WARN: Could not locate ./configure in {target.relative_to(root)}")
