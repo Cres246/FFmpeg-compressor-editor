@@ -186,13 +186,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProcessingMode.CUSTOM_SIZE -> "8"
             else -> "20"
         }
-        val defaultPreset = when (mode) {
-            ProcessingMode.DISCORD_20MB,
-            ProcessingMode.WHATSAPP_100MB,
-            ProcessingMode.GMAIL_25MB,
-            ProcessingMode.CUSTOM_SIZE -> PresetOption.MEDIUM
-            else -> PresetOption.FAST
-        }
+        val defaultPreset = PresetOption.FAST
         val defaultFps = FpsOption.ORIGINAL
         val baseAudioKbps = when (mode) {
             ProcessingMode.DISCORD_20MB,

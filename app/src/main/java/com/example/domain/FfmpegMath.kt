@@ -473,7 +473,7 @@ object FfmpegMath {
     /**
      * Exact port of show_kf_at() awk parser:
      * Reads compact ffprobe packet lines with flags=K, prefers pts_time else dts_time.
-     * Start locks to (prev_kf + 0.005) — 5ms buffer preventing jump to prior GOP.
+     * Start locks to [computeSafeNoAccurateSeekSec] (adaptive buffer with 5ms floor preventing jump to prior GOP).
      * End locks to raw next_kf PTS.
      */
     fun parseKeyframePackets(
@@ -1086,7 +1086,7 @@ object FfmpegMath {
     }
 
     /**
-     * Merges automatically scanned start (`prevKf + 0.005`) and end (`nextKf`) keyframes into a
+     * Merges automatically scanned start ([computeSafeNoAccurateSeekSec] over `prevKf`) and end (`nextKf`) keyframes into a
      * lossless trim configuration when the user did not manually pick keyframes, preserving any
      * manual selection and guarding against invalid reversed ranges.
      */

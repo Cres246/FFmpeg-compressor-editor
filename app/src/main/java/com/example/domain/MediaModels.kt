@@ -282,7 +282,6 @@ enum class ResolutionOption(
 
 enum class PresetOption(val value: String, val label: String) {
     FAST("fast", "fast"),
-    MEDIUM("medium", "medium"),
     SLOW("slow", "slow"),
     VERYSLOW("veryslow", "veryslow")
 }
@@ -340,7 +339,7 @@ data class ModeConfigState(
     val bitDepth: BitDepthOption = BitDepthOption.BIT_8,
     val fps: FpsOption = FpsOption.ORIGINAL,
     val resolution: ResolutionOption = ResolutionOption.ORIGINAL,
-    val preset: PresetOption = PresetOption.MEDIUM,
+    val preset: PresetOption = PresetOption.FAST,
     val audioBitrateInput: String = "128",
     // Trim specific
     val startTimeInput: String = "",

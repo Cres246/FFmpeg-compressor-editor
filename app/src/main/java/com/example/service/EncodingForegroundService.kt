@@ -756,7 +756,6 @@ class EncodingForegroundService : Service() {
             if (!usesPreset) return null
             return when (config.preset) {
                 com.example.domain.PresetOption.FAST -> "Fast"
-                com.example.domain.PresetOption.MEDIUM -> "Medium"
                 com.example.domain.PresetOption.SLOW -> "Slow"
                 com.example.domain.PresetOption.VERYSLOW -> "Very Slow"
             }
@@ -3440,9 +3439,9 @@ class EncodingForegroundService : Service() {
     }.joinToString(", ")
 
     /**
-     * Silently snaps lossless trim start -> previous keyframe (+5ms) and end -> next keyframe
-     * when the user launches Trim without opening the keyframe picker, guaranteeing the requested
-     * range is never clipped short.
+     * Silently snaps lossless trim start -> previous keyframe (adaptive `computeSafeNoAccurateSeekSec`
+     * buffer, 5ms floor) and end -> next keyframe when the user launches Trim without opening the
+     * keyframe picker, guaranteeing the requested range is never clipped short.
      */
     private suspend fun resolveAutoTrimKeyframesIfNeeded(
         media: MediaInfo,

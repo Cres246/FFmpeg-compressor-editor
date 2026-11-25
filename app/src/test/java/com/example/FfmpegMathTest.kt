@@ -118,7 +118,7 @@ class FfmpegMathTest {
             bitDepth = BitDepthOption.BIT_10,
             fps = FpsOption.FPS_30,
             resolution = ResolutionOption.P1080,
-            preset = PresetOption.MEDIUM,
+            preset = PresetOption.FAST,
             audioBitrateInput = "128"
         )
         val steps = FfmpegMath.buildFfmpegSteps(

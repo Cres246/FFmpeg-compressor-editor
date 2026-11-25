@@ -391,7 +391,7 @@ fun ModeConfigScreen(
                     item {
                         PresetSection(
                             selectedPreset = config.preset,
-                            recommendedPreset = PresetOption.MEDIUM,
+                            recommendedPreset = PresetOption.FAST,
                             isTargetSizeMode = true,
                             onSelectPreset = viewModel::updatePreset
                         )

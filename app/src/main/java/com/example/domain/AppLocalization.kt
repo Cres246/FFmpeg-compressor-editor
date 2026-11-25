@@ -347,7 +347,7 @@ interface AppStrings {
     val smallerPercentBadge: (percent: Int) -> String
     val failedCancelledTitle: String
     val failedErrorTitle: String
-    val logConsoleHeader: (count: Int) -> String
+    val logConsoleHeader: String
     val logConsoleEmpty: String
 
     // Validation & ViewModel errors
@@ -754,7 +754,7 @@ object TurkishStrings : AppStrings {
     override val smallerPercentBadge: (Int) -> String = { pct -> "%$pct daha küçük" }
     override val failedCancelledTitle = "İşlem İptal Edildi"
     override val failedErrorTitle = "Hata Oluştu"
-    override val logConsoleHeader: (Int) -> String = { count -> "Durum ve Hata Günlüğü ($count)" }
+    override val logConsoleHeader = "Durum ve Hata Günlüğü"
     override val logConsoleEmpty = "Başlatıldı, aşama değişiklikleri ve varsa hatalar burada gösterilir."
 
     override val errAnalyzeFailed: (String) -> String = { detail -> "Dosya analiz edilemedi: $detail" }
@@ -1189,7 +1189,7 @@ object EnglishStrings : AppStrings {
     override val smallerPercentBadge: (Int) -> String = { pct -> "$pct% smaller" }
     override val failedCancelledTitle = "Task Cancelled"
     override val failedErrorTitle = "Encoding Failed"
-    override val logConsoleHeader: (Int) -> String = { count -> "Status & Error Log ($count)" }
+    override val logConsoleHeader = "Status & Error Log"
     override val logConsoleEmpty = "Startup status, pass transitions, and any errors will appear here."
 
     override val errAnalyzeFailed: (String) -> String = { detail -> "Failed to analyze file: $detail" }

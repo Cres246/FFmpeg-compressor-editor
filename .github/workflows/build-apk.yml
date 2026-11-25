@@ -73,19 +73,44 @@ jobs:
             gradle testDebugUnitTest --stacktrace
           fi
 
-      - name: APK Derle (Debug)
+      - name: Release Keystore Hazirla
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+        run: |
+          if [ ! -f my-upload-key.jks ]; then
+            if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+              echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+            else
+              keytool -genkeypair -v \
+                -keystore my-upload-key.jks \
+                -storepass "${STORE_PASSWORD}" \
+                -keypass "${KEY_PASSWORD}" \
+                -alias upload \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=FFmpeg Release,O=Android,C=US"
+            fi
+          fi
+
+      - name: APK Derle (Release · R8 Optimize)
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
         run: |
           if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleRelease --stacktrace
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleRelease --stacktrace
           fi
 
       - name: APK Dosyasini Yeniden Adlandir
         run: |
           mkdir -p dist
-          APK_SRC=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          APK_SRC=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_SRC" "dist/${{ env.APK_ADI }}"
 
       - name: APK Dosyasini Actions'a Yukle

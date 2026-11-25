@@ -1192,31 +1192,10 @@ private fun LogConsoleCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = strings.logConsoleHeader(logs.size),
+                    text = strings.logConsoleHeader,
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.weight(1f)
                 )
-                if (formattedLogs.isNotEmpty()) {
-                    TextButton(
-                        onClick = {
-                            copyTextToClipboard(context, "FFmpeg Logs", logs.joinToString("\n"))
-                            copiedLogs = true
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (copiedLogs) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = if (copiedLogs) strings.actionCopied else strings.actionCopyOutput,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
                 Icon(
                     imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = null,
@@ -1229,25 +1208,56 @@ private fun LogConsoleCard(
                 LaunchedEffect(logs.size, lastLine) {
                     consoleScroll.animateScrollTo(consoleScroll.maxValue)
                 }
-                Surface(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.background,
-                    border = BorderStroke(1.dp, extColors.subtleBorder)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    SelectionContainer {
-                        Text(
-                            text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
-                            style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.background,
+                        border = BorderStroke(1.dp, extColors.subtleBorder)
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
+                                style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 96.dp, max = 260.dp)
+                                    .verticalScroll(consoleScroll)
+                                    .padding(10.dp)
+                            )
+                        }
+                    }
+
+                    if (formattedLogs.isNotEmpty()) {
+                        FilledTonalButton(
+                            onClick = {
+                                copyTextToClipboard(context, "FFmpeg Logs", logs.joinToString("\n"))
+                                copiedLogs = true
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 96.dp, max = 260.dp)
-                                .verticalScroll(consoleScroll)
-                                .padding(10.dp)
-                        )
+                                .height(42.dp)
+                                .testTag("copy_log_output_button"),
+                            shape = MaterialTheme.shapes.small,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (copiedLogs) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (copiedLogs) strings.actionCopied else strings.actionCopyOutput,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                     }
                 }
             }
