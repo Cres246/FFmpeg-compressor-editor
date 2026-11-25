@@ -1130,8 +1130,10 @@ class EncodingForegroundService : Service() {
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
         val simdSummary = CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask).summaryLabel()
+        val runtimeFfmpegVer = FfmpegEngine.getRuntimeFfmpegVersion()
+        val versionSuffix = runtimeFfmpegVer?.let { " (v$it)" }.orEmpty()
         appendLog("${s.logTagStarted} $modeTitle — $summaryBanner")
-        appendLog("[FFmpeg] ${BuildConfig.FFMPEG_ENGINE_VARIANT} · CPU: $simdSummary")
+        appendLog("[FFmpeg] ${BuildConfig.FFMPEG_ENGINE_VARIANT}$versionSuffix · CPU: $simdSummary")
 
         try {
             if (config.mode == ProcessingMode.CUSTOM_COMMAND) {

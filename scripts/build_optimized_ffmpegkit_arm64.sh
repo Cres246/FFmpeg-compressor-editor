@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Builds a custom ARM64-v8a FFmpegKit Full-GPL AAR optimized with:
+# Builds a single official ARM64-v8a Full-GPL AAR from arthenica/ffmpeg-kit-next (FFmpeg 9.0.x)
+# using its reproducible Nix build system (./nix-android.sh), enhanced with:
 #   - Compiler optimization: -O3 (baseline armv8-a ISA, zero SIGILL on older ARMv8.0 CPUs)
 #   - Runtime-dispatched SIMD (getauxval): NEON + DotProd + I8MM in FFmpeg, libx264, and libx265
-#   - 16 KB ELF page-size alignment (-Wl,-z,max-page-size=16384) for Android 15/16
+#   - 16 KB ELF page-size alignment (-Wl,-z,max-page-size=16384) verified across every .so
+#   - Strict 4-gate post-build verification (API classes, GPL codecs, 16KB ELF, version/SIMD info)
 #
 # Output:
 #   app/libs/ffmpeg-kit-custom-arm64-gpl.aar
@@ -11,110 +13,207 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK_DIR="${FFMPEGKIT_WORK_DIR:-/tmp/ffmpegkit-arm64-simd-build}"
+WORK_DIR="${FFMPEGKIT_WORK_DIR:-/tmp/ffmpegkit-next-arm64-build}"
 OUT_DIR="${REPO_ROOT}/app/libs"
 OUT_AAR="${OUT_DIR}/ffmpeg-kit-custom-arm64-gpl.aar"
 OUT_INFO="${OUT_DIR}/ffmpeg-kit-custom-arm64-gpl.aar.info.txt"
-FFMPEGKIT_REPO_URL="${FFMPEGKIT_REPO_URL:-https://github.com/ffmpegkit-maintained/ffmpeg.git}"
+FFMPEGKIT_REPO_URL="${FFMPEGKIT_REPO_URL:-https://github.com/arthenica/ffmpeg-kit-next.git}"
+FFMPEGKIT_REF="${FFMPEGKIT_REF:-}"
 
 echo "=================================================================="
-echo " FFmpeg Compressor & Editor — Custom ARM64-O3 SIMD FFmpegKit Build"
+echo " FFmpeg Compressor & Editor — FFmpegKit Next (ARM64-O3 SIMD) Build"
 echo "=================================================================="
 
-# 1. Resolve Android SDK & NDK
-export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-if [[ ! -d "${ANDROID_SDK_ROOT}" ]]; then
-  echo "[error] ANDROID_SDK_ROOT not found at ${ANDROID_SDK_ROOT}" >&2
+# 1. Ensure Nix is on PATH (required by arthenica/ffmpeg-kit-next ./nix-android.sh)
+if ! command -v nix >/dev/null 2>&1; then
+  for profile_script in \
+    "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" \
+    "${HOME}/.nix-profile/etc/profile.d/nix.sh"; do
+    if [[ -f "${profile_script}" ]]; then
+      # shellcheck source=/dev/null
+      source "${profile_script}"
+      break
+    fi
+  done
+fi
+
+if ! command -v nix >/dev/null 2>&1; then
+  echo "[error] Nix package manager is required to build arthenica/ffmpeg-kit-next, but 'nix' was not found on PATH." >&2
   exit 1
 fi
 
-if [[ -z "${ANDROID_NDK_ROOT:-}" ]] || [[ ! -d "${ANDROID_NDK_ROOT}" ]]; then
-  # Prefer NDK 27.x / 28.x / 26.x already installed on GitHub Actions ubuntu-latest
-  DETECTED_NDK="$(ls -d "${ANDROID_SDK_ROOT}"/ndk/* 2>/dev/null | sort -V | tail -n 1 || true)"
-  if [[ -n "${DETECTED_NDK}" ]] && [[ -d "${DETECTED_NDK}" ]]; then
-    export ANDROID_NDK_ROOT="${DETECTED_NDK}"
-  else
-    echo "[ndk] No preinstalled NDK found; installing ndk;27.2.12479018 via sdkmanager..."
-    SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-    yes | "${SDKMANAGER}" "ndk;27.2.12479018" >/dev/null
-    export ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.2.12479018"
-  fi
-fi
+export NIXPKGS_ALLOW_UNFREE=1
+echo "[env] nix = $(nix --version)"
+echo "[env] repo = ${FFMPEGKIT_REPO_URL}"
 
-echo "[env] ANDROID_SDK_ROOT = ${ANDROID_SDK_ROOT}"
-echo "[env] ANDROID_NDK_ROOT = ${ANDROID_NDK_ROOT}"
-
-# 2. Ensure host build tools are installed (Debian/Ubuntu)
-if command -v apt-get >/dev/null 2>&1; then
-  echo "[deps] Installing native cross-compilation tools..."
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq --no-install-recommends \
-    autoconf automake autopoint libtool pkg-config curl git cmake ninja-build \
-    nasm yasm texinfo meson gperf bison flex python3 unzip zip binutils >/dev/null
-fi
-
-# 3. Clone maintained FFmpegKit fork
+# 2. Clone arthenica/ffmpeg-kit-next
 rm -rf "${WORK_DIR}"
 mkdir -p "${WORK_DIR}" "${OUT_DIR}"
 echo "[git] Cloning ${FFMPEGKIT_REPO_URL}..."
-git clone --depth=1 "${FFMPEGKIT_REPO_URL}" "${WORK_DIR}/ffmpeg-kit"
-cd "${WORK_DIR}/ffmpeg-kit"
+if [[ -n "${FFMPEGKIT_REF}" ]]; then
+  git clone --depth=1 --branch "${FFMPEGKIT_REF}" "${FFMPEGKIT_REPO_URL}" "${WORK_DIR}/ffmpeg-kit-next"
+else
+  git clone --depth=1 "${FFMPEGKIT_REPO_URL}" "${WORK_DIR}/ffmpeg-kit-next"
+fi
+cd "${WORK_DIR}/ffmpeg-kit-next"
 
-if [[ ! -f "./android.sh" ]]; then
-  echo "[error] android.sh not found in cloned repository!" >&2
+UPSTREAM_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+UPSTREAM_LOG="$(git log -1 --oneline 2>/dev/null || echo unknown)"
+echo "[git] Upstream HEAD: ${UPSTREAM_LOG}"
+
+if [[ ! -f "./nix-android.sh" ]]; then
+  echo "[error] ./nix-android.sh not found in ${FFMPEGKIT_REPO_URL}!" >&2
+  ls -la
   exit 1
 fi
-chmod +x ./android.sh
+chmod +x ./nix-android.sh
+[[ -f "./android.sh" ]] && chmod +x ./android.sh
 
-# 4. Apply surgical ARM64-O3 + runtime-safe NEON/DotProd/I8MM patches
+# 3. Apply surgical ARM64-O3 + runtime-dispatched SIMD patches (baseline armv8-a, zero SIGILL)
 echo "[patch] Applying ARM64-O3 runtime-dispatched SIMD patches..."
-python3 "${REPO_ROOT}/scripts/patch_ffmpegkit_arm64_simd.py" --repo "${WORK_DIR}/ffmpeg-kit"
+python3 "${REPO_ROOT}/scripts/patch_ffmpegkit_arm64_simd.py" --repo "${WORK_DIR}/ffmpeg-kit-next"
 
-# 5. Dynamically select supported flags from ./android.sh --help (zero unknown-option crashes)
-HELP_TEXT="$(./android.sh --help 2>&1 || true)"
+# 4. Auto-discover the newest Android NDK r27+/r28+ Nix profile from ./nix-android.sh --list-profiles
+PROFILES_RAW="$(./nix-android.sh --list-profiles 2>&1 || true)"
+echo "[nix] Available profiles:"
+echo "${PROFILES_RAW}"
+
+if [[ -n "${FFMPEGKIT_NIX_PROFILE:-}" ]]; then
+  NIX_PROFILE="${FFMPEGKIT_NIX_PROFILE}"
+else
+  NIX_PROFILE="$(python3 - "${PROFILES_RAW}" <<'PYEOF'
+import re, sys
+
+text = sys.argv[1]
+# Extract tokens like android-r27d, android-r28, android-r27c, android-r26d
+profiles = sorted(set(re.findall(r"\bandroid-r\d+[a-z0-9._-]*\b", text)))
+if not profiles:
+    # Fallback: any token starting with android-
+    profiles = sorted(set(re.findall(r"\bandroid-[a-z0-9._-]+\b", text)))
+
+def sort_key(name: str):
+    m = re.match(r"android-r(\d+)([a-z]*)", name)
+    if m:
+        return (2, int(m.group(1)), m.group(2), name)
+    return (1, 0, "", name)
+
+if profiles:
+    # Prefer r27+ (native 16KB ELF alignment + full ARM64 dotprod/i8mm Clang support), choosing newest
+    r27_plus = [p for p in profiles if sort_key(p)[1] >= 27]
+    chosen = sorted(r27_plus or profiles, key=sort_key)[-1]
+    print(chosen)
+PYEOF
+)"
+fi
+
+if [[ -z "${NIX_PROFILE}" ]]; then
+  echo "[error] Could not auto-detect an Android Nix profile from './nix-android.sh --list-profiles'!" >&2
+  exit 1
+fi
+echo "[nix] Selected Android NDK profile: ${NIX_PROFILE}"
+
+# 5. Inspect ./android.sh options dynamically so we match exact upstream flag names
+#    (handles both --disable-arch-arm-v7a and legacy --disable-arm-v7a cleanly)
+HELP_TEXT=""
+if [[ -f "./android.sh" ]]; then
+  HELP_TEXT="$(ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/tmp}" ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-/tmp}" ./android.sh --help 2>&1 || true)"
+  HELP_TEXT+=$'\n'"$(cat ./android.sh 2>/dev/null || true)"
+fi
+HELP_TEXT+=$'\n'"$(./nix-android.sh --help 2>&1 || true)"
+
 BUILD_FLAGS=()
+
+supports_flag() {
+  local flag="$1"
+  local probe="${flag%%=*}"
+  grep -qF -- "${probe}" <<< "${HELP_TEXT}"
+}
 
 add_flag_if_supported() {
   local flag="$1"
-  local probe="${flag%%=*}"
-  if grep -q -- "${probe}" <<< "${HELP_TEXT}"; then
+  if supports_flag "${flag}"; then
     BUILD_FLAGS+=("${flag}")
+    return 0
   else
     echo "[flags] Skipping unsupported option: ${flag}"
+    return 1
   fi
 }
 
-# Target arm64-v8a exclusively for speed + compact APK
-add_flag_if_supported "--api-level=24"
-add_flag_if_supported "--speed"
-add_flag_if_supported "--disable-arm-v7a"
-add_flag_if_supported "--disable-arm-v7a-neon"
-add_flag_if_supported "--disable-x86"
-add_flag_if_supported "--disable-x86-64"
+add_first_supported() {
+  local candidate
+  for candidate in "$@"; do
+    if supports_flag "${candidate}"; then
+      BUILD_FLAGS+=("${candidate}")
+      return 0
+    fi
+  done
+  return 1
+}
 
-# Core GPL + full codec suite required by all 11 modes + Custom Commands
-add_flag_if_supported "--enable-gpl"
-add_flag_if_supported "--enable-x264"
-add_flag_if_supported "--enable-x265"
-add_flag_if_supported "--enable-lame"
-add_flag_if_supported "--enable-opus"
-add_flag_if_supported "--enable-libvorbis"
-add_flag_if_supported "--enable-libvpx"
-add_flag_if_supported "--enable-dav1d"
-add_flag_if_supported "--enable-libwebp"
-add_flag_if_supported "--enable-zimg"
-add_flag_if_supported "--enable-android-zlib"
-add_flag_if_supported "--enable-android-media-codec"
+# Target arm64-v8a exclusively for fast compile + compact APK
+add_flag_if_supported "--api-level=24" || true
+add_flag_if_supported "--speed" || true
 
-echo "[build] Running ./android.sh ${BUILD_FLAGS[*]}"
-./android.sh "${BUILD_FLAGS[@]}"
+DISABLED_ABIS=0
+for abi in "arm-v7a" "arm-v7a-neon" "x86" "x86-64"; do
+  if add_first_supported "--disable-arch-${abi}" "--disable-${abi}"; then
+    DISABLED_ABIS=$((DISABLED_ABIS + 1))
+  fi
+done
+echo "[flags] Pruned ${DISABLED_ABIS} non-arm64 ABI(s)."
+if (( DISABLED_ABIS < 3 )); then
+  echo "[error] Expected to disable arm-v7a, x86, and x86-64, but only matched ${DISABLED_ABIS} disable flags!" >&2
+  exit 1
+fi
 
-# 6. Locate produced AAR
-BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit/prebuilt" "${WORK_DIR}/ffmpeg-kit/android" \
-  -maxdepth 5 -type f -name '*.aar' 2>/dev/null | head -n 1 || true)"
+# Mandatory GPL + core encoders required by our 11 modes
+MISSING_MANDATORY=()
+for req_flag in "--enable-gpl" "--enable-x264" "--enable-x265" "--enable-lame"; do
+  if ! add_flag_if_supported "${req_flag}"; then
+    MISSING_MANDATORY+=("${req_flag}")
+  fi
+done
+if (( ${#MISSING_MANDATORY[@]} > 0 )); then
+  echo "[error] Missing mandatory codec flags in upstream android.sh: ${MISSING_MANDATORY[*]}" >&2
+  exit 1
+fi
+
+# Full codec suite required by all 11 modes + Custom Commands
+add_flag_if_supported "--enable-android-zlib" || true
+add_flag_if_supported "--enable-android-media-codec" || true
+add_flag_if_supported "--enable-opus" || true
+add_first_supported "--enable-libvorbis" "--enable-vorbis" || true
+add_flag_if_supported "--enable-libvpx" || true
+add_flag_if_supported "--enable-dav1d" || true
+add_flag_if_supported "--enable-libwebp" || true
+add_flag_if_supported "--enable-zimg" || true
+
+# Detect whether ./nix-android.sh expects `--` separator before android.sh arguments
+USE_DOUBLE_DASH="$(python3 - "./nix-android.sh" <<'PYEOF'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+print("true" if re.search(r"^\s*--\)", text, flags=re.MULTILINE) else "false")
+PYEOF
+)"
+
+if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
+  echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} -- ${BUILD_FLAGS[*]}"
+  ./nix-android.sh -p "${NIX_PROFILE}" -- "${BUILD_FLAGS[@]}"
+else
+  echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} ${BUILD_FLAGS[*]}"
+  ./nix-android.sh -p "${NIX_PROFILE}" "${BUILD_FLAGS[@]}"
+fi
+
+# 6. Locate produced AAR (prefer prebuilt/bundle-android-aar)
+BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" -maxdepth 5 -type f -name '*.aar' 2>/dev/null | head -n 1 || true)"
+if [[ -z "${BUILT_AAR}" ]]; then
+  BUILT_AAR="$(find "${WORK_DIR}/ffmpeg-kit-next/android" -maxdepth 6 -type f -name '*.aar' ! -name '*test*' 2>/dev/null | head -n 1 || true)"
+fi
 
 if [[ -z "${BUILT_AAR}" ]] || [[ ! -f "${BUILT_AAR}" ]]; then
-  echo "[error] FFmpegKit build finished but no .aar artifact was found!" >&2
+  echo "[error] FFmpegKit Next build finished but no .aar artifact was found!" >&2
+  find "${WORK_DIR}/ffmpeg-kit-next" -maxdepth 4 -name '*.aar' 2>/dev/null || true
   exit 1
 fi
 
@@ -130,17 +229,28 @@ rm -rf "${VERIFY_DIR}"
 mkdir -p "${VERIFY_DIR}"
 unzip -q "${BUILT_AAR}" -d "${VERIFY_DIR}"
 
-# Gate 1: Java API classes present
-if ! unzip -l "${VERIFY_DIR}/classes.jar" | grep -q "com/arthenica/ffmpegkit/FFmpegKit.class"; then
-  echo "[error] classes.jar is missing com/arthenica/ffmpegkit/FFmpegKit.class!" >&2
-  exit 1
-fi
-if ! unzip -l "${VERIFY_DIR}/classes.jar" | grep -q "com/arthenica/ffmpegkit/FFprobeKit.class"; then
-  echo "[error] classes.jar is missing com/arthenica/ffmpegkit/FFprobeKit.class!" >&2
-  exit 1
-fi
+# Gate 1: Verify all required Java API classes our app imports
+CLASSES_LIST="$(unzip -l "${VERIFY_DIR}/classes.jar")"
+for req_class in \
+  "com/arthenica/ffmpegkit/FFmpegKit.class" \
+  "com/arthenica/ffmpegkit/FFprobeKit.class" \
+  "com/arthenica/ffmpegkit/FFmpegKitConfig.class" \
+  "com/arthenica/ffmpegkit/LogRedirectionStrategy.class" \
+  "com/arthenica/ffmpegkit/ReturnCode.class" \
+  "com/arthenica/ffmpegkit/StreamInformation.class"; do
+  if ! grep -qF "${req_class}" <<< "${CLASSES_LIST}"; then
+    echo "[error] classes.jar is missing required API class: ${req_class}!" >&2
+    exit 1
+  fi
+done
 
-# Gate 2: arm64-v8a native libraries present
+BUNDLES_SMART_EXCEPTION="false"
+if grep -q "com/arthenica/smartexception/" <<< "${CLASSES_LIST}"; then
+  BUNDLES_SMART_EXCEPTION="true"
+fi
+echo "[verify] Gate 1 passed (all 6 Java API classes present; bundles_smart_exception=${BUNDLES_SMART_EXCEPTION})."
+
+# Gate 2: Verify arm64-v8a native libraries + mandatory GPL encoders (libx264, libx265, libmp3lame)
 ARM64_JNI_DIR="${VERIFY_DIR}/jni/arm64-v8a"
 if [[ ! -f "${ARM64_JNI_DIR}/libffmpegkit.so" ]] || [[ ! -f "${ARM64_JNI_DIR}/libavcodec.so" ]]; then
   echo "[error] Missing required arm64-v8a .so files in ${ARM64_JNI_DIR}!" >&2
@@ -148,14 +258,25 @@ if [[ ! -f "${ARM64_JNI_DIR}/libffmpegkit.so" ]] || [[ ! -f "${ARM64_JNI_DIR}/li
   exit 1
 fi
 
-# Gate 3: 16 KB ELF page-size alignment check across all bundled .so files
+CODEC_STRINGS="$(strings "${ARM64_JNI_DIR}"/*.so 2>/dev/null || true)"
+for req_codec in "libx264" "libx265" "libmp3lame"; do
+  if ! grep -qF "${req_codec}" <<< "${CODEC_STRINGS}"; then
+    echo "[error] Compiled arm64-v8a .so libraries do not contain required encoder '${req_codec}'!" >&2
+    exit 1
+  fi
+done
+echo "[verify] Gate 2 passed (arm64-v8a .so + libx264, libx265, libmp3lame verified)."
+
+# Gate 3: 16 KB ELF page-size alignment check across EVERY bundled arm64-v8a .so library
 echo "[verify] Checking 16 KB ELF page alignment across arm64-v8a .so libraries..."
 python3 - "${ARM64_JNI_DIR}" <<'PYEOF'
 import pathlib, subprocess, sys
 
 jni_dir = pathlib.Path(sys.argv[1])
 failed = False
+count = 0
 for so_file in sorted(jni_dir.glob("*.so")):
+    count += 1
     out = subprocess.check_output(["readelf", "-lW", str(so_file)], text=True, errors="replace")
     for line in out.splitlines():
         parts = line.split()
@@ -164,20 +285,25 @@ for so_file in sorted(jni_dir.glob("*.so")):
             if align_val < 16384 or (align_val % 16384) != 0:
                 print(f"[error] {so_file.name} has non-16KB LOAD alignment: {parts[-1]} ({align_val})", file=sys.stderr)
                 failed = True
-if failed:
+if failed or count == 0:
     sys.exit(1)
-print("[verify] All arm64-v8a .so libraries passed 16 KB ELF page alignment check.")
+print(f"[verify] Gate 3 passed: all {count} arm64-v8a .so libraries have 16 KB ELF alignment.")
 PYEOF
 
-# Gate 4: Capability report (non-fatal telemetry)
-SIMD_REPORT="$(strings "${ARM64_JNI_DIR}"/*.so 2>/dev/null | grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' | sort -u | head -n 12 || true)"
+# Gate 4: Extract compiled FFmpeg version + SIMD capability telemetry
+DETECTED_FFMPEG_VER="$(grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' <<< "$(strings "${ARM64_JNI_DIR}/libavutil.so" 2>/dev/null || true)" | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || true)"
+SIMD_REPORT="$(grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' <<< "${CODEC_STRINGS}" | sort -u | head -n 12 || true)"
 AAR_MB="$(awk "BEGIN { printf \"%.2f\", ${AAR_SIZE} / 1048576 }")"
 
 cp "${BUILT_AAR}" "${OUT_AAR}"
 {
-  echo "engine=ARM64-O3-SIMD"
+  echo "engine=FFmpegKit-Next-ARM64-O3-SIMD"
+  echo "upstream_repo=${FFMPEGKIT_REPO_URL}"
+  echo "upstream_commit=${UPSTREAM_COMMIT}"
+  echo "detected_ffmpeg_version=${DETECTED_FFMPEG_VER:-unknown}"
+  echo "nix_profile=${NIX_PROFILE}"
   echo "aar_size_mb=${AAR_MB}"
-  echo "ndk=${ANDROID_NDK_ROOT}"
+  echo "bundles_smart_exception=${BUNDLES_SMART_EXCEPTION}"
   echo "flags=${BUILD_FLAGS[*]}"
   echo "simd_symbols_found:"
   echo "${SIMD_REPORT:-"(standard NEON)"}"

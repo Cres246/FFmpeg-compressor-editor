@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Surgical ARM64-O3 + Runtime-Dispatched SIMD (NEON / DotProd / I8MM) patcher for FFmpegKit.
+Surgical ARM64-O3 + Runtime-Dispatched SIMD (NEON / DotProd / I8MM) patcher for
+arthenica/ffmpeg-kit-next (FFmpeg 9.0.x).
 
-Safety invariant (ZERO SIGILL on older ARMv8.0 devices):
+Safety invariants (ZERO SIGILL on older ARMv8.0 devices):
   - Global CFLAGS/CXXFLAGS remain strictly baseline `armv8-a` (never global `+dotprod`/`+i8mm`),
-    upgraded from `-Os` to `-O3` for speed.
+    upgraded from `-Os` to `-O3` for maximum software encoding throughput.
   - Advanced SIMD instructions (`DotProd`, `I8MM`) are enabled ONLY via runtime-dispatched
     per-function assembly (`.arch_extension dotprod` / `.arch_extension i8mm`) or per-file
     CMake targets guarded by Linux/Android `getauxval(AT_HWCAP / AT_HWCAP2)`.
-  - 16 KB ELF page-size alignment (`-Wl,-z,max-page-size=16384`) is preserved/enforced for
+  - 16 KB ELF page-size alignment (`-Wl,-z,max-page-size=16384`) is verified/enforced for
     Android 15/16 compliance.
+  - All existing 10-bit HEVC (`HIGH_BIT_DEPTH`/`MAIN10`) flags in upstream scripts are preserved.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ def find_first(root: Path, relative_hint: str, filename: str) -> Path | None:
     direct = root / relative_hint
     if direct.is_file():
         return direct
-    for candidate in root.rglob(filename):
+    for candidate in sorted(root.rglob(filename)):
         if ".git" not in candidate.parts and candidate.is_file():
             return candidate
     return None
@@ -34,29 +35,32 @@ def find_first(root: Path, relative_hint: str, filename: str) -> Path | None:
 def patch_function_android(root: Path) -> None:
     target = find_first(root, "scripts/function-android.sh", "function-android.sh")
     if target is None:
-        print("[patch] WARN: function-android.sh not found, skipping CFLAGS patch.")
+        print("[patch] WARN: function-android.sh not found, skipping CFLAGS/LDFLAGS patch.")
         return
 
     original = target.read_text(encoding="utf-8", errors="replace")
     updated = original
 
-    # 1. Upgrade -Os -> -O3 for speed optimization while keeping baseline armv8-a ISA.
-    #    Only replace standalone -Os compiler flags (never partial identifiers).
+    # 1. Upgrade standalone -Os -> -O3 while preserving baseline armv8-a ISA (zero SIGILL).
     updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
 
-    # 2. Ensure 16 KB page-size alignment flag is present in linker flags if missing.
+    # 2. Enforce 16 KB ELF page-size alignment in linker flags if not already configured upstream.
     if "max-page-size=16384" not in updated:
-        updated = re.sub(
-            r'(get_common_ldflags\(\)\s*\{[^\n]*\n)',
-            r'\1  # Enforce 16 KB ELF page alignment for Android 15/16\n',
-            updated,
-            count=1,
-        )
-        updated = re.sub(
-            r'(-Wl,--hash-style=both|-Wl,-z,relro)',
-            r'\1 -Wl,-z,max-page-size=16384',
+        updated_ldflags = re.sub(
+            r"(-Wl,--hash-style=both|-Wl,-z,relro)",
+            r"\1 -Wl,-z,max-page-size=16384",
             updated,
         )
+        if updated_ldflags != updated:
+            updated = updated_ldflags
+        else:
+            # Fallback: inject inside get_common_ldflags() echo line if present
+            updated = re.sub(
+                r'(get_common_ldflags\(\)\s*\{[\s\S]{0,600}?echo\s+"[^"]*)(")',
+                r'\1 -Wl,-z,max-page-size=16384\2',
+                updated,
+                count=1,
+            )
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
@@ -77,31 +81,37 @@ def patch_ffmpeg_script(root: Path) -> None:
     # Remove --enable-small (suppresses loop unrolling & SIMD inlining in libavcodec/libswscale)
     updated = re.sub(r"\s--enable-small\b", "", updated)
 
-    # Ensure ARM64 runtime-dispatched dotprod/i8mm flags are probed dynamically via ./configure --help
-    # so this works cleanly across FFmpeg 6.x, 7.x, and 8.x without unknown-option errors.
+    # Inject a dedicated bash array FFMPEG_EXTRA_SIMD_ARGS=() directly into ./configure so we
+    # never risk mutating an upstream array/string variable like ARCH_OPTIONS.
     marker = "# FFmpeg-ARM64-SIMD-RUNTIME-DISPATCH"
     if marker not in updated:
-        hook = f"""
-{marker}
-if [[ "${{ARCH}}" == "arm64-v8a" ]]; then
-  if ./configure --help 2>/dev/null | grep -q -- '--enable-dotprod'; then
-    ARCH_OPTIONS+=" --enable-dotprod"
-  fi
-  if ./configure --help 2>/dev/null | grep -q -- '--enable-i8mm'; then
-    ARCH_OPTIONS+=" --enable-i8mm"
-  fi
-fi
-"""
-        # Insert right before `./configure` invocation in ffmpeg.sh
-        match = re.search(r"^[ \t]*\./configure\b", updated, flags=re.MULTILINE)
+        hook = (
+            f"\n{marker}\n"
+            'FFMPEG_EXTRA_SIMD_ARGS=()\n'
+            'if [[ "${ARCH:-}" == "arm64-v8a" || "${FFMPEG_KIT_ARCH:-}" == "arm64-v8a" ]]; then\n'
+            '  if ./configure --help 2>/dev/null | grep -q -- \'--enable-dotprod\'; then\n'
+            '    FFMPEG_EXTRA_SIMD_ARGS+=("--enable-dotprod")\n'
+            '  fi\n'
+            '  if ./configure --help 2>/dev/null | grep -q -- \'--enable-i8mm\'; then\n'
+            '    FFMPEG_EXTRA_SIMD_ARGS+=("--enable-i8mm")\n'
+            '  fi\n'
+            '  echo "[ffmpeg] Runtime-dispatched ARM64 SIMD configure args: ${FFMPEG_EXTRA_SIMD_ARGS[*]:-(auto-enabled)}"\n'
+            'fi\n'
+        )
+        match = re.search(r"^([ \t]*)\./configure\b", updated, flags=re.MULTILINE)
         if match:
-            updated = updated[: match.start()] + hook + "\n" + updated[match.start() :]
+            indent = match.group(1)
+            replacement = f'{hook}\n{indent}./configure "${{FFMPEG_EXTRA_SIMD_ARGS[@]}}"'
+            updated = updated[: match.start()] + replacement + updated[match.end() :]
         else:
             print(f"[patch] WARN: Could not locate ./configure in {target.relative_to(root)}")
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Patched {target.relative_to(root)} (removed --enable-small, added runtime dotprod/i8mm probe)")
+        print(
+            f"[patch] OK: Patched {target.relative_to(root)} "
+            "(removed --enable-small, added array-safe runtime dotprod/i8mm probe)"
+        )
     else:
         print(f"[patch] INFO: No changes needed for {target.relative_to(root)}")
 
@@ -115,63 +125,75 @@ def patch_x264_script(root: Path) -> None:
     original = target.read_text(encoding="utf-8", errors="replace")
     updated = original
 
-    # Ensure x264 builds with -O3 and assembly enabled on arm64-v8a (x264 auto-detects NDK Clang's
-    # `.arch_extension dotprod` and `.arch_extension i8mm` and dispatches at runtime via getauxval).
+    # Ensure x264 compiles with -O3 (x264's configure automatically detects Clang's
+    # `.arch_extension dotprod` and `.arch_extension i8mm` and dispatches via getauxval).
     updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
 
-    # Inject optional automatic x264 source upgrade check if bundled x264 predates AArch64 dotprod/i8mm
-    marker = "# X264-ARM64-SIMD-CHECK"
+    # Diagnostic check only (never git-fetch external sources inside Nix-pinned ffmpeg-kit-next)
+    marker = "# X264-ARM64-SIMD-DIAGNOSTIC"
     if marker not in updated:
-        hook = f"""
-{marker}
-if [[ "${{ARCH}}" == "arm64-v8a" ]] && [[ -f "common/cpu.c" ]]; then
-  if ! grep -q "X264_CPU_I8MM" common/cpu.c 2>/dev/null; then
-    echo "[x264] Bundled x264 predates AArch64 DotProd/I8MM; attempting fast-forward from VideoLAN..."
-    if git fetch --depth=1 https://code.videolan.org/videolan/x264.git master 2>/dev/null && git checkout -f FETCH_HEAD 2>/dev/null; then
-      echo "[x264] Upgraded to latest VideoLAN x264 with runtime NEON/DotProd/I8MM dispatch."
-    else
-      echo "[x264] WARN: Could not fetch VideoLAN x264; continuing with bundled source."
-    fi
-  else
-    echo "[x264] Verified AArch64 DotProd/I8MM runtime dispatch present in common/cpu.c."
-  fi
-fi
-"""
+        hook = (
+            f"\n{marker}\n"
+            'if [[ "${ARCH:-}" == "arm64-v8a" || "${FFMPEG_KIT_ARCH:-}" == "arm64-v8a" ]] && [[ -f "common/cpu.c" ]]; then\n'
+            '  if grep -q "X264_CPU_I8MM" common/cpu.c 2>/dev/null; then\n'
+            '    echo "[x264] Verified AArch64 NEON + DotProd + I8MM runtime dispatch in common/cpu.c."\n'
+            '  elif grep -q "X264_CPU_DOTPROD" common/cpu.c 2>/dev/null; then\n'
+            '    echo "[x264] Verified AArch64 NEON + DotProd runtime dispatch in common/cpu.c."\n'
+            '  else\n'
+            '    echo "[x264] INFO: Using baseline AArch64 NEON assembly in common/cpu.c."\n'
+            '  fi\n'
+            'fi\n'
+        )
         match = re.search(r"^[ \t]*\./configure\b", updated, flags=re.MULTILINE)
         if match:
             updated = updated[: match.start()] + hook + "\n" + updated[match.start() :]
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Patched {target.relative_to(root)} (ensured -O3 + AArch64 DotProd/I8MM runtime dispatch)")
+        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + AArch64 SIMD diagnostic)")
     else:
         print(f"[patch] INFO: No changes needed for {target.relative_to(root)}")
 
 
-def inspect_x265_cmake_safety(x265_src_dir: Path) -> str:
-    """
-    Inspects the actual cloned x265 CMakeLists.txt to emit the fastest 100%-ARMv8.0-safe CMake flags.
+def _locate_x265_source_cmake(x265_hint_dir: Path) -> tuple[Path | None, Path | None]:
+    """Resolves x265 source/CMakeLists.txt whether called from repo root or a build subdir."""
+    candidates = [
+        x265_hint_dir / "source",
+        x265_hint_dir.parent / "source",
+        x265_hint_dir.parent.parent / "source",
+        x265_hint_dir,
+    ]
+    for src_dir in candidates:
+        top_cmake = src_dir / "CMakeLists.txt"
+        if top_cmake.is_file() and (src_dir / "common").is_dir():
+            common_cmake = src_dir / "common" / "CMakeLists.txt"
+            return top_cmake, (common_cmake if common_cmake.is_file() else None)
+    return None, None
 
-    - Always enables `-DCROSS_COMPILE_ARM64=1 -DENABLE_ASSEMBLY=ON` (baseline NEON is mandatory on
-      every 64-bit ARMv8 CPU and gives a huge speedup over FFmpegKit's default ENABLE_ASSEMBLY=0).
-    - Enables `-DENABLE_NEON_DOTPROD=ON -DENABLE_NEON_I8MM=ON` ONLY when x265's CMakeLists isolates
-      `+dotprod`/`+i8mm` to per-file `set_source_files_properties` (and never leaks them into global
-      `ARM_ARGS` / `CMAKE_CXX_FLAGS`), guaranteeing zero SIGILL on older ARMv8.0 CPUs.
+
+def inspect_x265_cmake_safety(x265_hint_dir: Path) -> str:
     """
-    top_cmake = x265_src_dir / "source" / "CMakeLists.txt"
-    common_cmake = x265_src_dir / "source" / "common" / "CMakeLists.txt"
-    if not top_cmake.is_file():
+    Inspects the actual x265 CMakeLists.txt to emit the fastest 100%-ARMv8.0-safe CMake flags.
+
+    - Always enables `-DCROSS_COMPILE_ARM64=1 -DENABLE_ASSEMBLY=ON` (baseline NEON is mandatory
+      on every 64-bit ARMv8 CPU and gives a major speedup over ENABLE_ASSEMBLY=0).
+    - Enables `-DENABLE_NEON_DOTPROD=ON -DENABLE_NEON_I8MM=ON` ONLY when x265 isolates
+      `+dotprod`/`+i8mm` to per-file `set_source_files_properties` (never polluting global
+      `ARM_ARGS`), guaranteeing zero SIGILL on older ARMv8.0 devices.
+    - Keeps SVE/SVE2 off so non-SVE Snapdragon cores never hit unsupported instructions.
+    """
+    top_cmake, common_cmake = _locate_x265_source_cmake(x265_hint_dir)
+    if top_cmake is None:
         return "-DCROSS_COMPILE_ARM64=1 -DENABLE_ASSEMBLY=ON"
 
     top_text = top_cmake.read_text(encoding="utf-8", errors="replace")
-    common_text = common_cmake.read_text(encoding="utf-8", errors="replace") if common_cmake.is_file() else ""
+    common_text = common_cmake.read_text(encoding="utf-8", errors="replace") if common_cmake else ""
     combined = top_text + "\n" + common_text
 
     has_dotprod_opt = "ENABLE_NEON_DOTPROD" in top_text
     has_i8mm_opt = "ENABLE_NEON_I8MM" in top_text
     has_sve_opt = "ENABLE_SVE" in top_text
 
-    # Check whether x265 uses per-file COMPILE_FLAGS isolation vs global ARM_ARGS pollution
     uses_per_file_isolation = (
         "set_source_files_properties" in combined
         and ("dotprod" in combined.lower() or "i8mm" in combined.lower())
@@ -189,7 +211,6 @@ def inspect_x265_cmake_safety(x265_src_dir: Path) -> str:
         if uses_per_file_isolation and not pollutes_global_arm_args:
             flags.append("-DENABLE_NEON_DOTPROD=ON")
         else:
-            # Global ARM_ARGS pollution would emit non-baseline instructions outside runtime guards
             flags.append("-DENABLE_NEON_DOTPROD=OFF")
 
     if has_i8mm_opt:
@@ -199,7 +220,6 @@ def inspect_x265_cmake_safety(x265_src_dir: Path) -> str:
             flags.append("-DENABLE_NEON_I8MM=OFF")
 
     if has_sve_opt:
-        # Keep SVE/SVE2 off unless isolated; prevents SIGILL on non-SVE Snapdragon/ARMv8.2 cores
         flags.append("-DENABLE_SVE=OFF")
         if "ENABLE_SVE2" in top_text:
             flags.append("-DENABLE_SVE2=OFF")
@@ -219,61 +239,49 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
     # 1. Upgrade -Os -> -O3
     updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
 
-    # 2. Replace FFmpegKit's arm64-v8a ENABLE_ASSEMBLY=0 with dynamic runtime-safe inspection!
-    #    Keep all other flags (10-bit HIGH_BIT_DEPTH, install prefixes, pkg-config, etc.) untouched.
+    # 2. Only override ENABLE_ASSEMBLY on arm64-v8a if upstream explicitly disabled it
+    #    (`-DENABLE_ASSEMBLY=0` or `-DENABLE_ASSEMBLY=OFF`). If ffmpeg-kit-next already
+    #    enables ARM64 assembly cleanly, preserve its tested CMake setup untouched.
     marker = "# X265-ARM64-SIMD-RUNTIME-SAFE"
-    if marker not in updated:
-        # Rewrite `-DENABLE_ASSEMBLY=0` or `-DENABLE_ASSEMBLY=OFF` inside arm64-v8a block
+    if marker not in updated and re.search(r"-DENABLE_ASSEMBLY=(?:0|OFF)\b", updated):
         arm64_block_re = re.compile(
-            r"(arm64-v8a\)\s*\n(?:\s*[^\n]*\n){0,8}?)(?=\s*;;)",
+            r"(arm64-v8a\)\s*\n(?:\s*[^\n]*\n){0,10}?)(?=\s*;;)",
             flags=re.MULTILINE,
         )
 
         def rewrite_arm64_case(match: re.Match[str]) -> str:
             block = match.group(1)
+            if not re.search(r"-DENABLE_ASSEMBLY=(?:0|OFF)\b", block):
+                return block
             safe_probe = (
-                f'  {marker}\n'
-                f'  X265_SAFE_ARM64_FLAGS="$(python3 "{self_script_path.resolve()}" --inspect-x265 "$(pwd)")"\n'
-                f'  echo "[x265] Using runtime-safe ARM64 CMake flags: ${{X265_SAFE_ARM64_FLAGS}}"\n'
+                f"  {marker}\n"
+                '  PY_BIN="$(command -v python3 || echo /usr/bin/python3)"\n'
+                f'  X265_SAFE_ARM64_FLAGS="$("${{PY_BIN}}" "{self_script_path.resolve()}" --inspect-x265 "$(pwd)" 2>/dev/null || echo "-DCROSS_COMPILE_ARM64=1 -DENABLE_ASSEMBLY=ON")"\n'
+                '  echo "[x265] Using runtime-safe ARM64 CMake flags: ${X265_SAFE_ARM64_FLAGS}"\n'
             )
-            if "ENABLE_ASSEMBLY" in block:
-                block = re.sub(
-                    r"-DENABLE_ASSEMBLY=(?:0|OFF)\b",
-                    "${X265_SAFE_ARM64_FLAGS}",
-                    block,
-                )
-                block = re.sub(r"-DCROSS_COMPILE_ARM=(?:1|ON)\b", "", block)
-                return safe_probe + block
-            else:
-                return safe_probe + block + '  ARCH_OPTIONS+=" ${X265_SAFE_ARM64_FLAGS}"\n'
+            block = re.sub(
+                r"-DENABLE_ASSEMBLY=(?:0|OFF)\b",
+                "${X265_SAFE_ARM64_FLAGS}",
+                block,
+            )
+            block = re.sub(r"-DCROSS_COMPILE_ARM=(?:1|ON)\b", "", block)
+            return safe_probe + block
 
-        if arm64_block_re.search(updated):
-            updated = arm64_block_re.sub(rewrite_arm64_case, updated, count=1)
-        else:
-            # Fallback: inject before cmake invocation when ARCH == arm64-v8a
-            hook = f"""
-{marker}
-if [[ "${{ARCH}}" == "arm64-v8a" ]]; then
-  X265_SAFE_ARM64_FLAGS="$(python3 "{self_script_path.resolve()}" --inspect-x265 "$(pwd)")"
-  echo "[x265] Using runtime-safe ARM64 CMake flags: ${{X265_SAFE_ARM64_FLAGS}}"
-  ASM_OPTIONS="${{X265_SAFE_ARM64_FLAGS}}"
-fi
-"""
-            match = re.search(r"^[ \t]*cmake\b", updated, flags=re.MULTILINE)
-            if match:
-                updated = updated[: match.start()] + hook + "\n" + updated[match.start() :]
+        updated = arm64_block_re.sub(rewrite_arm64_case, updated, count=1)
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Patched {target.relative_to(root)} (enabled ARM64 assembly + runtime-safe SIMD probe)")
+        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + runtime-safe ARM64 assembly)")
     else:
-        print(f"[patch] INFO: No changes needed for {target.relative_to(root)}")
+        print(f"[patch] INFO: {target.relative_to(root)} already keeps ARM64 assembly / -O3 intact.")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Patch FFmpegKit for ARM64-O3 runtime-dispatched SIMD.")
-    parser.add_argument("--repo", type=Path, help="Path to cloned ffmpegkit-maintained/ffmpeg repo")
-    parser.add_argument("--inspect-x265", type=Path, help="Inspect x265 source dir and print safe CMake flags")
+    parser = argparse.ArgumentParser(
+        description="Patch arthenica/ffmpeg-kit-next for ARM64-O3 runtime-dispatched SIMD."
+    )
+    parser.add_argument("--repo", type=Path, help="Path to cloned arthenica/ffmpeg-kit-next repo")
+    parser.add_argument("--inspect-x265", type=Path, help="Inspect x265 source/build dir and print safe CMake flags")
     args = parser.parse_args()
 
     if args.inspect_x265 is not None:
@@ -281,7 +289,7 @@ def main() -> int:
         return 0
 
     if args.repo is None or not args.repo.is_dir():
-        print("[patch] ERROR: --repo must point to an existing FFmpegKit directory.", file=sys.stderr)
+        print("[patch] ERROR: --repo must point to an existing ffmpeg-kit-next directory.", file=sys.stderr)
         return 1
 
     self_path = Path(__file__).resolve()

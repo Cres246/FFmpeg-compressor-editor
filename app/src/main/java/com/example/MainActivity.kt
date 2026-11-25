@@ -66,6 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -83,11 +84,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.FfmpegEngine
 import com.example.domain.AppLanguage
 import com.example.domain.AppLanguageController
 import com.example.domain.CompletedOutput
 import com.example.domain.CpuSimdProfile
 import com.example.domain.EncodingState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.domain.LanguagePreference
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaPickSource
@@ -853,39 +857,48 @@ private fun OpenSourceCreditsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CreditEntryCard(
-                    sectionLabel = strings.creditsCoreSectionLabel,
-                    libraryName = "FFmpeg",
-                    authorLine = strings.creditsCoreCreators,
-                    extraNote = strings.creditsCoreEncoders,
-                    borderColor = extColors.subtleBorder
-                )
-                CreditEntryCard(
-                    sectionLabel = strings.creditsOriginalLibSectionLabel,
-                    libraryName = "FFmpegKit",
-                    packageTag = "arthenica/ffmpeg-kit",
-                    authorLine = strings.creditsOriginalLibCreator,
-                    borderColor = extColors.subtleBorder
-                )
+                val runtimeFfmpegVer by produceState<String?>(initialValue = null) {
+                    value = withContext(Dispatchers.IO) {
+                        FfmpegEngine.getRuntimeFfmpegVersion()
+                    }
+                }
                 val simdProfile = remember {
                     CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask)
                 }
                 CreditEntryCard(
-                    sectionLabel = strings.creditsForkSectionLabel,
-                    libraryName = if (BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG) {
-                        "FFmpegKit Maintained (ARM64-O3 SIMD GPL)"
-                    } else {
-                        "FFmpegKit Maintained (Full GPL)"
-                    },
-                    packageTag = if (BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG) {
-                        "Custom ARM64-O3 · Runtime NEON/DotProd/I8MM"
-                    } else {
-                        "dev.ffmpegkit-maintained · v8.1.9"
-                    },
-                    authorLine = strings.creditsForkMaintainer,
-                    extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
+                    sectionLabel = strings.creditsCoreSectionLabel,
+                    libraryName = "FFmpeg",
+                    packageTag = runtimeFfmpegVer?.let { "v$it" },
+                    authorLine = strings.creditsCoreCreators,
+                    extraNote = strings.creditsCoreEncoders,
                     borderColor = extColors.subtleBorder
                 )
+                if (BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG) {
+                    CreditEntryCard(
+                        sectionLabel = strings.creditsNextLibSectionLabel,
+                        libraryName = "FFmpegKit Next (Full GPL · ARM64-O3)",
+                        packageTag = "arthenica/ffmpeg-kit-next · Runtime SIMD",
+                        authorLine = strings.creditsOriginalLibCreator,
+                        extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
+                        borderColor = extColors.subtleBorder
+                    )
+                } else {
+                    CreditEntryCard(
+                        sectionLabel = strings.creditsOriginalLibSectionLabel,
+                        libraryName = "FFmpegKit",
+                        packageTag = "arthenica/ffmpeg-kit",
+                        authorLine = strings.creditsOriginalLibCreator,
+                        borderColor = extColors.subtleBorder
+                    )
+                    CreditEntryCard(
+                        sectionLabel = strings.creditsForkSectionLabel,
+                        libraryName = "FFmpegKit Maintained (Full GPL)",
+                        packageTag = "dev.ffmpegkit-maintained · v8.1.9",
+                        authorLine = strings.creditsForkMaintainer,
+                        extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
+                        borderColor = extColors.subtleBorder
+                    )
+                }
                 CreditEntryCard(
                     sectionLabel = strings.creditsMedia3SectionLabel,
                     libraryName = "AndroidX Media3 Transformer",

@@ -129,6 +129,7 @@ interface AppStrings {
     val creditsCoreEncoders: String
     val creditsOriginalLibSectionLabel: String
     val creditsOriginalLibCreator: String
+    val creditsNextLibSectionLabel: String
     val creditsForkSectionLabel: String
     val creditsForkMaintainer: String
     val creditsMedia3SectionLabel: String
@@ -518,6 +519,7 @@ object TurkishStrings : AppStrings {
     override val creditsCoreEncoders = "Dahili kodekler: x264 (VideoLAN), x265 (MulticoreWare), LAME MP3"
     override val creditsOriginalLibSectionLabel = "Orijinal Android Kütüphanesi"
     override val creditsOriginalLibCreator = "Yapımcı: Taner Şener (ARTHENICA)"
+    override val creditsNextLibSectionLabel = "Aktif Android Kütüphanesi"
     override val creditsForkSectionLabel = "Kullanılan Özel Fork"
     override val creditsForkMaintainer = "Sürdürücü: Jokobee & ffmpegkit-maintained Topluluğu"
     override val creditsMedia3SectionLabel = "Donanım Hızlandırma Motoru"
@@ -953,6 +955,7 @@ object EnglishStrings : AppStrings {
     override val creditsCoreEncoders = "Bundled encoders: x264 (VideoLAN), x265 (MulticoreWare), LAME MP3"
     override val creditsOriginalLibSectionLabel = "Original Android Library"
     override val creditsOriginalLibCreator = "Author: Taner Şener (ARTHENICA)"
+    override val creditsNextLibSectionLabel = "Active Android Library"
     override val creditsForkSectionLabel = "Maintained Fork Used"
     override val creditsForkMaintainer = "Maintainer: Jokobee & ffmpegkit-maintained Contributors"
     override val creditsMedia3SectionLabel = "Hardware Acceleration Engine"

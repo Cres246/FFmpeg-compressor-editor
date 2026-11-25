@@ -9,7 +9,12 @@ plugins {
 }
 
 val customFfmpegAarFile = file("libs/ffmpeg-kit-custom-arm64-gpl.aar")
+val customFfmpegInfoFile = file("libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt")
 val useCustomSimdFfmpeg = customFfmpegAarFile.isFile && customFfmpegAarFile.length() > 1_000_000L
+val customAarBundlesSmartException =
+  useCustomSimdFfmpeg &&
+    customFfmpegInfoFile.isFile &&
+    customFfmpegInfoFile.readText().contains("bundles_smart_exception=true")
 
 android {
   namespace = "com.example"
@@ -26,7 +31,7 @@ android {
     buildConfigField(
       "String",
       "FFMPEG_ENGINE_VARIANT",
-      if (useCustomSimdFfmpeg) "\"ARM64-O3 SIMD\"" else "\"FFmpegKit 8.1.9\""
+      if (useCustomSimdFfmpeg) "\"FFmpegKit Next · ARM64-O3\"" else "\"FFmpegKit 8.1.9\""
     )
     if (useCustomSimdFfmpeg) {
       ndk {
@@ -143,7 +148,9 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   if (useCustomSimdFfmpeg) {
     implementation(files(customFfmpegAarFile))
-    implementation(libs.smart.exception.java)
+    if (!customAarBundlesSmartException) {
+      implementation(libs.smart.exception.java)
+    }
   } else {
     implementation(libs.ffmpeg.kit.full.gpl)
   }

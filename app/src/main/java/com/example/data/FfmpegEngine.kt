@@ -52,8 +52,26 @@ object FfmpegEngine {
     @Volatile
     private var logRedirectionConfigured: Boolean = false
 
+    @Volatile
+    private var cachedFfmpegVersion: String? = null
+
     private val previewFallbackMutex = Mutex()
     private val activeSessionCompletion = AtomicReference<CompletableDeferred<Unit>?>(null)
+
+    /**
+     * Queries the live FFmpeg version string compiled into the bundled native libraries
+     * (e.g. `9.0.2` for FFmpegKit Next), cached across calls.
+     */
+    fun getRuntimeFfmpegVersion(): String? {
+        cachedFfmpegVersion?.let { return it }
+        return runCatching {
+            ensureSilentLogcat()
+            FFmpegKitConfig.getFFmpegVersion()
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.also { cachedFfmpegVersion = it }
+        }.getOrNull()
+    }
 
     /**
      * Cancels any running native FFmpegKit session and suspends until FFmpegKit's native
