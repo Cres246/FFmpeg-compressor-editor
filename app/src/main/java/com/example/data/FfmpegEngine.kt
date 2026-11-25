@@ -203,13 +203,13 @@ object FfmpegEngine {
 
         val safPath = resolveInputPath(context, uri)
         val session = FFprobeKit.getMediaInformation(safPath)
-        val info = session.mediaInformation
+        val info = session.getMediaInformation()
             ?: throw IllegalStateException(AppLanguageController.currentStrings().errUnsupportedMediaFile)
 
-        val durationSec = info.duration?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val durationSec = info.getDuration()?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
         val sizeBytes = when {
             sizeFromCursor > 0L -> sizeFromCursor
-            else -> info.size?.toLongOrNull() ?: 0L
+            else -> info.getSize()?.toLongOrNull() ?: 0L
         }
 
         var vCodec: String? = null
@@ -225,21 +225,21 @@ object FfmpegEngine {
         var aBitrateKbps: Int? = null
         var aChannels: Int? = null
 
-        val streams = info.streams.orEmpty()
-        val videoStreams = streams.filter { it.type?.equals("video", ignoreCase = true) == true }
+        val streams = info.getStreams().orEmpty()
+        val videoStreams = streams.filter { it.getType()?.equals("video", ignoreCase = true) == true }
         // Strictly exclude embedded cover art (`disposition.attached_pic == 1`) so MP3/FLAC/M4A
         // files with album art are never misidentified as videos.
         val primaryVideoStream = videoStreams.firstOrNull { stream ->
             val attachedPic = runCatching {
-                stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+                stream.getAllProperties()?.optJSONObject("disposition")?.optInt("attached_pic", 0)
             }.getOrNull() ?: 0
             attachedPic != 1
         }
 
         if (primaryVideoStream != null) {
-            vCodec = primaryVideoStream.codec
-            val rawW = primaryVideoStream.width?.toInt()?.takeIf { it > 0 }
-            val rawH = primaryVideoStream.height?.toInt()?.takeIf { it > 0 }
+            vCodec = primaryVideoStream.getCodec()
+            val rawW = primaryVideoStream.getWidth()?.toInt()?.takeIf { it > 0 }
+            val rawH = primaryVideoStream.getHeight()?.toInt()?.takeIf { it > 0 }
             val rotation = extractStreamRotationDegrees(primaryVideoStream, context, uri)
             if (rawW != null && rawH != null) {
                 if (kotlin.math.abs(rotation) % 180 == 90) {
@@ -259,11 +259,11 @@ object FfmpegEngine {
                 ?: parseFrameRate(primaryVideoStream.getStringProperty("r_frame_rate"))
         }
 
-        val primaryAudioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+        val primaryAudioStream = streams.firstOrNull { it.getType()?.equals("audio", ignoreCase = true) == true }
         if (primaryAudioStream != null) {
-            aCodec = primaryAudioStream.codec
+            aCodec = primaryAudioStream.getCodec()
             aChannels = runCatching {
-                primaryAudioStream.allProperties?.optInt("channels", 0)?.takeIf { it > 0 }
+                primaryAudioStream.getAllProperties()?.optInt("channels", 0)?.takeIf { it > 0 }
             }.getOrNull()
 
             var audioBps = extractStreamBitrateBps(primaryAudioStream)
@@ -271,7 +271,7 @@ object FfmpegEngine {
                 audioBps = probeAudioBitrateWithExtractor(context, uri)
             }
             if (audioBps == null && primaryVideoStream == null) {
-                audioBps = info.bitrate?.toLongOrNull()?.takeIf { it > 0L }
+                audioBps = info.getBitrate()?.toLongOrNull()?.takeIf { it > 0L }
                     ?: if (sizeBytes > 0L && durationSec != null && durationSec > 0.5) {
                         ((sizeBytes * 8.0) / durationSec).toLong().takeIf { it > 0L }
                     } else null
@@ -360,7 +360,7 @@ object FfmpegEngine {
 
         val probeInfo = runCatching {
             ensureSilentLogcat()
-            FFprobeKit.getMediaInformation(file.absolutePath)?.mediaInformation
+            FFprobeKit.getMediaInformation(file.absolutePath)?.getMediaInformation()
         }.getOrNull()
 
         if (probeInfo == null) {
@@ -371,16 +371,16 @@ object FfmpegEngine {
             )
         }
 
-        val streams = probeInfo.streams.orEmpty()
+        val streams = probeInfo.getStreams().orEmpty()
         val videoStream = streams.firstOrNull { stream ->
-            stream.type?.equals("video", ignoreCase = true) == true &&
+            stream.getType()?.equals("video", ignoreCase = true) == true &&
                 (runCatching {
-                    stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+                    stream.getAllProperties()?.optJSONObject("disposition")?.optInt("attached_pic", 0)
                 }.getOrNull() ?: 0) != 1
         }
-        val audioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+        val audioStream = streams.firstOrNull { it.getType()?.equals("audio", ignoreCase = true) == true }
 
-        val vCodec = videoStream?.codec
+        val vCodec = videoStream?.getCodec()
         val pixFmt = videoStream?.getStringProperty("pix_fmt")
         val vProfile = videoStream?.getStringProperty("profile")
         val bitsPerSample = videoStream?.getStringProperty("bits_per_raw_sample")?.toIntOrNull() ?: 0
@@ -430,18 +430,18 @@ object FfmpegEngine {
         if (!file.exists() || file.length() == 0L) return@withContext ClipTimingProbe()
         ensureSilentLogcat()
         val info = runCatching {
-            FFprobeKit.getMediaInformation(file.absolutePath)?.mediaInformation
+            FFprobeKit.getMediaInformation(file.absolutePath)?.getMediaInformation()
         }.getOrNull()
 
-        val durationSec = info?.duration?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
-        val streams = info?.streams.orEmpty()
+        val durationSec = info?.getDuration()?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val streams = info?.getStreams().orEmpty()
         val videoStream = streams.firstOrNull { stream ->
-            stream.type?.equals("video", ignoreCase = true) == true &&
+            stream.getType()?.equals("video", ignoreCase = true) == true &&
                 (runCatching {
-                    stream.allProperties?.optJSONObject("disposition")?.optInt("attached_pic", 0)
+                    stream.getAllProperties()?.optJSONObject("disposition")?.optInt("attached_pic", 0)
                 }.getOrNull() ?: 0) != 1
         }
-        val audioStream = streams.firstOrNull { it.type?.equals("audio", ignoreCase = true) == true }
+        val audioStream = streams.firstOrNull { it.getType()?.equals("audio", ignoreCase = true) == true }
 
         var firstVideoPts = videoStream?.getStringProperty("start_time")
             ?.toDoubleOrNull()
@@ -463,7 +463,7 @@ object FfmpegEngine {
                         file.absolutePath
                     )
                 )
-                val out = pktSession.output.orEmpty()
+                val out = pktSession.getOutput().orEmpty()
                 var ptsVal: Double? = null
                 var dtsVal: Double? = null
                 for (line in out.lineSequence()) {
@@ -495,7 +495,7 @@ object FfmpegEngine {
     ): Int {
         // 1. Check FFprobe `side_data_list` displaymatrix rotation (standard in MP4/MOV/MKV)
         runCatching {
-            val sideDataList = stream.allProperties?.optJSONArray("side_data_list")
+            val sideDataList = stream.getAllProperties()?.optJSONArray("side_data_list")
             if (sideDataList != null) {
                 for (i in 0 until sideDataList.length()) {
                     val item = sideDataList.optJSONObject(i) ?: continue
@@ -508,7 +508,7 @@ object FfmpegEngine {
         }
         // 2. Check legacy stream `tags.rotate`
         runCatching {
-            val tagRot = stream.allProperties?.optJSONObject("tags")?.optString("rotate")?.trim()?.toIntOrNull()
+            val tagRot = stream.getAllProperties()?.optJSONObject("tags")?.optString("rotate")?.trim()?.toIntOrNull()
             if (tagRot != null) return ((tagRot % 360) + 360) % 360
         }
         // 3. Fallback to Android MediaMetadataRetriever for MOV/MP4 rotation matrix edge cases
@@ -534,11 +534,11 @@ object FfmpegEngine {
     }
 
     private fun extractStreamBitrateBps(stream: com.arthenica.ffmpegkit.StreamInformation): Long? {
-        val direct = stream.bitrate?.trim()?.toLongOrNull()?.takeIf { it > 0L }
+        val direct = stream.getBitrate()?.trim()?.toLongOrNull()?.takeIf { it > 0L }
         if (direct != null) return direct
         // MKV/WebM files often store exact per-stream bitrate in `tags.BPS` or `tags.BPS-eng`
         return runCatching {
-            val tags = stream.allProperties?.optJSONObject("tags") ?: return@runCatching null
+            val tags = stream.getAllProperties()?.optJSONObject("tags") ?: return@runCatching null
             val keys = tags.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
@@ -605,9 +605,9 @@ object FfmpegEngine {
         try {
             ensureSilentLogcat()
             val x264Out = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx264"))
-                .allLogsAsString.orEmpty()
+                .getAllLogsAsString().orEmpty()
             val x265Out = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx265"))
-                .allLogsAsString.orEmpty()
+                .getAllLogsAsString().orEmpty()
 
             val caps = EncoderCapabilities(
                 x264Supports10Bit = x264Out.contains("yuv420p10le"),
@@ -650,7 +650,7 @@ object FfmpegEngine {
                 safPath
             )
             val session = FFprobeKit.executeWithArguments(args)
-            val output = session.output.orEmpty()
+            val output = session.getOutput().orEmpty()
             return FfmpegMath.parseKeyframePackets(output, targetSec, isStart)
         }
 
@@ -746,7 +746,7 @@ object FfmpegEngine {
                             "-y", tmpFile.absolutePath
                         )
                     )
-                    if (ReturnCode.isSuccess(session.returnCode) && tmpFile.isFile && tmpFile.length() > 0L) {
+                    if (ReturnCode.isSuccess(session.getReturnCode()) && tmpFile.isFile && tmpFile.length() > 0L) {
                         BitmapFactory.decodeFile(tmpFile.absolutePath)
                     } else {
                         null
@@ -802,12 +802,12 @@ object FfmpegEngine {
                 { completedSession ->
                     sessionDone.complete(Unit)
                     activeSessionCompletion.compareAndSet(sessionDone, null)
-                    val rc = completedSession.returnCode
+                    val rc = completedSession.getReturnCode()
                     val isSuccess = ReturnCode.isSuccess(rc)
                     val isCancelled = ReturnCode.isCancel(rc)
                     val codeVal = rc?.value ?: -1
                     val rawOut = if (!isSuccess || captureRawOutput) {
-                        sanitizeRawFfmpegOutput(completedSession.allLogsAsString.orEmpty())
+                        sanitizeRawFfmpegOutput(completedSession.getAllLogsAsString().orEmpty())
                     } else {
                         ""
                     }
@@ -867,7 +867,7 @@ object FfmpegEngine {
         }
 
         cont.invokeOnCancellation {
-            runCatching { FFmpegKit.cancel(session.sessionId) }
+            runCatching { FFmpegKit.cancel(session.getSessionId()) }
         }
     }
 
@@ -893,13 +893,13 @@ object FfmpegEngine {
         }.toTypedArray()
 
         val session = FFprobeKit.executeWithArguments(fullArgs)
-        val rc = session.returnCode
+        val rc = session.getReturnCode()
         val isSuccess = ReturnCode.isSuccess(rc)
         val isCancelled = ReturnCode.isCancel(rc)
         val codeVal = rc?.value ?: -1
 
-        val rawOut = session.output.orEmpty().trim()
-            .ifBlank { session.allLogsAsString.orEmpty().trim() }
+        val rawOut = session.getOutput().orEmpty().trim()
+            .ifBlank { session.getAllLogsAsString().orEmpty().trim() }
             .let { if (it.length > 24_000) it.takeLast(24_000) else it }
 
         val lines = rawOut.lineSequence()

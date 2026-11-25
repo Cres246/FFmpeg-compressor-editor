@@ -1,0 +1,334 @@
+Run if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+Starting a Gradle Daemon (subsequent builds will be faster)
+Calculating task graph as no cached configuration is available for tasks: testDebugUnitTest
+
+> Configure project :app
+Checking the license for package NDK (Side by side) 28.2.13676358 in /usr/local/lib/android/sdk/licenses
+License for package NDK (Side by side) 28.2.13676358 accepted.
+Preparing "Install NDK (Side by side) 28.2.13676358 v.28.2.13676358".
+"Install NDK (Side by side) 28.2.13676358 v.28.2.13676358" ready.
+Installing NDK (Side by side) 28.2.13676358 in /usr/local/lib/android/sdk/ndk/28.2.13676358
+"Install NDK (Side by side) 28.2.13676358 v.28.2.13676358" complete.
+"Install NDK (Side by side) 28.2.13676358 v.28.2.13676358" finished.
+
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:processDebugGoogleServices FROM-CACHE
+> Task :app:generateDebugResources FROM-CACHE
+> Task :app:javaPreCompileDebug FROM-CACHE
+> Task :app:generateDebugBuildConfig
+> Task :app:packageDebugResources FROM-CACHE
+> Task :app:kspDebugKotlin SKIPPED
+> Task :app:mapDebugSourceSetPaths
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:compileDebugNavigationResources FROM-CACHE
+> Task :app:checkDebugAarMetadata
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:javaPreCompileDebugUnitTest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:generateDebugRFile FROM-CACHE
+> Task :app:mergeDebugAssets
+> Task :app:processDebugUnitTestManifest
+> Task :app:mergeDebugResources
+> Task :app:processDebugResources
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:generateDebugUnitTestConfig
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:206:28 Cannot access 'var mediaInformation: MediaInformation?': it is private in 'com.arthenica.ffmpegkit.MediaInformationSession'.
+
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:209:32 Unresolved reference 'duration' on receiver of type 'MediaInformation'.
+> Task :app:compileDebugKotlin
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:212:26 Unresolved reference 'size' on receiver of type 'MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:228:28 Cannot access 'val streams: List<StreamInformation>': it is private in 'com.arthenica.ffmpegkit.MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:229:48 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:233:31 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:234:24 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:240:41 Unresolved reference 'codec' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:241:43 Unresolved reference 'width' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:242:43 Unresolved reference 'height' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:262:59 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:264:41 Unresolved reference 'codec' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:265:25 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:266:36 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:266:74 Cannot infer type for type parameter 'T'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:266:81 Cannot infer type for type parameter 'T'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:266:86 'operator' modifier is required on 'fun <T> Comparable<T>.compareTo(other: T): Int'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:274:33 Unresolved reference 'bitrate' on receiver of type 'MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:363:64 Cannot access 'var mediaInformation: MediaInformation?': it is private in 'com.arthenica.ffmpegkit.MediaInformationSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:374:33 Cannot access 'val streams: List<StreamInformation>': it is private in 'com.arthenica.ffmpegkit.MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:376:20 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:377:18 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:378:28 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:381:52 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:383:35 Unresolved reference 'codec' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:433:64 Cannot access 'var mediaInformation: MediaInformation?': it is private in 'com.arthenica.ffmpegkit.MediaInformationSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:436:33 Unresolved reference 'duration' on receiver of type 'MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:437:29 Cannot access 'val streams: List<StreamInformation>': it is private in 'com.arthenica.ffmpegkit.MediaInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:439:20 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:440:18 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:441:28 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:444:52 Unresolved reference 'type' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:466:38 Unresolved reference 'output' on receiver of type 'FFprobeSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:498:39 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:500:48 Unresolved reference 'length' on receiver of type 'Any'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:501:45 Unresolved reference 'optJSONObject' on receiver of type 'Any'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:511:33 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:537:29 Unresolved reference 'bitrate' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:541:31 Unresolved reference 'allProperties' on receiver of type 'StreamInformation'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:608:18 Unresolved reference 'allLogsAsString' on receiver of type 'FFmpegSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:610:18 Unresolved reference 'allLogsAsString' on receiver of type 'FFmpegSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:653:34 Unresolved reference 'output' on receiver of type 'FFprobeSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:749:54 Cannot access 'var returnCode: ReturnCode?': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:805:47 Cannot access 'var returnCode: ReturnCode?': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:810:66 Unresolved reference 'allLogsAsString' on receiver of type 'FFmpegSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:870:52 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:896:26 Cannot access 'var returnCode: ReturnCode?': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:901:30 Unresolved reference 'output' on receiver of type 'FFprobeSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt:902:32 Unresolved reference 'allLogsAsString' on receiver of type 'FFprobeSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:659:75 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:661:76 Cannot access 'var returnCode: ReturnCode?': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:672:51 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:674:65 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:675:60 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:678:65 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+e: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/VideoFrameScrubber.kt:679:60 Cannot access 'val sessionId: Long': it is protected in 'com.arthenica.ffmpegkit.AbstractSession'.
+
+
+> Task :app:compileDebugKotlin FAILED
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1795647872972.json
+
+FAILURE: Build failed with an exception.
+[Incubating] Problems report is available at: file:///home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/build/reports/problems/problems-report.html
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+24 actionable tasks: 11 executed, 13 from cache
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.btapi.BuildToolsApiCompilationWork
+   > Kotlin compiler: INVISIBLE_REFERENCE
+       Kotlin compiler error
+         Cannot access 'var mediaInformation: MediaInformation?': it is private in 'com.arthenica.ffmpegkit.MediaInformationSession'.
+         Location: /home/runner/work/FFmpeg-compressor-editor/FFmpeg-compressor-editor/app/src/main/java/com/example/data/FfmpegEngine.kt line 206
+
+* Try:
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+* Exception is:
+org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app:compileDebugKotlin'.
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.lambda$executeIfValid$1(ExecuteActionsTaskExecuter.java:135)
+	at org.gradle.internal.Try$Failure.ifSuccessfulOrElse(Try.java:288)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:133)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.execute(ExecuteActionsTaskExecuter.java:121)
+	at org.gradle.api.internal.tasks.execution.ProblemsTaskPathTrackingTaskExecuter.execute(ProblemsTaskPathTrackingTaskExecuter.java:41)
+	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:46)
+	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.java:51)
+	at org.gradle.api.internal.tasks.execution.SkipTaskWithNoActionsExecuter.execute(SkipTaskWithNoActionsExecuter.java:57)
+	at org.gradle.api.internal.tasks.execution.SkipOnlyIfTaskExecuter.execute(SkipOnlyIfTaskExecuter.java:74)
+	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.executeTask(EventFiringTaskExecuter.java:77)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:55)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:52)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter.execute(EventFiringTaskExecuter.java:52)
+	at org.gradle.execution.plan.DefaultNodeExecutor.executeLocalTaskNode(DefaultNodeExecutor.java:55)
+	at org.gradle.execution.plan.DefaultNodeExecutor.execute(DefaultNodeExecutor.java:34)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:355)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:343)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.lambda$execute$0(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.internal.operations.CurrentBuildOperationRef.with(CurrentBuildOperationRef.java:84)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:328)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.execute(DefaultPlanExecutor.java:459)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.run(DefaultPlanExecutor.java:376)
+	at org.gradle.execution.plan.DefaultPlanExecutor.process(DefaultPlanExecutor.java:111)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph.executeWithServices(DefaultTaskExecutionGraph.java:146)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph.execute(DefaultTaskExecutionGraph.java:131)
+	at org.gradle.execution.SelectedTaskExecutionAction.execute(SelectedTaskExecutionAction.java:35)
+	at org.gradle.execution.BuildOperationFiringBuildWorkerExecutor$ExecuteTasks.call(BuildOperationFiringBuildWorkerExecutor.java:54)
+	at org.gradle.execution.BuildOperationFiringBuildWorkerExecutor$ExecuteTasks.call(BuildOperationFiringBuildWorkerExecutor.java:43)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.execution.BuildOperationFiringBuildWorkerExecutor.execute(BuildOperationFiringBuildWorkerExecutor.java:40)
+	at org.gradle.internal.build.DefaultBuildLifecycleController.lambda$executeTasks$10(DefaultBuildLifecycleController.java:313)
+	at org.gradle.internal.model.StateTransitionController.doTransition(StateTransitionController.java:276)
+	at org.gradle.internal.model.StateTransitionController.lambda$tryTransition$8(StateTransitionController.java:187)
+	at org.gradle.internal.work.DefaultSynchronizer.withLock(DefaultSynchronizer.java:45)
+	at org.gradle.internal.model.StateTransitionController.tryTransition(StateTransitionController.java:187)
+	at org.gradle.internal.build.DefaultBuildLifecycleController.executeTasks(DefaultBuildLifecycleController.java:304)
+	at org.gradle.internal.build.DefaultBuildWorkGraphController$DefaultBuildWorkGraph.runWork(DefaultBuildWorkGraphController.java:220)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.lambda$withLocksAcquired$0(DefaultWorkerLeaseService.java:269)
+	at org.gradle.internal.work.ResourceLockStatistics$1.measure(ResourceLockStatistics.java:42)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withLocksAcquired(DefaultWorkerLeaseService.java:267)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withLocks(DefaultWorkerLeaseService.java:259)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.runAsWorkerThread(DefaultWorkerLeaseService.java:127)
+	at org.gradle.composite.internal.DefaultBuildController.doRun(DefaultBuildController.java:181)
+	at org.gradle.composite.internal.DefaultBuildController.access$000(DefaultBuildController.java:50)
+	at org.gradle.composite.internal.DefaultBuildController$BuildOpRunnable.lambda$run$0(DefaultBuildController.java:198)
+	at org.gradle.internal.operations.CurrentBuildOperationRef.with(CurrentBuildOperationRef.java:84)
+	at org.gradle.composite.internal.DefaultBuildController$BuildOpRunnable.run(DefaultBuildController.java:198)
+	at org.gradle.internal.concurrent.ExecutorPolicy$CatchAndRecordFailures.onExecute(ExecutorPolicy.java:64)
+	at org.gradle.internal.concurrent.AbstractManagedExecutor$1.run(AbstractManagedExecutor.java:47)
+Caused by: org.gradle.workers.internal.DefaultWorkerExecutor$WorkExecutionException: A failure occurred while executing org.jetbrains.kotlin.compilerRunner.btapi.BuildToolsApiCompilationWork
+	at org.gradle.workers.internal.DefaultWorkerExecutor$WorkItemExecution.waitForCompletion(DefaultWorkerExecutor.java:289)
+	at org.gradle.internal.work.DefaultAsyncWorkTracker.lambda$waitForItemsAndGatherFailures$2(DefaultAsyncWorkTracker.java:130)
+	at org.gradle.internal.Factories$1.create(Factories.java:30)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.lambda$withoutLocks$2(DefaultWorkerLeaseService.java:344)
+	at org.gradle.internal.work.ResourceLockStatistics$1.measure(ResourceLockStatistics.java:42)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:342)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:326)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLock(DefaultWorkerLeaseService.java:331)
+	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:126)
+	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:92)
+	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForAll(DefaultAsyncWorkTracker.java:78)
+	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForCompletion(DefaultAsyncWorkTracker.java:66)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$3.run(TaskExecution.java:267)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:29)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:26)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.run(DefaultBuildOperationRunner.java:47)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeAction(TaskExecution.java:244)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeActions(TaskExecution.java:227)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeWithPreviousOutputFiles(TaskExecution.java:210)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.execute(TaskExecution.java:176)
+	at org.gradle.internal.execution.steps.ExecuteStep.executeInternal(ExecuteStep.java:110)
+	at org.gradle.internal.execution.steps.ExecuteStep.access$000(ExecuteStep.java:47)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:64)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:61)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.internal.execution.steps.ExecuteStep.execute(ExecuteStep.java:61)
+	at org.gradle.internal.execution.steps.ExecuteStep.execute(ExecuteStep.java:47)
+	at org.gradle.internal.execution.steps.CancelExecutionStep.execute(CancelExecutionStep.java:42)
+	at org.gradle.internal.execution.steps.TimeoutStep.executeWithoutTimeout(TimeoutStep.java:75)
+	at org.gradle.internal.execution.steps.TimeoutStep.execute(TimeoutStep.java:55)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:51)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:29)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:70)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:40)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:62)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:27)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:69)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:46)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:39)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:28)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeWithoutCache(BuildCacheStep.java:192)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeAndStoreInCache(BuildCacheStep.java:148)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$executeWithCache$4(BuildCacheStep.java:104)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$executeWithCache$5(BuildCacheStep.java:104)
+	at org.gradle.internal.Try$Success.map(Try.java:170)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeWithCache(BuildCacheStep.java:88)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$execute$0(BuildCacheStep.java:75)
+	at org.gradle.internal.Either$Left.fold(Either.java:116)
+	at org.gradle.internal.execution.caching.CachingState.fold(CachingState.java:62)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:74)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:49)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.execute(StoreExecutionStateStep.java:46)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.execute(StoreExecutionStateStep.java:35)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.executeBecause(SkipUpToDateStep.java:75)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.lambda$execute$2(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:35)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:37)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:27)
+	at org.gradle.internal.execution.steps.ResolveIncrementalCachingStateStep.executeDelegate(ResolveIncrementalCachingStateStep.java:49)
+	at org.gradle.internal.execution.steps.ResolveIncrementalCachingStateStep.executeDelegate(ResolveIncrementalCachingStateStep.java:27)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:71)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:39)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:63)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:34)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.ValidateStep.execute(ValidateStep.java:64)
+	at org.gradle.internal.execution.steps.ValidateStep.execute(ValidateStep.java:42)
+	at org.gradle.internal.execution.steps.AbstractCaptureStateBeforeExecutionStep.execute(AbstractCaptureStateBeforeExecutionStep.java:77)
+	at org.gradle.internal.execution.steps.AbstractCaptureStateBeforeExecutionStep.execute(AbstractCaptureStateBeforeExecutionStep.java:46)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.executeWithNonEmptySources(AbstractSkipEmptyWorkStep.java:133)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.execute(AbstractSkipEmptyWorkStep.java:64)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.execute(AbstractSkipEmptyWorkStep.java:36)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsStartedStep.execute(MarkSnapshottingInputsStartedStep.java:38)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.execute(LoadPreviousExecutionStateStep.java:36)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.execute(LoadPreviousExecutionStateStep.java:23)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:77)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:43)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.lambda$execute$0(AssignMutableWorkspaceStep.java:35)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$4.withWorkspace(TaskExecution.java:305)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.execute(AssignMutableWorkspaceStep.java:31)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.execute(AssignMutableWorkspaceStep.java:22)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:40)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:23)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.lambda$execute$2(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:39)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:46)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:34)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:44)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:31)
+	at org.gradle.internal.execution.impl.DefaultExecutionEngine$1.execute(DefaultExecutionEngine.java:68)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:132)
+	... 61 more
+Caused by: org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Cannot access 'var mediaInformation: MediaInformation?': it is private in 'com.arthenica.ffmpegkit.MediaInformationSession'.
+	at org.jetbrains.kotlin.gradle.plugin.diagnostics.DefaultCompilerDiagnosticsProblemsReporter.reportCompilerMessage(CompilerDiagnosticsProblemsReporter.kt:63)
+	at org.jetbrains.kotlin.compilerRunner.btapi.ProblemsApiCompilerMessageRenderer.replayTo(ProblemsApiCompilerMessageRenderer.kt:88)
+	at org.jetbrains.kotlin.compilerRunner.btapi.BuildToolsApiCompilationWork.execute(BuildToolsApiCompilationWork.kt:251)
+	at org.gradle.workers.internal.DefaultWorkerServer.execute(DefaultWorkerServer.java:68)
+	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:64)
+	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:61)
+	at org.gradle.internal.classloader.ClassLoaderUtils.executeInClassloader(ClassLoaderUtils.java:102)
+	at org.gradle.workers.internal.NoIsolationWorkerFactory$1.lambda$execute$0(NoIsolationWorkerFactory.java:61)
+	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:44)
+	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:41)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.workers.internal.AbstractWorker.executeWrappedInBuildOperation(AbstractWorker.java:41)
+	at org.gradle.workers.internal.NoIsolationWorkerFactory$1.execute(NoIsolationWorkerFactory.java:58)
+	at org.gradle.workers.internal.DefaultWorkerExecutor.lambda$submitWork$0(DefaultWorkerExecutor.java:176)
+	at org.gradle.internal.work.DefaultConditionalExecutionQueue$ExecutionRunner.runExecution(DefaultConditionalExecutionQueue.java:194)
+	at org.gradle.internal.work.DefaultConditionalExecutionQueue$ExecutionRunner.access$700(DefaultConditionalExecutionQueue.java:127)
+	at org.gradle.internal.work.DefaultConditionalExecutionQueue$ExecutionRunner$1.run(DefaultConditionalExecutionQueue.java:169)
+	at org.gradle.internal.Factories$1.create(Factories.java:30)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.lambda$withLocksAcquired$0(DefaultWorkerLeaseService.java:269)
+	at org.gradle.internal.work.ResourceLockStatistics$1.measure(ResourceLockStatistics.java:42)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withLocksAcquired(DefaultWorkerLeaseService.java:267)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.withLocks(DefaultWorkerLeaseService.java:259)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.runAsWorkerThread(DefaultWorkerLeaseService.java:127)
+	at org.gradle.internal.work.DefaultWorkerLeaseService.runAsWorkerThread(DefaultWorkerLeaseService.java:132)
+	at org.gradle.internal.work.DefaultConditionalExecutionQueue$ExecutionRunner.runBatch(DefaultConditionalExecutionQueue.java:164)
+	at org.gradle.internal.work.DefaultConditionalExecutionQueue$ExecutionRunner.run(DefaultConditionalExecutionQueue.java:133)
+	... 2 more
+
+
+BUILD FAILED in 1m 4s
+Configuration cache entry stored.
+Error: Process completed with exit code 1.

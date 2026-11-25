@@ -656,9 +656,9 @@ class VideoFrameScrubber(
                     FFmpegKit.executeWithArgumentsAsync(
                         args,
                         { completed ->
-                            activeFfmpegSessionId.compareAndSet(completed.sessionId, -1L)
+                            activeFfmpegSessionId.compareAndSet(completed.getSessionId(), -1L)
                             if (cont.isActive) {
-                                cont.resume(ReturnCode.isSuccess(completed.returnCode))
+                                cont.resume(ReturnCode.isSuccess(completed.getReturnCode()))
                             }
                         },
                         null,
@@ -669,14 +669,15 @@ class VideoFrameScrubber(
                     return@suspendCancellableCoroutine
                 }
 
-                activeFfmpegSessionId.set(session.sessionId)
+                val sessionId = session.getSessionId()
+                activeFfmpegSessionId.set(sessionId)
                 if (closed) {
-                    activeFfmpegSessionId.compareAndSet(session.sessionId, -1L)
-                    runCatching { FFmpegKit.cancel(session.sessionId) }
+                    activeFfmpegSessionId.compareAndSet(sessionId, -1L)
+                    runCatching { FFmpegKit.cancel(sessionId) }
                 }
                 cont.invokeOnCancellation {
-                    activeFfmpegSessionId.compareAndSet(session.sessionId, -1L)
-                    runCatching { FFmpegKit.cancel(session.sessionId) }
+                    activeFfmpegSessionId.compareAndSet(sessionId, -1L)
+                    runCatching { FFmpegKit.cancel(sessionId) }
                 }
             }
 
