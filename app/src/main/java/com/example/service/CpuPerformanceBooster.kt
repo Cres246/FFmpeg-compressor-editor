@@ -17,22 +17,19 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Engages sustained maximum CPU/ADPF throughput for both software FFmpeg (`libx264`/`libx265`)
- * and hardware Turbo (`Media3`/`DirectMediaCodec`) threads, both in the foreground and while
- * backgrounded:
- * 1. Inspects `/proc/self/task` (sandbox-local, zero permissions) to discover active native
- *    FFmpeg, MediaCodec, GL, and demuxer worker threads and measure their CPU tick deltas.
- * 2. Detects the host phone's real CPU cluster topology via [CpuTopology] (supporting big.LITTLE,
- *    Prime+Big+Little, all-big-core flagships, and symmetric SoCs) and pins hot encoder/feeder
- *    threads onto Prime + Performance (Big) cores via JNI `sched_setaffinity` ([NativeCpuAffinity]),
- *    preventing slow Efficiency (Little) cores from stalling `x264`/`x265` sync barriers.
- * 3. Continuously re-applies the highest allowed Linux nice priority (`-10` on top 2 workers,
- *    `THREAD_PRIORITY_URGENT_DISPLAY` on next 6, `THREAD_PRIORITY_DISPLAY` across remaining pool)
- *    every 1.2s via a dedicated ticker so OEM schedulers cannot silently demote encoding threads.
- * 4. Registers active encoder TIDs into Android's ADPF [PerformanceHintManager.Session], sets
- *    `setPreferPowerEfficiency(false)` on Android 15+ (API 35+), updates threads via `setThreads()`
- *    on Android 14+, and pulses aggressive work-duration overruns (`8ms` target / `24ms` actual)
- *    so PowerHAL sustains Prime + Performance core clocks even when no Activity is visible.
+ * Sustains high multi-core throughput for both software FFmpeg (`libx264`/`libx265`) and hardware
+ * Turbo (`Media3`/`DirectMediaCodec`) threads in foreground and background without fighting the
+ * Linux EAS scheduler or tripping early thermal throttling:
+ * 1. Samples `/proc/self/task/<tid>/stat` (single file read per thread, extracting both `(comm)`
+ *    and CPU ticks at once) on a lightweight 5s cadence to identify active encoder/feeder threads.
+ * 2. Keeps ALL CPU cores unlocked (Prime + Big + Little — NO `sched_setaffinity` pinning) so
+ *    `x264`/`x265` and the kernel scheduler can utilize every core just like native Termux.
+ * 3. Applies a clean, uniform favorable priority (`THREAD_PRIORITY_DISPLAY` / `-4`) across active
+ *    encoder threads so OEM background schedulers cannot demote them to `+10` without causing
+ *    internal priority skew across row/frame synchronization barriers.
+ * 4. Maintains a balanced ADPF [PerformanceHintManager.Session] (`setPreferPowerEfficiency(false)`
+ *    on API 35+, sustainable `16ms`/`18ms` hint) so PowerHAL sustains multi-core clocks without
+ *    spiking peak voltage into premature thermal throttling.
  */
 class CpuPerformanceBooster(private val context: Context) {
 
@@ -41,10 +38,15 @@ class CpuPerformanceBooster(private val context: Context) {
         TURBO_MEDIACODEC
     }
 
+    private data class ThreadSample(
+        val tid: Int,
+        val comm: String,
+        val ticks: Long
+    )
+
     private var perfHintSession: PerformanceHintManager.Session? = null
     private var lastRegisteredTids: IntArray = IntArray(0)
     private var lastSampledCpuTicks: Map<Int, Long> = emptyMap()
-    private val pinnedTids: MutableSet<Int> = HashSet()
     private var lastBoostPulseElapsedMs: Long = 0L
     private var lastSessionReassertElapsedMs: Long = 0L
     private var tickerJob: Job? = null
@@ -70,8 +72,8 @@ class CpuPerformanceBooster(private val context: Context) {
         synchronized(lock) {
             active = true
             currentMode = mode
-            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
-            lastSampledCpuTicks = readProcessThreadTicks()
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
+            lastSampledCpuTicks = readProcessThreadSamples().associate { it.tid to it.ticks }
             lastSessionReassertElapsedMs = 0L
             refreshAndPulseLocked(force = true)
 
@@ -111,13 +113,6 @@ class CpuPerformanceBooster(private val context: Context) {
             active = false
             tickerJob?.cancel()
             tickerJob = null
-            if (pinnedTids.isNotEmpty()) {
-                val totalCores = CpuTopology.current().totalCores
-                pinnedTids.forEach { tid ->
-                    NativeCpuAffinity.resetThreadAffinity(tid, totalCores)
-                }
-                pinnedTids.clear()
-            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching { perfHintSession?.close() }
             }
@@ -134,26 +129,23 @@ class CpuPerformanceBooster(private val context: Context) {
         if (!active) return
         val now = SystemClock.elapsedRealtime()
         lastBoostPulseElapsedMs = now
-        val currentTicks = readProcessThreadTicks()
+        val samples = readProcessThreadSamples()
         val mainPid = Process.myPid()
         val maxThreads = if (currentMode == BoostMode.FFMPEG_SOFTWARE) 32 else 16
 
-        // Prune dead TIDs from affinity tracking set
-        pinnedTids.retainAll(currentTicks.keys)
-
         // Rank worker threads by CPU delta since last sample (falling back to total ticks on first sample)
-        val rankedEncoderTids = currentTicks.entries
-            .filter { (tid, _) -> tid != mainPid && !isSystemOrUiThread(tid) }
-            .map { (tid, ticks) ->
-                val prev = lastSampledCpuTicks[tid] ?: 0L
-                val delta = (ticks - prev).coerceAtLeast(0L)
-                Triple(tid, delta, ticks)
+        val rankedEncoderTids = samples
+            .filter { sample -> sample.tid != mainPid && !isIgnoredComm(sample.comm) }
+            .map { sample ->
+                val prev = lastSampledCpuTicks[sample.tid] ?: 0L
+                val delta = (sample.ticks - prev).coerceAtLeast(0L)
+                Triple(sample.tid, delta, sample.ticks)
             }
             .sortedWith(compareByDescending<Triple<Int, Long, Long>> { it.second }.thenByDescending { it.third })
             .map { it.first }
             .take(maxThreads)
 
-        lastSampledCpuTicks = currentTicks
+        lastSampledCpuTicks = samples.associate { it.tid to it.ticks }
 
         val targetTids = if (rankedEncoderTids.isNotEmpty()) {
             rankedEncoderTids.toIntArray()
@@ -161,59 +153,30 @@ class CpuPerformanceBooster(private val context: Context) {
             intArrayOf(Process.myTid())
         }
 
-        // Priority tiering + adaptive Prime/Big CPU affinity pinning across all Android SoCs.
+        // Uniform favorable priority across all active workers: prevents OEM background demotion
+        // without creating priority inversion on x264/x265 row/frame barriers or restricting cores.
         val isSoftwareFfmpeg = currentMode == BoostMode.FFMPEG_SOFTWARE
-        val topology = CpuTopology.current()
-        val pinLimit = when {
-            !NativeCpuAffinity.isLoaded -> 0
-            isSoftwareFfmpeg && topology.shouldPinEncoderPoolToPerformanceCores ->
-                (topology.performanceCpuIds.size + 4).coerceAtMost(targetTids.size)
-            isSoftwareFfmpeg && topology.shouldPinLeadThreadOnly ->
-                1.coerceAtMost(targetTids.size)
-            !isSoftwareFfmpeg && !topology.allBigCore && topology.isHeterogeneous && topology.performanceCpuIds.isNotEmpty() ->
-                2.coerceAtMost(targetTids.size)
-            else -> 0
-        }
-
         targetTids.forEachIndexed { index, tid ->
             if (isSoftwareFfmpeg) {
-                when {
-                    index <= 1 -> setHighestAllowedPriority(
-                        tid,
-                        preferredNice = -10,
-                        fallbackNice = Process.THREAD_PRIORITY_URGENT_DISPLAY
-                    )
-                    index <= 7 -> setHighestAllowedPriority(
-                        tid,
-                        preferredNice = Process.THREAD_PRIORITY_URGENT_DISPLAY,
-                        fallbackNice = Process.THREAD_PRIORITY_DISPLAY
-                    )
-                    else -> setHighestAllowedPriority(
-                        tid,
-                        preferredNice = Process.THREAD_PRIORITY_DISPLAY,
-                        fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
-                    )
-                }
+                setHighestAllowedPriority(
+                    tid = tid,
+                    preferredNice = Process.THREAD_PRIORITY_DISPLAY,
+                    fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
+                )
             } else {
-                // Turbo MediaCodec: keep Media3/GL/MediaCodec feeder threads unthrottled in background
+                // Turbo MediaCodec: keep Media3/GL/MediaCodec feeder threads responsive in background
                 // without starving hardware VPU/AudioFlinger Binder IPC threads.
                 when {
                     index <= 3 -> setHighestAllowedPriority(
-                        tid,
+                        tid = tid,
                         preferredNice = Process.THREAD_PRIORITY_URGENT_DISPLAY,
                         fallbackNice = Process.THREAD_PRIORITY_DISPLAY
                     )
                     else -> setHighestAllowedPriority(
-                        tid,
+                        tid = tid,
                         preferredNice = Process.THREAD_PRIORITY_DISPLAY,
                         fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
                     )
-                }
-            }
-
-            if (index < pinLimit) {
-                if (NativeCpuAffinity.pinThreadToCpus(tid, topology.performanceCpuIds)) {
-                    pinnedTids.add(tid)
                 }
             }
         }
@@ -244,7 +207,7 @@ class CpuPerformanceBooster(private val context: Context) {
             var session = perfHintSession
 
             if (session == null) {
-                session = createFullThrottleSession(phm, adpfTids)
+                session = createSustainedSession(phm, adpfTids)
                 if (session != null) {
                     perfHintSession = session
                     lastRegisteredTids = adpfTids.copyOf()
@@ -265,14 +228,14 @@ class CpuPerformanceBooster(private val context: Context) {
                             lastSessionReassertElapsedMs = nowElapsedMs
                         } else {
                             runCatching { session.close() }
-                            session = createFullThrottleSession(phm, adpfTids)
+                            session = createSustainedSession(phm, adpfTids)
                             perfHintSession = session
                             lastRegisteredTids = if (session != null) adpfTids.copyOf() else IntArray(0)
                             lastSessionReassertElapsedMs = nowElapsedMs
                         }
                     } else {
                         runCatching { session.close() }
-                        session = createFullThrottleSession(phm, adpfTids)
+                        session = createSustainedSession(phm, adpfTids)
                         perfHintSession = session
                         lastRegisteredTids = if (session != null) adpfTids.copyOf() else IntArray(0)
                         lastSessionReassertElapsedMs = nowElapsedMs
@@ -285,7 +248,7 @@ class CpuPerformanceBooster(private val context: Context) {
                 if (!reported) {
                     // Recover cleanly if OS invalidated the ADPF session during fg -> bg transition
                     runCatching { session?.close() }
-                    val recreated = createFullThrottleSession(phm, adpfTids)
+                    val recreated = createSustainedSession(phm, adpfTids)
                     perfHintSession = recreated
                     lastRegisteredTids = if (recreated != null) adpfTids.copyOf() else IntArray(0)
                     lastSessionReassertElapsedMs = nowElapsedMs
@@ -294,7 +257,7 @@ class CpuPerformanceBooster(private val context: Context) {
         }
     }
 
-    private fun createFullThrottleSession(
+    private fun createSustainedSession(
         phm: PerformanceHintManager,
         tids: IntArray
     ): PerformanceHintManager.Session? {
@@ -310,21 +273,27 @@ class CpuPerformanceBooster(private val context: Context) {
         return created
     }
 
-    private fun readProcessThreadTicks(): Map<Int, Long> {
-        val result = HashMap<Int, Long>()
+    /**
+     * Reads `/proc/self/task/<tid>/stat` in a single file open per thread to extract both the
+     * thread name `(comm)` and `utime + stime` CPU ticks without opening `/comm` separately.
+     */
+    private fun readProcessThreadSamples(): List<ThreadSample> {
+        val result = ArrayList<ThreadSample>(48)
         runCatching {
             val taskDir = File("/proc/self/task")
             taskDir.listFiles()?.forEach { dir ->
                 val tid = dir.name.toIntOrNull() ?: return@forEach
                 val statText = runCatching { File(dir, "stat").readText() }.getOrNull() ?: return@forEach
+                val openParen = statText.indexOf('(')
                 val closeParen = statText.lastIndexOf(')')
-                if (closeParen > 0 && closeParen + 2 < statText.length) {
+                if (openParen >= 0 && closeParen > openParen && closeParen + 2 < statText.length) {
+                    val comm = statText.substring(openParen + 1, closeParen)
                     val fields = statText.substring(closeParen + 2).trim().split(' ')
                     // After "(comm) ", field[11] = utime, field[12] = stime
                     if (fields.size > 12) {
                         val utime = fields[11].toLongOrNull() ?: 0L
                         val stime = fields[12].toLongOrNull() ?: 0L
-                        result[tid] = utime + stime
+                        result.add(ThreadSample(tid = tid, comm = comm, ticks = utime + stime))
                     }
                 }
             }
@@ -332,19 +301,17 @@ class CpuPerformanceBooster(private val context: Context) {
         return result
     }
 
-    private fun isSystemOrUiThread(tid: Int): Boolean {
-        val comm = runCatching { File("/proc/self/task/$tid/comm").readText().trim() }.getOrNull()
-            ?: return false
+    private fun isIgnoredComm(comm: String): Boolean {
         return ignoredThreadPrefixes.any { prefix -> comm.startsWith(prefix, ignoreCase = true) }
     }
 
     companion object {
-        private const val TICKER_INTERVAL_MS = 1_200L
-        private const val PULSE_MIN_INTERVAL_MS = 1_200L
-        private const val SESSION_REASSERT_INTERVAL_MS = 12_000L
-        // Tight 8ms target with 24ms actual overrun drives Prime + Big cores at full turbo clocks
-        private const val ADPF_TARGET_DURATION_NS = 8_000_000L
-        private const val ADPF_ACTUAL_DURATION_NS = 24_000_000L
+        private const val TICKER_INTERVAL_MS = 5_000L
+        private const val PULSE_MIN_INTERVAL_MS = 5_000L
+        private const val SESSION_REASSERT_INTERVAL_MS = 20_000L
+        // Sustainable ADPF hint keeps multi-core performance active without tripping early thermal throttling
+        private const val ADPF_TARGET_DURATION_NS = 16_000_000L
+        private const val ADPF_ACTUAL_DURATION_NS = 18_000_000L
 
         /**
          * Returns a concise hardware topology label (e.g., "8 çekirdek · Prime öncelikli").

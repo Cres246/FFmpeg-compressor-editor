@@ -46,16 +46,14 @@ data class EncoderThreadProfile(
  * Dynamic, device-agnostic CPU cluster topology for ANY Android phone (Snapdragon, MediaTek
  * Dimensity, Samsung Exynos, Google Tensor, Kirin, symmetric mid-rangers, and all-big-core SoCs).
  *
- * Key design goal:
- * - On heterogeneous big.LITTLE / Prime+Big+Little phones with >= 4 performance cores
- *   (e.g. 1+5+2, 1+4+3, 1+3+4, 1+2+3+4, 1+4+4), excludes slow Efficiency (Little) cores from
- *   heavy `libx264`/`libx265` worker thread pools so frame/WPP sync barriers never stall waiting
- *   for slow cores (while leaving Little cores free for OS/UI/I/O).
- * - On all-big-core flagships (e.g. Snapdragon 8 Elite 2+6 Oryon, Dimensity 9300/9400), detects
- *   that all cores are high-capacity performance cores and keeps ALL cores unlocked.
- * - On 2-Big + 6-Little mid-rangers (perfCores < 4), does NOT starve the pool to 2 cores; pins
- *   only the single heaviest lookahead/control thread to the 2 Big cores and lets workers span all cores.
- * - On symmetric CPUs or restricted sysfs ROMs, cleanly falls back to standard all-core auto threading.
+ * Key design decision (Termux parity):
+ * - Detects Prime/Big/Little clusters and max clock frequency from sysfs for hardware telemetry.
+ * - Intentionally keeps ALL cores unlocked (`-threads 0` for `libx264`, `pools=+` for `libx265`,
+ *   and NO `sched_setaffinity` Little-core exclusion). Real-world benchmarks against native Termux
+ *   encoding showed that excluding Little cores and capping `-threads`/`pools=` to `perfCount`
+ *   leaves 2–4 Efficiency cores idle and oversubscribes Big cores, causing ~20–30% lower
+ *   throughput and earlier thermal throttling compared to letting Linux EAS + x264/x265 utilize
+ *   every core.
  */
 data class CpuTopology(
     val totalCores: Int,
@@ -67,52 +65,25 @@ data class CpuTopology(
     val allBigCore: Boolean
 ) {
     /**
-     * True when we have a substantial Prime+Big cluster (>= 4 cores) AND slow Little cores exist
-     * that should be kept out of `x264`/`x265` synchronization barriers.
+     * Disabled: hard-pinning `x264`/`x265` worker pools onto Prime+Big cores leaves Little cores
+     * idle and increases Big-core contention/thermals versus Termux's all-core EAS scheduling.
      */
     val shouldPinEncoderPoolToPerformanceCores: Boolean
-        get() = isHeterogeneous &&
-            !allBigCore &&
-            littleCpuIds.isNotEmpty() &&
-            performanceCpuIds.size >= MIN_PERF_CORES_FOR_POOL_PINNING &&
-            performanceCpuIds.size < totalCores
+        get() = false
 
     /**
-     * True on 2-Big + 6-Little or 3-Big + N-Little phones where restricting the whole pool to
-     * 2–3 cores would hurt throughput, so we only pin the top 1–2 lookahead/control threads to
-     * Big cores while letting the full worker pool span all cores.
+     * Disabled: keep all worker threads unpinned so the Linux EAS scheduler can balance load
+     * across Prime, Big, and Little cores without barrier stalls.
      */
     val shouldPinLeadThreadOnly: Boolean
-        get() = isHeterogeneous &&
-            !allBigCore &&
-            littleCpuIds.isNotEmpty() &&
-            performanceCpuIds.size in 1 until MIN_PERF_CORES_FOR_POOL_PINNING
+        get() = false
 
-    fun computeEncoderThreadProfile(): EncoderThreadProfile {
-        if (!shouldPinEncoderPoolToPerformanceCores) {
-            return EncoderThreadProfile(
-                x264EncoderThreads = 0,
-                x265PoolsArg = "+",
-                x265FrameThreads = null,
-                x265ExplicitWpp = false
-            )
-        }
-        val perfCount = performanceCpuIds.size
-        // x264 benefits from perfCount + 1 threads (hiding decode/filter bubbles across pinned Big cores
-        // without causing heavy lock contention or spilling onto Little cores).
-        val x264Threads = (perfCount + 1).coerceIn(4, totalCores)
-        val x265FrameThreads = when {
-            perfCount >= 6 -> 3
-            perfCount >= 4 -> 2
-            else -> 1
-        }
-        return EncoderThreadProfile(
-            x264EncoderThreads = x264Threads,
-            x265PoolsArg = perfCount.toString(),
-            x265FrameThreads = x265FrameThreads,
-            x265ExplicitWpp = true
-        )
-    }
+    fun computeEncoderThreadProfile(): EncoderThreadProfile = EncoderThreadProfile(
+        x264EncoderThreads = 0,
+        x265PoolsArg = "+",
+        x265FrameThreads = null,
+        x265ExplicitWpp = false
+    )
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

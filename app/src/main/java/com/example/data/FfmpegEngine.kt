@@ -7,6 +7,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
@@ -756,8 +757,9 @@ object FfmpegEngine {
         captureRawOutput: Boolean = false
     ): FfmpegStepResult = suspendCancellableCoroutine { cont ->
         ensureSilentLogcat()
-        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
         val logsBuffer = mutableListOf<String>()
+        var lastStatsEmitMs = 0L
         val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
         val fullArgs = buildList {
             add("-hide_banner")
@@ -804,7 +806,9 @@ object FfmpegEngine {
                     }
                 },
                 { log ->
-                    val msg = log?.message?.trim() ?: return@executeWithArgumentsAsync
+                    val raw = log?.message ?: return@executeWithArgumentsAsync
+                    if (isFastDropProgressLine(raw)) return@executeWithArgumentsAsync
+                    val msg = raw.trim()
                     if (isImportantLogLine(msg)) {
                         var added = false
                         synchronized(logsBuffer) {
@@ -821,6 +825,11 @@ object FfmpegEngine {
                 },
                 { stats ->
                     if (stats != null) {
+                        val nowMs = SystemClock.elapsedRealtime()
+                        if (lastStatsEmitMs != 0L && nowMs - lastStatsEmitMs < 220L) {
+                            return@executeWithArgumentsAsync
+                        }
+                        lastStatsEmitMs = nowMs
                         val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
                         val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
                         val speedStr = if (stats.speed > 0.0) {
@@ -907,6 +916,15 @@ object FfmpegEngine {
         } else {
             result
         }
+    }
+
+    private fun isFastDropProgressLine(raw: String): Boolean {
+        var idx = 0
+        val len = raw.length
+        while (idx < len && raw[idx] <= ' ') idx++
+        if (idx >= len) return true
+        return raw.regionMatches(idx, "frame=", 0, 6, ignoreCase = true) ||
+            raw.regionMatches(idx, "size=", 0, 5, ignoreCase = true)
     }
 
     private fun isImportantLogLine(line: String): Boolean {

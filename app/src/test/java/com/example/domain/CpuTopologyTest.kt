@@ -30,7 +30,7 @@ class CpuTopologyTest {
     )
 
     @Test
-    fun snapdragon8Gen3_1plus5plus2_pinsEncoderPoolTo6PrimeAndBigCores() {
+    fun snapdragon8Gen3_1plus5plus2_detectsClustersAndKeepsAllCoresUnlocked() {
         // 2 Little A520 + 5 Big A720 + 1 Prime X4
         val cores = listOf(
             CpuCoreSpec(0, 2_265_600L, 320),
@@ -45,13 +45,14 @@ class CpuTopologyTest {
         val topo = CpuTopology.classify(cores)
         assertTrue(topo.isHeterogeneous)
         assertFalse(topo.allBigCore)
-        assertTrue(topo.shouldPinEncoderPoolToPerformanceCores)
+        assertFalse(topo.shouldPinEncoderPoolToPerformanceCores)
+        assertFalse(topo.shouldPinLeadThreadOnly)
         assertArrayEquals(intArrayOf(2, 3, 4, 5, 6, 7), topo.performanceCpuIds)
         assertArrayEquals(intArrayOf(0, 1), topo.littleCpuIds)
 
         val profile = topo.computeEncoderThreadProfile()
-        assertEquals(7, profile.x264EncoderThreads)
-        assertEquals("log-level=warning:pools=6:frame-threads=3:wpp=1", profile.buildX265BaseParams())
+        assertEquals(0, profile.x264EncoderThreads)
+        assertEquals("log-level=warning:pools=+", profile.buildX265BaseParams())
 
         val h265Steps = FfmpegMath.buildFfmpegSteps(
             media = sampleMedia(),
@@ -62,7 +63,7 @@ class CpuTopologyTest {
             strings = TurkishStrings,
             cpuTopology = topo
         )
-        assertTrue(h265Steps[0].args.contains("log-level=warning:pools=6:frame-threads=3:wpp=1:pass=1:stats=/tmp/pass.log"))
+        assertTrue(h265Steps[0].args.contains("log-level=warning:pools=+:pass=1:stats=/tmp/pass.log"))
 
         val h264Steps = FfmpegMath.buildFfmpegSteps(
             media = sampleMedia(),
@@ -75,11 +76,11 @@ class CpuTopologyTest {
         )
         val encIdx = h264Steps[0].args.indexOf("libx264")
         assertEquals("-threads", h264Steps[0].args[encIdx + 1])
-        assertEquals("7", h264Steps[0].args[encIdx + 2])
+        assertEquals("0", h264Steps[0].args[encIdx + 2])
     }
 
     @Test
-    fun classic1plus3plus4_freqOnlyFallback_pinsTo4PrimeAndBigCores() {
+    fun classic1plus3plus4_freqOnlyFallback_detectsClustersAndKeepsAll8CoresUnlocked() {
         // No cpu_capacity (older kernel / restricted SELinux), only cpuinfo_max_freq available
         val cores = listOf(
             CpuCoreSpec(0, 1_804_800L, null),
@@ -92,13 +93,14 @@ class CpuTopologyTest {
             CpuCoreSpec(7, 3_187_200L, null)
         )
         val topo = CpuTopology.classify(cores)
-        assertTrue(topo.shouldPinEncoderPoolToPerformanceCores)
+        assertFalse(topo.shouldPinEncoderPoolToPerformanceCores)
+        assertFalse(topo.shouldPinLeadThreadOnly)
         assertArrayEquals(intArrayOf(4, 5, 6, 7), topo.performanceCpuIds)
         assertArrayEquals(intArrayOf(0, 1, 2, 3), topo.littleCpuIds)
 
         val profile = topo.computeEncoderThreadProfile()
-        assertEquals(5, profile.x264EncoderThreads)
-        assertEquals("log-level=warning:pools=4:frame-threads=2:wpp=1", profile.buildX265BaseParams())
+        assertEquals(0, profile.x264EncoderThreads)
+        assertEquals("log-level=warning:pools=+", profile.buildX265BaseParams())
     }
 
     @Test
@@ -131,7 +133,7 @@ class CpuTopologyTest {
     }
 
     @Test
-    fun midrange2Big6Little_pinsLeadThreadOnlyWithoutStarvingWorkerPool() {
+    fun midrange2Big6Little_keepsAllCoresUnlocked() {
         val cores = listOf(
             CpuCoreSpec(0, 1_800_000L, null),
             CpuCoreSpec(1, 1_800_000L, null),
@@ -144,7 +146,7 @@ class CpuTopologyTest {
         )
         val topo = CpuTopology.classify(cores)
         assertFalse(topo.shouldPinEncoderPoolToPerformanceCores)
-        assertTrue(topo.shouldPinLeadThreadOnly)
+        assertFalse(topo.shouldPinLeadThreadOnly)
         assertArrayEquals(intArrayOf(6, 7), topo.performanceCpuIds)
 
         val profile = topo.computeEncoderThreadProfile()
