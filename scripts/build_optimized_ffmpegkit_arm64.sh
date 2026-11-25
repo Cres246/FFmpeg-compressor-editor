@@ -205,12 +205,13 @@ if (( DISABLED_ABIS < 3 )); then
   exit 1
 fi
 
-# Mandatory GPL + core encoders required by our 11 modes (supports both short and lib-prefixed names)
+# Mandatory GPL + core encoders required by our 11 modes
+# (arthenica/ffmpeg-kit-next uses `--enable-lib-<name>` naming)
 MISSING_MANDATORY=()
 add_flag_if_supported "--enable-gpl" || MISSING_MANDATORY+=("--enable-gpl")
-add_first_supported "--enable-x264" "--enable-libx264" || MISSING_MANDATORY+=("--enable-x264")
-add_first_supported "--enable-x265" "--enable-libx265" || MISSING_MANDATORY+=("--enable-x265")
-add_first_supported "--enable-lame" "--enable-libmp3lame" || MISSING_MANDATORY+=("--enable-lame")
+add_first_supported "--enable-lib-x264" "--enable-x264" "--enable-libx264" || MISSING_MANDATORY+=("--enable-lib-x264")
+add_first_supported "--enable-lib-x265" "--enable-x265" "--enable-libx265" || MISSING_MANDATORY+=("--enable-lib-x265")
+add_first_supported "--enable-lib-lame" "--enable-lame" "--enable-libmp3lame" || MISSING_MANDATORY+=("--enable-lib-lame")
 
 if (( ${#MISSING_MANDATORY[@]} > 0 )); then
   echo "[error] Missing mandatory codec flags in upstream ffmpeg-kit-next: ${MISSING_MANDATORY[*]}" >&2
@@ -220,14 +221,14 @@ if (( ${#MISSING_MANDATORY[@]} > 0 )); then
 fi
 
 # Full codec suite required by all 11 modes + Custom Commands
-add_flag_if_supported "--enable-android-zlib" || true
-add_flag_if_supported "--enable-android-media-codec" || true
-add_first_supported "--enable-opus" "--enable-libopus" || true
-add_first_supported "--enable-libvorbis" "--enable-vorbis" || true
-add_first_supported "--enable-libvpx" "--enable-vpx" || true
-add_first_supported "--enable-dav1d" "--enable-libdav1d" || true
-add_first_supported "--enable-libwebp" "--enable-webp" || true
-add_first_supported "--enable-zimg" "--enable-libzimg" || true
+add_first_supported "--enable-lib-android-zlib" "--enable-android-zlib" || true
+add_first_supported "--enable-lib-android-media-codec" "--enable-android-media-codec" || true
+add_first_supported "--enable-lib-opus" "--enable-opus" "--enable-libopus" || true
+add_first_supported "--enable-lib-libvorbis" "--enable-libvorbis" "--enable-vorbis" || true
+add_first_supported "--enable-lib-libvpx" "--enable-libvpx" "--enable-vpx" || true
+add_first_supported "--enable-lib-dav1d" "--enable-dav1d" "--enable-libdav1d" || true
+add_first_supported "--enable-lib-libwebp" "--enable-libwebp" "--enable-webp" || true
+add_first_supported "--enable-lib-zimg" "--enable-zimg" "--enable-libzimg" || true
 
 echo "[flags] Final build flags (${#BUILD_FLAGS[@]}): ${BUILD_FLAGS[*]}"
 
