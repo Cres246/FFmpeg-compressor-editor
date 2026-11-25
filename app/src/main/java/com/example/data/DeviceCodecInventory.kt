@@ -23,50 +23,53 @@ object DeviceCodecInventory {
         val snapshot = runCatching {
             val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
             val decoders = mutableSetOf<String>()
+            val hwDecoders = mutableSetOf<String>()
             val encoders = mutableSetOf<String>()
             var hevc10Encode = false
             var hevcHdrEdit = false
 
             for (info in codecList.codecInfos) {
                 val types = info.supportedTypes ?: continue
+                val isSoftwareCodec = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info.isSoftwareOnly) ||
+                    info.name.startsWith("OMX.google.", ignoreCase = true) ||
+                    info.name.startsWith("c2.android.", ignoreCase = true)
                 for (rawType in types) {
                     val mime = rawType.lowercase(Locale.US)
                     if (info.isEncoder) {
                         encoders.add(mime)
-                        if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC) {
-                            val isSw = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info.isSoftwareOnly) ||
-                                info.name.startsWith("OMX.google.", ignoreCase = true) ||
-                                info.name.startsWith("c2.android.", ignoreCase = true)
-                            if (!isSw) {
-                                runCatching {
-                                    val caps = info.getCapabilitiesForType(rawType)
-                                    val hasMain10 = caps?.profileLevels?.any {
-                                        it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
-                                            it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
-                                            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                                                it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
-                                    } == true
-                                    if (hasMain10) hevc10Encode = true
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && caps != null) {
-                                        val hdrFeat = caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_HdrEditing)
-                                        val has10BitSurface = caps.colorFormats?.contains(
-                                            MediaCodecInfo.CodecCapabilities.COLOR_Format32bitABGR2101010
-                                        ) == true
-                                        if (hasMain10 && hdrFeat && has10BitSurface) {
-                                            hevcHdrEdit = true
-                                        }
+                        if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC && !isSoftwareCodec) {
+                            runCatching {
+                                val caps = info.getCapabilitiesForType(rawType)
+                                val hasMain10 = caps?.profileLevels?.any {
+                                    it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
+                                        it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
+                                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                            it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
+                                } == true
+                                if (hasMain10) hevc10Encode = true
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && caps != null) {
+                                    val hdrFeat = caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_HdrEditing)
+                                    val has10BitSurface = caps.colorFormats?.contains(
+                                        MediaCodecInfo.CodecCapabilities.COLOR_Format32bitABGR2101010
+                                    ) == true
+                                    if (hasMain10 && hdrFeat && has10BitSurface) {
+                                        hevcHdrEdit = true
                                     }
                                 }
                             }
                         }
                     } else {
                         decoders.add(mime)
+                        if (!isSoftwareCodec && mime.startsWith("video/")) {
+                            hwDecoders.add(mime)
+                        }
                     }
                 }
             }
 
             DeviceCodecSnapshot(
                 decoderMimes = decoders,
+                hardwareDecoderMimes = hwDecoders,
                 encoderMimes = encoders,
                 supportsHevc10BitEncode = hevc10Encode,
                 supportsHevcHdrEditing = hevcHdrEdit,

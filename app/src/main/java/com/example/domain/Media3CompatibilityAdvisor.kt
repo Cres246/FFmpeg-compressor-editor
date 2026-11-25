@@ -10,6 +10,7 @@ import java.util.Locale
  */
 data class DeviceCodecSnapshot(
     val decoderMimes: Set<String> = emptySet(),
+    val hardwareDecoderMimes: Set<String> = emptySet(),
     val encoderMimes: Set<String> = emptySet(),
     val supportsHevc10BitEncode: Boolean = true,
     val supportsHevcHdrEditing: Boolean = true,

@@ -1881,4 +1881,130 @@ object FfmpegMath {
         sb.append(rawBody)
         return sb.toString().trim()
     }
+
+    /**
+     * Parses `ffmpeg -hide_banner -decoders` output to discover compiled Android MediaCodec
+     * video decoders (e.g., `h264_mediacodec`, `hevc_mediacodec`, `vp9_mediacodec`, `av1_mediacodec`).
+     */
+    fun parseAvailableMediaCodecDecoders(decodersOutput: String): Set<String> {
+        if (decodersOutput.isBlank()) return emptySet()
+        val found = linkedSetOf<String>()
+        decodersOutput.lineSequence().forEach { rawLine ->
+            val trimmed = rawLine.trim()
+            if (trimmed.length < 10 || !trimmed.startsWith("V")) return@forEach
+            val parts = trimmed.split(Regex("\\s+"), limit = 3)
+            if (parts.size >= 2) {
+                val flags = parts[0]
+                val name = parts[1].lowercase(Locale.US)
+                if (flags.length >= 6 && name.endsWith("_mediacodec")) {
+                    found.add(name)
+                }
+            }
+        }
+        return found
+    }
+
+    /**
+     * Maps a probed FFmpeg video codec name to its `(ffmpegMediaCodecDecoder, androidMime)` pair.
+     */
+    fun mapVideoCodecToMediaCodecDecoder(videoCodec: String): Pair<String, String>? {
+        return when (videoCodec.trim().lowercase(Locale.US)) {
+            "h264", "avc", "avc1" -> "h264_mediacodec" to "video/avc"
+            "hevc", "h265", "hvc1", "hev1" -> "hevc_mediacodec" to "video/hevc"
+            "vp9" -> "vp9_mediacodec" to "video/x-vnd.on2.vp9"
+            "av1", "av01" -> "av1_mediacodec" to "video/av01"
+            else -> null
+        }
+    }
+
+    /**
+     * Determines whether a software encoding job (`libx264`/`libx265`) can safely offload video
+     * decoding to Android's hardware MediaCodec VPU (`*_mediacodec`) while keeping 100% software
+     * encoding quality.
+     *
+     * Safety & speed guards:
+     * - Only re-encoding modes (`2-Pass`, `CRF`, and `TRIM_VIDEO` CRF sub-modes).
+     * - Strict 8-bit 4:2:0 guard: 10-bit/12-bit/HDR and 4:2:2/4:4:4 sources stay on CPU software
+     *   decode so ByteBuffer MediaCodec never truncates 10-bit precision or fails on P010/UBWC.
+     * - Resolution sweet spot: `>= 720p` (`short >= 720` or `long >= 1280`) and `<= 4320`, and
+     *   duration `>= 3s`, where VPU decode offloading beats VPU startup latency.
+     * - Verified available in BOTH FFmpegKit (`-decoders`) and the phone's real hardware
+     *   `MediaCodecList` (never wrapping slow software `c2.android.*` decoders).
+     */
+    fun resolveHybridHardwareDecoder(
+        media: MediaInfo,
+        config: ModeConfigState,
+        ffmpegMediaCodecDecoders: Set<String>,
+        deviceHardwareDecoderMimes: Set<String>
+    ): String? {
+        if (ffmpegMediaCodecDecoders.isEmpty() || deviceHardwareDecoderMimes.isEmpty()) return null
+        val isSoftwareVideoEncodeMode = when (config.mode) {
+            ProcessingMode.DISCORD_20MB,
+            ProcessingMode.WHATSAPP_100MB,
+            ProcessingMode.GMAIL_25MB,
+            ProcessingMode.CUSTOM_SIZE,
+            ProcessingMode.VIDEO_ONLY_CRF,
+            ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
+            ProcessingMode.TRIM_VIDEO ->
+                config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
+                    config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
+            ProcessingMode.REMUX_FORMAT,
+            ProcessingMode.EXTRACT_AUDIO,
+            ProcessingMode.AUDIO_ONLY_AAC,
+            ProcessingMode.CUSTOM_COMMAND -> false
+        }
+        if (!isSoftwareVideoEncodeMode) return null
+        if (!media.hasVideo) return null
+        if (media.bitDepthIn != "8bit" || media.isHdrVideo) return null
+
+        val pix = media.pixFmt.orEmpty().trim().lowercase(Locale.US)
+        if (pix.isNotEmpty() && (!pix.contains("420") || pix.contains("10") || pix.contains("12") || pix.contains("16"))) {
+            return null
+        }
+
+        val w = media.width ?: return null
+        val h = media.height ?: return null
+        if (w <= 0 || h <= 0) return null
+        val shortSide = minOf(w, h)
+        val longSide = maxOf(w, h)
+        if (shortSide < 720 && longSide < 1280) return null
+        if (longSide > 4320) return null
+
+        val dur = media.durationSec
+        if (dur != null && dur < 3.0) return null
+
+        val vCodec = media.videoCodec ?: return null
+        val (decoderName, mime) = mapVideoCodecToMediaCodecDecoder(vCodec) ?: return null
+        if (decoderName !in ffmpegMediaCodecDecoders) return null
+        if (mime !in deviceHardwareDecoderMimes) return null
+        return decoderName
+    }
+
+    /**
+     * Injects `-c:v <hwDecoderName>` immediately before the first `-i` input option while stripping
+     * any redundant input-side `-threads 0` flag and leaving all output-side encoder flags
+     * (`-c:v libx264 -threads 0` / `libx265`) completely untouched.
+     */
+    fun injectHardwareDecoderArgs(stepArgs: List<String>, hwDecoderName: String): List<String> {
+        val inputIdx = stepArgs.indexOf("-i")
+        if (inputIdx < 0 || hwDecoderName.isBlank()) return stepArgs
+        val result = ArrayList<String>(stepArgs.size + 2)
+        var i = 0
+        while (i < inputIdx) {
+            val tok = stepArgs[i]
+            val next = stepArgs.getOrNull(i + 1)
+            if ((tok == "-threads" && next != null) || (tok == "-c:v" && next != null)) {
+                i += 2
+                continue
+            }
+            result.add(tok)
+            i++
+        }
+        result.add("-c:v")
+        result.add(hwDecoderName)
+        for (j in inputIdx until stepArgs.size) {
+            result.add(stepArgs[j])
+        }
+        return result
+    }
 }

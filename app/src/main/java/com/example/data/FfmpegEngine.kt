@@ -21,6 +21,10 @@ import com.example.domain.KeyframePointResult
 import com.example.domain.MediaInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,6 +32,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
@@ -36,7 +41,8 @@ data class FfmpegStepResult(
     val cancelled: Boolean,
     val returnCode: Int,
     val logs: List<String>,
-    val rawOutput: String = ""
+    val rawOutput: String = "",
+    val stalled: Boolean = false
 )
 
 object FfmpegEngine {
@@ -45,6 +51,9 @@ object FfmpegEngine {
 
     @Volatile
     private var cachedCapabilities: EncoderCapabilities? = null
+
+    @Volatile
+    private var cachedMediaCodecDecoders: Set<String>? = null
 
     @Volatile
     private var nativeInitFailure: Throwable? = null
@@ -607,6 +616,23 @@ object FfmpegEngine {
     }
 
     /**
+     * Dynamically probes and caches which Android MediaCodec hardware video decoders
+     * (`h264_mediacodec`, `hevc_mediacodec`, `vp9_mediacodec`, `av1_mediacodec`) are compiled
+     * into the bundled FFmpegKit binary.
+     */
+    suspend fun probeMediaCodecDecoders(): Set<String> = withContext(Dispatchers.IO) {
+        cachedMediaCodecDecoders?.let { return@withContext it }
+        val parsed = runCatching {
+            ensureSilentLogcat()
+            val out = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-decoders"))
+                .allLogsAsString.orEmpty()
+            FfmpegMath.parseAvailableMediaCodecDecoders(out)
+        }.getOrDefault(emptySet())
+        cachedMediaCodecDecoders = parsed
+        parsed
+    }
+
+    /**
      * Scans packet headers without decoding frames to find prev/next/nearby keyframes in
      * milliseconds. Uses a generous [-30s, +35s] window and adaptively widens to [-75s, +80s]
      * for ultra-sparse GOP videos so the user always sees both previous and next keyframe options.
@@ -754,102 +780,131 @@ object FfmpegEngine {
         expectedDurationSec: Double?,
         onProgress: (currentSec: Double, percent: Int?, speed: String, sizeKb: Long) -> Unit,
         onLogLine: (String) -> Unit,
-        captureRawOutput: Boolean = false
-    ): FfmpegStepResult = suspendCancellableCoroutine { cont ->
-        ensureSilentLogcat()
-        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
-        val logsBuffer = mutableListOf<String>()
-        var lastStatsEmitMs = 0L
-        val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
-        val fullArgs = buildList {
-            add("-hide_banner")
-            if (!hasExplicitLogLevel) {
-                add("-loglevel")
-                add(if (captureRawOutput) "info" else "warning")
-            }
-            add("-stats")
-            if (!args.contains("-filter_threads")) {
-                add("-filter_threads")
-                add("0")
-            }
-            addAll(args)
-        }.toTypedArray()
-
-        val sessionDone = CompletableDeferred<Unit>()
-        activeSessionCompletion.getAndSet(sessionDone)?.complete(Unit)
-
-        val session = try {
-            FFmpegKit.executeWithArgumentsAsync(
-                fullArgs,
-                { completedSession ->
-                    sessionDone.complete(Unit)
-                    activeSessionCompletion.compareAndSet(sessionDone, null)
-                    val rc = completedSession.returnCode
-                    val isSuccess = ReturnCode.isSuccess(rc)
-                    val isCancelled = ReturnCode.isCancel(rc)
-                    val codeVal = rc?.value ?: -1
-                    val rawOut = if (!isSuccess || captureRawOutput) {
-                        sanitizeRawFfmpegOutput(completedSession.allLogsAsString.orEmpty())
-                    } else {
-                        ""
+        captureRawOutput: Boolean = false,
+        stallTimeoutMs: Long? = null
+    ): FfmpegStepResult = coroutineScope {
+        val hasProgress = AtomicBoolean(false)
+        val stalledByWatchdog = AtomicBoolean(false)
+        var watchdogJob: Job? = null
+        try {
+            suspendCancellableCoroutine { cont ->
+                ensureSilentLogcat()
+                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
+                val logsBuffer = mutableListOf<String>()
+                var lastStatsEmitMs = 0L
+                val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
+                val fullArgs = buildList {
+                    add("-hide_banner")
+                    if (!hasExplicitLogLevel) {
+                        add("-loglevel")
+                        add(if (captureRawOutput) "info" else "warning")
                     }
-                    if (cont.isActive) {
-                        cont.resume(
-                            FfmpegStepResult(
-                                success = isSuccess,
-                                cancelled = isCancelled,
-                                returnCode = codeVal,
-                                logs = synchronized(logsBuffer) { logsBuffer.toList() },
-                                rawOutput = rawOut
-                            )
-                        )
+                    add("-stats")
+                    if (!args.contains("-filter_threads")) {
+                        add("-filter_threads")
+                        add("0")
                     }
-                },
-                { log ->
-                    val raw = log?.message ?: return@executeWithArgumentsAsync
-                    if (isFastDropProgressLine(raw)) return@executeWithArgumentsAsync
-                    val msg = raw.trim()
-                    if (isImportantLogLine(msg)) {
-                        var added = false
-                        synchronized(logsBuffer) {
-                            if (logsBuffer.lastOrNull() != msg) {
-                                if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
-                                logsBuffer.add(msg)
-                                added = true
+                    addAll(args)
+                }.toTypedArray()
+
+                val sessionDone = CompletableDeferred<Unit>()
+                activeSessionCompletion.getAndSet(sessionDone)?.complete(Unit)
+
+                val session = try {
+                    FFmpegKit.executeWithArgumentsAsync(
+                        fullArgs,
+                        { completedSession ->
+                            watchdogJob?.cancel()
+                            sessionDone.complete(Unit)
+                            activeSessionCompletion.compareAndSet(sessionDone, null)
+                            val rc = completedSession.returnCode
+                            val isSuccess = ReturnCode.isSuccess(rc)
+                            val isCancelled = ReturnCode.isCancel(rc)
+                            val codeVal = rc?.value ?: -1
+                            val rawOut = if (!isSuccess || captureRawOutput) {
+                                sanitizeRawFfmpegOutput(completedSession.allLogsAsString.orEmpty())
+                            } else {
+                                ""
+                            }
+                            if (cont.isActive) {
+                                cont.resume(
+                                    FfmpegStepResult(
+                                        success = isSuccess,
+                                        cancelled = isCancelled,
+                                        returnCode = codeVal,
+                                        logs = synchronized(logsBuffer) { logsBuffer.toList() },
+                                        rawOutput = rawOut,
+                                        stalled = stalledByWatchdog.get()
+                                    )
+                                )
+                            }
+                        },
+                        { log ->
+                            val raw = log?.message ?: return@executeWithArgumentsAsync
+                            if (isFastDropProgressLine(raw)) return@executeWithArgumentsAsync
+                            val msg = raw.trim()
+                            if (isImportantLogLine(msg)) {
+                                var added = false
+                                synchronized(logsBuffer) {
+                                    if (logsBuffer.lastOrNull() != msg) {
+                                        if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
+                                        logsBuffer.add(msg)
+                                        added = true
+                                    }
+                                }
+                                if (added) {
+                                    onLogLine(msg)
+                                }
+                            }
+                        },
+                        { stats ->
+                            if (stats != null) {
+                                if (stats.time > 0.0 || stats.videoFrameNumber > 0 || stats.size > 0L) {
+                                    if (hasProgress.compareAndSet(false, true)) {
+                                        watchdogJob?.cancel()
+                                    }
+                                }
+                                val nowMs = SystemClock.elapsedRealtime()
+                                if (lastStatsEmitMs != 0L && nowMs - lastStatsEmitMs < 220L) {
+                                    return@executeWithArgumentsAsync
+                                }
+                                lastStatsEmitMs = nowMs
+                                val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
+                                val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
+                                val speedStr = if (stats.speed > 0.0) {
+                                    String.format(Locale.US, "%.2fx", stats.speed)
+                                } else {
+                                    "..."
+                                }
+                                val kb = (stats.size / 1024L).coerceAtLeast(0L)
+                                onProgress(curSec, pct, speedStr, kb)
                             }
                         }
-                        if (added) {
-                            onLogLine(msg)
+                    )
+                } catch (t: Throwable) {
+                    watchdogJob?.cancel()
+                    sessionDone.complete(Unit)
+                    activeSessionCompletion.compareAndSet(sessionDone, null)
+                    throw t
+                }
+
+                if (stallTimeoutMs != null && stallTimeoutMs > 0L && !hasProgress.get() && !sessionDone.isCompleted) {
+                    watchdogJob = launch(Dispatchers.Default) {
+                        delay(stallTimeoutMs)
+                        if (!hasProgress.get() && !sessionDone.isCompleted) {
+                            stalledByWatchdog.set(true)
+                            runCatching { FFmpegKit.cancel(session.sessionId) }
                         }
-                    }
-                },
-                { stats ->
-                    if (stats != null) {
-                        val nowMs = SystemClock.elapsedRealtime()
-                        if (lastStatsEmitMs != 0L && nowMs - lastStatsEmitMs < 220L) {
-                            return@executeWithArgumentsAsync
-                        }
-                        lastStatsEmitMs = nowMs
-                        val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
-                        val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
-                        val speedStr = if (stats.speed > 0.0) {
-                            String.format(Locale.US, "%.2fx", stats.speed)
-                        } else {
-                            "..."
-                        }
-                        val kb = (stats.size / 1024L).coerceAtLeast(0L)
-                        onProgress(curSec, pct, speedStr, kb)
                     }
                 }
-            )
-        } catch (t: Throwable) {
-            sessionDone.complete(Unit)
-            activeSessionCompletion.compareAndSet(sessionDone, null)
-            throw t
-        }
 
-        cont.invokeOnCancellation {
-            runCatching { FFmpegKit.cancel(session.sessionId) }
+                cont.invokeOnCancellation {
+                    watchdogJob?.cancel()
+                    runCatching { FFmpegKit.cancel(session.sessionId) }
+                }
+            }
+        } finally {
+            watchdogJob?.cancel()
         }
     }
 
