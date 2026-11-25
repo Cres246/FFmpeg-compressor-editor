@@ -15,6 +15,7 @@ import android.os.Process
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.example.BuildConfig
 import com.example.MainActivity
 import com.example.R
 import com.example.data.DeviceCodecInventory
@@ -27,6 +28,7 @@ import com.example.data.TurboBitratePlan
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
 import com.example.domain.CompletedOutput
+import com.example.domain.CpuSimdProfile
 import com.example.domain.CustomCommandTool
 import com.example.domain.CustomFfmpegParser
 import com.example.domain.EncodingState
@@ -303,7 +305,6 @@ class EncodingForegroundService : Service() {
         const val ACTION_VIDEO_AUDIO_PREP_THEN_TURBO = "com.example.fflab.ACTION_VIDEO_AUDIO_PREP_THEN_TURBO"
         const val ACTION_CANCEL = "com.example.fflab.ACTION_CANCEL_ENCODING"
         private const val EXTRA_CANCELLED_RUN_ID = "extra_cancelled_run_id"
-        private const val HYBRID_HW_DECODE_STALL_TIMEOUT_MS = 6_500L
 
         internal fun formatDiagnosisSummary(report: Media3CompatibilityReport, s: AppStrings): String? = when (report.issueKind) {
             Media3IssueKind.COMPATIBLE -> null
@@ -1128,7 +1129,9 @@ class EncodingForegroundService : Service() {
 
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
+        val simdSummary = CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask).summaryLabel()
         appendLog("${s.logTagStarted} $modeTitle — $summaryBanner")
+        appendLog("[FFmpeg] ${BuildConfig.FFMPEG_ENGINE_VARIANT} · CPU: $simdSummary")
 
         try {
             if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
@@ -1160,19 +1163,6 @@ class EncodingForegroundService : Service() {
                 passLogPrefix = passLogPrefix,
                 strings = s
             )
-
-            // Hybrid pipeline: offload 8-bit >=720p decoding to Android hardware VPU (*_mediacodec)
-            // while keeping 100% software libx264/libx265 encoding quality. Automatically falls back
-            // to pure software decode on any error, empty output, or 6.5s startup stall.
-            var activeHwDecoder: String? = FfmpegMath.resolveHybridHardwareDecoder(
-                media = media,
-                config = effectiveConfig,
-                ffmpegMediaCodecDecoders = FfmpegEngine.probeMediaCodecDecoders(),
-                deviceHardwareDecoderMimes = DeviceCodecInventory.queryCurrentDevice().hardwareDecoderMimes
-            )
-            if (activeHwDecoder != null) {
-                appendLog(s.logHybridHwDecodeActive(activeHwDecoder, effectiveConfig.codec.encoder))
-            }
 
             for ((idx, step) in steps.withIndex()) {
                 if (!EncodingJobController.isRunActive(runId)) return
@@ -1212,153 +1202,95 @@ class EncodingForegroundService : Service() {
                     force = true
                 )
 
-                fun resolveFreshStepArgs(hwDecoder: String?): List<String> {
-                    val baseArgs = step.args.map { arg ->
-                        if (arg == inputPlaceholder) {
-                            FfmpegEngine.resolveInputPath(applicationContext, media.uri)
-                        } else {
-                            arg
-                        }
-                    }
-                    return if (hwDecoder != null) {
-                        FfmpegMath.injectHardwareDecoderArgs(baseArgs, hwDecoder)
+                val stepArgs = step.args.map { arg ->
+                    if (arg == inputPlaceholder) {
+                        FfmpegEngine.resolveInputPath(applicationContext, media.uri)
                     } else {
-                        baseArgs
+                        arg
                     }
                 }
 
-                suspend fun runSingleStepAttempt(
-                    argsToRun: List<String>,
-                    stallTimeoutMs: Long?
-                ): com.example.data.FfmpegStepResult {
-                    var lastUiEmitMs = 0L
-                    var lastEmittedPct: Int? = null
-                    var lastEmittedWholeSec = -1L
-                    var lastEmittedTenthMb = -1L
-                    var lastLogEmitMs = 0L
+                var lastUiEmitMs = 0L
+                var lastEmittedPct: Int? = null
+                var lastEmittedWholeSec = -1L
+                var lastEmittedTenthMb = -1L
+                var lastLogEmitMs = 0L
 
-                    return FfmpegEngine.executeStep(
-                        args = argsToRun,
-                        expectedDurationSec = step.expectedDurationSec,
-                        stallTimeoutMs = stallTimeoutMs,
-                        onProgress = { curSec, pct, spd, kb ->
-                            if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                            cpuBooster.pulseIfDue()
-                            val liveStrings = AppLanguageController.currentStrings()
-                            val nowMs = SystemClock.elapsedRealtime()
-                            val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
-                            val tenthMb = (kb * 10L) / 1024L
-                            val pctChanged = pct != lastEmittedPct
-                            val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                            if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
-                                lastUiEmitMs = nowMs
-                                lastEmittedPct = pct
-                                lastEmittedWholeSec = wholeSec
-                                lastEmittedTenthMb = tenthMb
+                val stepResult = FfmpegEngine.executeStep(
+                    args = stepArgs,
+                    expectedDurationSec = step.expectedDurationSec,
+                    onProgress = { curSec, pct, spd, kb ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        cpuBooster.pulseIfDue()
+                        val liveStrings = AppLanguageController.currentStrings()
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
+                        val tenthMb = (kb * 10L) / 1024L
+                        val pctChanged = pct != lastEmittedPct
+                        val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
+                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                            lastUiEmitMs = nowMs
+                            lastEmittedPct = pct
+                            lastEmittedWholeSec = wholeSec
+                            lastEmittedTenthMb = tenthMb
+                            EncodingJobController.updateStateIfActive(
+                                runId,
+                                EncodingState.Running(
+                                    modeTitle = modeTitle,
+                                    outputFileName = expectedOutputName,
+                                    passIndex = passNum,
+                                    totalPasses = totalPasses,
+                                    statusMessage = step.label,
+                                    currentTimeSec = wholeSec.toDouble(),
+                                    totalDurationSec = step.expectedDurationSec,
+                                    percent = pct,
+                                    speed = spd,
+                                    sizeKb = kb,
+                                    logs = currentLogs(),
+                                    summaryBanner = summaryBanner,
+                                    videoSpecsSummary = videoSpecsSummary,
+                                    presetLabel = presetLabel,
+                                    canSwitchToTurbo = canSwitchToTurbo
+                                )
+                            )
+                        }
+                        val notifText = FfmpegMath.formatTelemetryLine(
+                            currentSec = wholeSec.toDouble(),
+                            totalDurationSec = step.expectedDurationSec,
+                            percent = pct,
+                            speed = spd,
+                            sizeKb = kb,
+                            includePercent = false,
+                            strings = liveStrings
+                        )
+                        val titlePrefix = if (totalPasses > 1) "($passNum/$totalPasses) " else ""
+                        updateNotificationThrottled(
+                            runId = runId,
+                            title = "FFmpeg · $titlePrefix${config.mode.localizedTitle(liveStrings)}",
+                            text = notifText,
+                            percent = pct,
+                            passIndex = passNum,
+                            totalPasses = totalPasses,
+                            force = false
+                        )
+                    },
+                    onLogLine = { line ->
+                        if (!EncodingJobController.isRunActive(runId)) return@executeStep
+                        appendLog(line)
+                        val nowMs = SystemClock.elapsedRealtime()
+                        if (nowMs - lastLogEmitMs >= 320L) {
+                            lastLogEmitMs = nowMs
+                            val snapshot = currentLogs()
+                            val cur = EncodingJobController.state.value
+                            if (cur is EncodingState.Running && cur.logs !== snapshot) {
                                 EncodingJobController.updateStateIfActive(
                                     runId,
-                                    EncodingState.Running(
-                                        modeTitle = modeTitle,
-                                        outputFileName = expectedOutputName,
-                                        passIndex = passNum,
-                                        totalPasses = totalPasses,
-                                        statusMessage = step.label,
-                                        currentTimeSec = wholeSec.toDouble(),
-                                        totalDurationSec = step.expectedDurationSec,
-                                        percent = pct,
-                                        speed = spd,
-                                        sizeKb = kb,
-                                        logs = currentLogs(),
-                                        summaryBanner = summaryBanner,
-                                        videoSpecsSummary = videoSpecsSummary,
-                                        presetLabel = presetLabel,
-                                        canSwitchToTurbo = canSwitchToTurbo
-                                    )
+                                    cur.copy(logs = snapshot)
                                 )
                             }
-                            val notifText = FfmpegMath.formatTelemetryLine(
-                                currentSec = wholeSec.toDouble(),
-                                totalDurationSec = step.expectedDurationSec,
-                                percent = pct,
-                                speed = spd,
-                                sizeKb = kb,
-                                includePercent = false,
-                                strings = liveStrings
-                            )
-                            val titlePrefix = if (totalPasses > 1) "($passNum/$totalPasses) " else ""
-                            updateNotificationThrottled(
-                                runId = runId,
-                                title = "FFmpeg · $titlePrefix${config.mode.localizedTitle(liveStrings)}",
-                                text = notifText,
-                                percent = pct,
-                                passIndex = passNum,
-                                totalPasses = totalPasses,
-                                force = false
-                            )
-                        },
-                        onLogLine = { line ->
-                            if (!EncodingJobController.isRunActive(runId)) return@executeStep
-                            appendLog(line)
-                            val nowMs = SystemClock.elapsedRealtime()
-                            if (nowMs - lastLogEmitMs >= 320L) {
-                                lastLogEmitMs = nowMs
-                                val snapshot = currentLogs()
-                                val cur = EncodingJobController.state.value
-                                if (cur is EncodingState.Running && cur.logs !== snapshot) {
-                                    EncodingJobController.updateStateIfActive(
-                                        runId,
-                                        cur.copy(logs = snapshot)
-                                    )
-                                }
-                            }
                         }
-                    )
-                }
-
-                val writesOutputFile = step.args.lastOrNull() == tempOutFile.absolutePath
-                val hwDecoderForThisStep = activeHwDecoder
-                if (hwDecoderForThisStep != null && idx > 0) {
-                    // Brief VPU release gap between Pass 1 and Pass 2 hardware decoder sessions
-                    delay(150L)
-                }
-
-                var stepResult = runSingleStepAttempt(
-                    argsToRun = resolveFreshStepArgs(hwDecoderForThisStep),
-                    stallTimeoutMs = if (hwDecoderForThisStep != null) HYBRID_HW_DECODE_STALL_TIMEOUT_MS else null
+                    }
                 )
-
-                val userCancelled = !EncodingJobController.isRunActive(runId) ||
-                    (stepResult.cancelled && !stepResult.stalled)
-                if (userCancelled) {
-                    return
-                }
-
-                val hwProducedEmptyOutput = hwDecoderForThisStep != null &&
-                    writesOutputFile &&
-                    (!tempOutFile.isFile || tempOutFile.length() == 0L)
-
-                if (hwDecoderForThisStep != null && (!stepResult.success || stepResult.stalled || hwProducedEmptyOutput)) {
-                    // Seamless automatic fallback to pure CPU software decode
-                    activeHwDecoder = null
-                    val liveS = AppLanguageController.currentStrings()
-                    appendLog(liveS.logHybridHwDecodeFallback(hwDecoderForThisStep))
-                    if (writesOutputFile) {
-                        runCatching { tempOutFile.delete() }
-                    }
-                    if (idx == 0 && totalPasses > 1) {
-                        workDir.listFiles()?.forEach { f ->
-                            if (f.name.startsWith("ff2pass")) runCatching { f.delete() }
-                        }
-                    }
-                    FfmpegEngine.awaitActiveSessionTermination(3_000L)
-                    delay(300L)
-                    if (!EncodingJobController.isRunActive(runId)) return
-
-                    stepResult = runSingleStepAttempt(
-                        argsToRun = resolveFreshStepArgs(hwDecoder = null),
-                        stallTimeoutMs = null
-                    )
-                }
 
                 if (!EncodingJobController.isRunActive(runId) || stepResult.cancelled) {
                     return

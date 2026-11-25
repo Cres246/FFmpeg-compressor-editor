@@ -8,6 +8,9 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val customFfmpegAarFile = file("libs/ffmpeg-kit-custom-arm64-gpl.aar")
+val useCustomSimdFfmpeg = customFfmpegAarFile.isFile && customFfmpegAarFile.length() > 1_000_000L
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -18,6 +21,18 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
+
+    buildConfigField("boolean", "CUSTOM_ARM64_SIMD_FFMPEG", useCustomSimdFfmpeg.toString())
+    buildConfigField(
+      "String",
+      "FFMPEG_ENGINE_VARIANT",
+      if (useCustomSimdFfmpeg) "\"ARM64-O3 SIMD\"" else "\"FFmpegKit 8.1.9\""
+    )
+    if (useCustomSimdFfmpeg) {
+      ndk {
+        abiFilters += listOf("arm64-v8a")
+      }
+    }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -126,7 +141,12 @@ dependencies {
   // implementation(libs.googleid)
   // implementation(libs.firebase.appcheck.recaptcha)
   // implementation(libs.firebase.appcheck.debug)
-  implementation(libs.ffmpeg.kit.full.gpl)
+  if (useCustomSimdFfmpeg) {
+    implementation(files(customFfmpegAarFile))
+    implementation(libs.smart.exception.java)
+  } else {
+    implementation(libs.ffmpeg.kit.full.gpl)
+  }
   implementation(libs.androidx.media3.transformer)
   implementation(libs.androidx.media3.effect)
   implementation(libs.androidx.media3.common)

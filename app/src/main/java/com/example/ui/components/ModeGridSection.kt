@@ -244,10 +244,10 @@ fun TargetSizeModeRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .alpha(if (available) 1f else 0.84f)
-                    .clip(MaterialTheme.shapes.medium)
+                    .clip(MaterialTheme.shapes.small)
                     .clickable { onSelectMode(customSizeMode) }
                     .testTag("mode_card_${customSizeMode.number}"),
-                shape = MaterialTheme.shapes.medium,
+                shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
                 tonalElevation = 0.dp
@@ -255,14 +255,14 @@ fun TargetSizeModeRow(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 78.dp)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(MaterialTheme.colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
                     ) {
@@ -270,57 +270,51 @@ fun TargetSizeModeRow(
                             imageVector = modeIcon(customSizeMode),
                             contentDescription = customSizeMode.localizedTitle(strings),
                             tint = iconColor,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
-                    Spacer(Modifier.width(14.dp))
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = customSizeMode.localizedTitle(strings),
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontFamily = SpaceGroteskFontFamily,
-                                fontSize = 16.5.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = customSizeMode.localizedSubtitle(strings),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(8.dp))
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(7.dp),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-                        border = BorderStroke(0.9.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
                     ) {
                         Text(
                             text = customSizeMode.localizedShortSubtitle(strings),
                             style = MonoLabelStyle.copy(
-                                fontSize = 11.5.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.25.sp
+                                letterSpacing = 0.2.sp
                             ),
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -329,7 +323,7 @@ fun TargetSizeModeRow(
 }
 
 /**
- * Group 2: Sleek full-width feature card for Videoyu Kes.
+ * Group 2: Prominent full-width feature card for Videoyu Kes.
  */
 @Composable
 fun TrimFeatureCard(
@@ -346,10 +340,10 @@ fun TrimFeatureCard(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (available) 1f else 0.84f)
-            .clip(MaterialTheme.shapes.small)
+            .clip(MaterialTheme.shapes.medium)
             .clickable(onClick = onClick)
             .testTag("mode_card_${mode.number}"),
-        shape = MaterialTheme.shapes.small,
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
         tonalElevation = 0.dp
@@ -357,14 +351,14 @@ fun TrimFeatureCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 11.dp, vertical = 6.dp),
+                .heightIn(min = 78.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
@@ -372,37 +366,45 @@ fun TrimFeatureCard(
                     imageVector = modeIcon(mode),
                     contentDescription = mode.localizedTitle(strings),
                     tint = iconColor,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Spacer(Modifier.width(14.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
                 Text(
                     text = mode.localizedTitle(strings),
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontFamily = SpaceGroteskFontFamily,
+                        fontSize = 16.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = mode.localizedSubtitle(strings),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp))
             QualityStatusBadge(
                 label = if (mediaInfo != null && !mediaInfo.hasVideo) strings.noVideoBadge else mode.localizedQualityTag(strings),
-                tone = if (mediaInfo != null && !mediaInfo.hasVideo) QualityBadgeTone.LOSSY else mode.qualityTone
+                tone = if (mediaInfo != null && !mediaInfo.hasVideo) QualityBadgeTone.LOSSY else mode.qualityTone,
+                prominent = true
             )
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(6.dp))
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(20.dp)
             )
         }
     }
@@ -500,7 +502,8 @@ fun OtherModesList(
 private fun QualityStatusBadge(
     label: String,
     tone: QualityBadgeTone,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    prominent: Boolean = false
 ) {
     val extColors = LocalExtendedColors.current
     val (bgColor, textColor, borderColor) = when (tone) {
@@ -528,21 +531,24 @@ private fun QualityStatusBadge(
 
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(7.dp),
+        shape = RoundedCornerShape(if (prominent) 8.dp else 7.dp),
         color = bgColor,
-        border = BorderStroke(0.8.dp, borderColor)
+        border = BorderStroke(if (prominent) 0.9.dp else 0.8.dp, borderColor)
     ) {
         Text(
             text = label,
             style = MonoLabelStyle.copy(
-                fontSize = 10.5.sp,
+                fontSize = if (prominent) 11.5.sp else 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.2.sp
+                letterSpacing = if (prominent) 0.25.sp else 0.2.sp
             ),
             color = textColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+            modifier = Modifier.padding(
+                horizontal = if (prominent) 10.dp else 7.dp,
+                vertical = if (prominent) 5.dp else 3.dp
+            )
         )
     }
 }

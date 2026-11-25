@@ -23,7 +23,6 @@ object DeviceCodecInventory {
         val snapshot = runCatching {
             val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
             val decoders = mutableSetOf<String>()
-            val hwDecoders = mutableSetOf<String>()
             val encoders = mutableSetOf<String>()
             var hevc10Encode = false
             var hevcHdrEdit = false
@@ -60,16 +59,12 @@ object DeviceCodecInventory {
                         }
                     } else {
                         decoders.add(mime)
-                        if (!isSoftwareCodec && mime.startsWith("video/")) {
-                            hwDecoders.add(mime)
-                        }
                     }
                 }
             }
 
             DeviceCodecSnapshot(
                 decoderMimes = decoders,
-                hardwareDecoderMimes = hwDecoders,
                 encoderMimes = encoders,
                 supportsHevc10BitEncode = hevc10Encode,
                 supportsHevcHdrEditing = hevcHdrEdit,

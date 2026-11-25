@@ -296,3 +296,87 @@ data class CpuTopology(
         }.getOrNull()
     }
 }
+
+/**
+ * Runtime ARM64 SIMD extension profile (`NEON`, `DotProd`, `I8MM`, `SVE`, `SVE2`).
+ *
+ * Queried primarily from the Linux ELF auxiliary vector (`getauxval(AT_HWCAP / AT_HWCAP2)`)
+ * via [com.example.service.NativeCpuAffinity.getArm64SimdMask], with a pure `/proc/cpuinfo`
+ * `Features` fallback so both live devices and JVM unit tests resolve cleanly.
+ */
+data class CpuSimdProfile(
+    val hasNeon: Boolean,
+    val hasDotProd: Boolean,
+    val hasI8mm: Boolean,
+    val hasSve: Boolean,
+    val hasSve2: Boolean
+) {
+    fun summaryLabel(): String {
+        val parts = buildList {
+            if (hasNeon) add("NEON")
+            if (hasDotProd) add("DotProd")
+            if (hasI8mm) add("I8MM")
+            if (hasSve2) {
+                add("SVE2")
+            } else if (hasSve) {
+                add("SVE")
+            }
+        }
+        return if (parts.isEmpty()) "ARM64" else parts.joinToString(" · ")
+    }
+
+    companion object {
+        const val BIT_NEON = 1 shl 0
+        const val BIT_DOTPROD = 1 shl 1
+        const val BIT_I8MM = 1 shl 2
+        const val BIT_SVE = 1 shl 3
+        const val BIT_SVE2 = 1 shl 4
+
+        @Volatile
+        private var cached: CpuSimdProfile? = null
+
+        fun fromBitmask(mask: Int): CpuSimdProfile = CpuSimdProfile(
+            hasNeon = (mask and BIT_NEON) != 0,
+            hasDotProd = (mask and BIT_DOTPROD) != 0,
+            hasI8mm = (mask and BIT_I8MM) != 0,
+            hasSve = (mask and BIT_SVE) != 0,
+            hasSve2 = (mask and BIT_SVE2) != 0
+        )
+
+        fun parseCpuInfoFeatures(cpuInfoText: String): CpuSimdProfile {
+            val tokens = hashSetOf<String>()
+            cpuInfoText.lineSequence().forEach { line ->
+                if (line.trimStart().startsWith("Features", ignoreCase = true)) {
+                    val value = line.substringAfter(':', "")
+                    value.split(' ', '\t').forEach { token ->
+                        val cleaned = token.trim().lowercase()
+                        if (cleaned.isNotEmpty()) tokens.add(cleaned)
+                    }
+                }
+            }
+            return CpuSimdProfile(
+                hasNeon = "asimd" in tokens || "neon" in tokens,
+                hasDotProd = "asimddp" in tokens || "dotprod" in tokens,
+                hasI8mm = "i8mm" in tokens,
+                hasSve = "sve" in tokens,
+                hasSve2 = "sve2" in tokens
+            )
+        }
+
+        fun detect(nativeMaskProvider: () -> Int): CpuSimdProfile {
+            cached?.let { return it }
+            val nativeMask = runCatching { nativeMaskProvider() }.getOrDefault(0)
+            val resolved = if (nativeMask != 0) {
+                fromBitmask(nativeMask)
+            } else {
+                val cpuInfo = runCatching {
+                    val f = File("/proc/cpuinfo")
+                    if (f.canRead()) f.readText() else ""
+                }.getOrDefault("")
+                parseCpuInfoFeatures(cpuInfo)
+            }
+            cached = resolved
+            return resolved
+        }
+    }
+}

@@ -12,6 +12,15 @@ on:
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      use_custom_ffmpeg_aar:
+        description: "Özel ARM64-O3 SIMD (NEON/DotProd/I8MM) FFmpegKit motorunu kullan"
+        type: boolean
+        default: true
+      rebuild_ffmpeg_aar:
+        description: "FFmpegKit ARM64 AAR önbelleğini yoksayıp sıfırdan yeniden derle"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,6 +38,44 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+
+      - name: Ozel ARM64-O3 SIMD FFmpegKit Onbellegi
+        id: ffmpeg-cache
+        if: ${{ inputs.use_custom_ffmpeg_aar != false }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/libs/ffmpeg-kit-custom-arm64-gpl.aar
+            app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
+          key: ffmpeg-kit-arm64-simd-v1-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
+
+      - name: Ozel ARM64-O3 SIMD FFmpegKit AAR Derle (Yedekli)
+        id: build-custom-ffmpeg
+        if: ${{ inputs.use_custom_ffmpeg_aar != false && github.event_name != 'pull_request' && (steps.ffmpeg-cache.outputs.cache-hit != 'true' || inputs.rebuild_ffmpeg_aar == true) }}
+        continue-on-error: true
+        timeout-minutes: 45
+        run: |
+          rm -f app/libs/ffmpeg-kit-custom-arm64-gpl.aar app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
+          chmod +x scripts/build_optimized_ffmpegkit_arm64.sh scripts/patch_ffmpegkit_arm64_simd.py
+          if ! bash scripts/build_optimized_ffmpegkit_arm64.sh; then
+            echo "::warning::Ozel ARM64-O3 FFmpegKit derlemesi basarisiz oldu; Maven 8.1.9 yedegine donuluyor."
+            rm -f app/libs/ffmpeg-kit-custom-arm64-gpl.aar app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
+            exit 1
+          fi
+
+      - name: Aktif FFmpeg Motorunu Raporla
+        id: engine-info
+        run: |
+          if [ -f "app/libs/ffmpeg-kit-custom-arm64-gpl.aar" ]; then
+            echo "mode=custom" >> "$GITHUB_OUTPUT"
+            echo "summary=Ozel ARM64-O3 Runtime SIMD (NEON · DotProd · I8MM)" >> "$GITHUB_OUTPUT"
+            echo "Aktif motor: Ozel ARM64-O3 Runtime SIMD FFmpegKit"
+            cat app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt 2>/dev/null || true
+          else
+            echo "mode=maven" >> "$GITHUB_OUTPUT"
+            echo "summary=Maven FFmpegKit 8.1.9 (Standart Yedek)" >> "$GITHUB_OUTPUT"
+            echo "Aktif motor: Maven dev.ffmpegkit-maintained:ffmpeg-kit-full-gpl:8.1.9"
+          fi
 
       - name: Debug Keystore Olustur
         run: |
@@ -126,6 +173,9 @@ jobs:
           tag_name: ${{ env.SURUM_ETIKETI }}
           target_commitish: ${{ github.sha }}
           name: ${{ env.SURUM_BASLIGI }}
+          body: |
+            **FFmpeg Motoru:** ${{ steps.engine-info.outputs.summary }}
+            **Derleme Tipi:** R8 Optimize Release APK (16 KB ELF uyumlu)
           make_latest: "true"
           fail_on_unmatched_files: true
           files: dist/${{ env.APK_ADI }}

@@ -44,6 +44,17 @@ object NativeCpuAffinity {
         }.getOrDefault(IntArray(0))
     }
 
+    /**
+     * Returns the AArch64 SIMD capability bitmask probed via `getauxval(AT_HWCAP / AT_HWCAP2)`,
+     * or 0 on non-ARM64 / JVM test environments.
+     */
+    fun getArm64SimdMask(): Int {
+        if (!isLoaded) return 0
+        return runCatching {
+            nativeGetArm64SimdMask()
+        }.getOrDefault(0)
+    }
+
     @JvmStatic
     private external fun nativeSetThreadAffinity(tid: Int, cpuIds: IntArray): Int
 
@@ -52,4 +63,7 @@ object NativeCpuAffinity {
 
     @JvmStatic
     private external fun nativeGetProcessAllowedCpus(): IntArray
+
+    @JvmStatic
+    private external fun nativeGetArm64SimdMask(): Int
 }

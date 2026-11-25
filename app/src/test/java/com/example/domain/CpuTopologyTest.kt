@@ -170,4 +170,51 @@ class CpuTopologyTest {
         assertEquals(listOf(0, 1, 4, 5, 6), CpuTopology.parseCpuListString("0-1,4-6"))
         assertEquals(listOf(0, 2, 3, 7), CpuTopology.parseCpuListString("0,2-3,7"))
     }
+
+    @Test
+    fun cpuSimdProfile_decodesOldArmv8AndModernSnapdragonBitmasks() {
+        val oldArmv8 = CpuSimdProfile.fromBitmask(CpuSimdProfile.BIT_NEON)
+        assertTrue(oldArmv8.hasNeon)
+        assertFalse(oldArmv8.hasDotProd)
+        assertFalse(oldArmv8.hasI8mm)
+        assertEquals("NEON", oldArmv8.summaryLabel())
+
+        val modernSnapdragon = CpuSimdProfile.fromBitmask(
+            CpuSimdProfile.BIT_NEON or CpuSimdProfile.BIT_DOTPROD or CpuSimdProfile.BIT_I8MM
+        )
+        assertTrue(modernSnapdragon.hasNeon)
+        assertTrue(modernSnapdragon.hasDotProd)
+        assertTrue(modernSnapdragon.hasI8mm)
+        assertFalse(modernSnapdragon.hasSve2)
+        assertEquals("NEON · DotProd · I8MM", modernSnapdragon.summaryLabel())
+
+        val flagshipSve2 = CpuSimdProfile.fromBitmask(
+            CpuSimdProfile.BIT_NEON or CpuSimdProfile.BIT_DOTPROD or CpuSimdProfile.BIT_I8MM or
+                CpuSimdProfile.BIT_SVE or CpuSimdProfile.BIT_SVE2
+        )
+        assertEquals("NEON · DotProd · I8MM · SVE2", flagshipSve2.summaryLabel())
+    }
+
+    @Test
+    fun cpuSimdProfile_parsesProcCpuInfoFallbackCleanly() {
+        val snapdragonCpuInfo = """
+            processor : 0
+            BogoMIPS  : 38.40
+            Features  : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2 flagm2 frint svei8mm i8mm bf16
+        """.trimIndent()
+        val parsed = CpuSimdProfile.parseCpuInfoFeatures(snapdragonCpuInfo)
+        assertTrue(parsed.hasNeon)
+        assertTrue(parsed.hasDotProd)
+        assertTrue(parsed.hasI8mm)
+        assertTrue(parsed.hasSve)
+        assertTrue(parsed.hasSve2)
+        assertEquals("NEON · DotProd · I8MM · SVE2", parsed.summaryLabel())
+
+        val legacyArmv8CpuInfo = "Features : fp asimd evtstrm aes pmull sha1 sha2 crc32"
+        val legacy = CpuSimdProfile.parseCpuInfoFeatures(legacyArmv8CpuInfo)
+        assertTrue(legacy.hasNeon)
+        assertFalse(legacy.hasDotProd)
+        assertFalse(legacy.hasI8mm)
+        assertEquals("NEON", legacy.summaryLabel())
+    }
 }

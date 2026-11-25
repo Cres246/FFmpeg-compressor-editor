@@ -2,8 +2,28 @@
 #include <errno.h>
 #include <jni.h>
 #include <sched.h>
+#include <sys/auxv.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+#if defined(__aarch64__)
+#include <asm/hwcap.h>
+#ifndef HWCAP_ASIMD
+#define HWCAP_ASIMD (1UL << 1)
+#endif
+#ifndef HWCAP_ASIMDDP
+#define HWCAP_ASIMDDP (1UL << 20)
+#endif
+#ifndef HWCAP_SVE
+#define HWCAP_SVE (1UL << 22)
+#endif
+#ifndef HWCAP2_SVE2
+#define HWCAP2_SVE2 (1UL << 1)
+#endif
+#ifndef HWCAP2_I8MM
+#define HWCAP2_I8MM (1UL << 13)
+#endif
+#endif
 
 /**
  * Pins the target thread [tid] (0 = current thread) to the intersection of [cpuIds] and the
@@ -129,4 +149,46 @@ Java_com_example_service_NativeCpuAffinity_nativeGetProcessAllowedCpus(
         (*env)->SetIntArrayRegion(env, result, 0, outIdx, buf);
     }
     return result;
+}
+
+/**
+ * Queries the Linux ELF auxiliary vector (`getauxval(AT_HWCAP / AT_HWCAP2)`) to report the exact
+ * AArch64 SIMD extensions supported by the host CPU at runtime without executing risky probes.
+ *
+ * Bitmask layout (matches CpuSimdProfile in CpuTopology.kt):
+ *  - bit 0 (1): NEON / ASIMD
+ *  - bit 1 (2): DotProd (ARMv8.2+ ASIMDDP)
+ *  - bit 2 (4): I8MM (ARMv8.6+ Int8 Matrix Multiply)
+ *  - bit 3 (8): SVE
+ *  - bit 4 (16): SVE2
+ */
+JNIEXPORT jint JNICALL
+Java_com_example_service_NativeCpuAffinity_nativeGetArm64SimdMask(
+        JNIEnv *env,
+        jclass clazz) {
+    (void) env;
+    (void) clazz;
+#if defined(__aarch64__)
+    unsigned long hwcap = getauxval(AT_HWCAP);
+    unsigned long hwcap2 = getauxval(AT_HWCAP2);
+    jint mask = 0;
+    if ((hwcap & HWCAP_ASIMD) != 0UL) {
+        mask |= (1 << 0);
+    }
+    if ((hwcap & HWCAP_ASIMDDP) != 0UL) {
+        mask |= (1 << 1);
+    }
+    if ((hwcap2 & HWCAP2_I8MM) != 0UL) {
+        mask |= (1 << 2);
+    }
+    if ((hwcap & HWCAP_SVE) != 0UL) {
+        mask |= (1 << 3);
+    }
+    if ((hwcap2 & HWCAP2_SVE2) != 0UL) {
+        mask |= (1 << 4);
+    }
+    return mask;
+#else
+    return 0;
+#endif
 }

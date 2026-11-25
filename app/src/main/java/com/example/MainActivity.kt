@@ -86,6 +86,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.domain.AppLanguage
 import com.example.domain.AppLanguageController
 import com.example.domain.CompletedOutput
+import com.example.domain.CpuSimdProfile
 import com.example.domain.EncodingState
 import com.example.domain.LanguagePreference
 import com.example.domain.LocalAppStrings
@@ -95,6 +96,7 @@ import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
 import com.example.domain.isHardwareTurboState
 import com.example.domain.stringsFor
+import com.example.service.NativeCpuAffinity
 import com.example.ui.MainViewModel
 import com.example.ui.components.MediaHeroCard
 import com.example.ui.components.ModeCategoryHeader
@@ -865,11 +867,23 @@ private fun OpenSourceCreditsDialog(
                     authorLine = strings.creditsOriginalLibCreator,
                     borderColor = extColors.subtleBorder
                 )
+                val simdProfile = remember {
+                    CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask)
+                }
                 CreditEntryCard(
                     sectionLabel = strings.creditsForkSectionLabel,
-                    libraryName = "FFmpegKit Maintained (Full GPL)",
-                    packageTag = "dev.ffmpegkit-maintained · v8.1.9",
+                    libraryName = if (BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG) {
+                        "FFmpegKit Maintained (ARM64-O3 SIMD GPL)"
+                    } else {
+                        "FFmpegKit Maintained (Full GPL)"
+                    },
+                    packageTag = if (BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG) {
+                        "Custom ARM64-O3 · Runtime NEON/DotProd/I8MM"
+                    } else {
+                        "dev.ffmpegkit-maintained · v8.1.9"
+                    },
                     authorLine = strings.creditsForkMaintainer,
+                    extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
                     borderColor = extColors.subtleBorder
                 )
                 CreditEntryCard(

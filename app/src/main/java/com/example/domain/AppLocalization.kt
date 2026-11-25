@@ -375,8 +375,6 @@ interface AppStrings {
     val logTagStep: (passNum: Int, totalPasses: Int) -> String
     val logTagError: String
     val logTagCompleted: String
-    val logHybridHwDecodeActive: (decoder: String, encoder: String) -> String
-    val logHybridHwDecodeFallback: (decoder: String) -> String
     val errFfmpegExitCode: (code: Int) -> String
     val errOutputNotCreated: String
     val errUnexpected: String
@@ -782,12 +780,6 @@ object TurkishStrings : AppStrings {
     override val logTagStep: (Int, Int) -> String = { p, t -> "[Aşama $p/$t]" }
     override val logTagError = "[Hata]"
     override val logTagCompleted = "[Tamamlandı]"
-    override val logHybridHwDecodeActive: (String, String) -> String = { dec, enc ->
-        "[Hibrit HW] Donanım çözücü ($dec) → yazılım kodlayıcı ($enc)"
-    }
-    override val logHybridHwDecodeFallback: (String) -> String = { dec ->
-        "[Hibrit HW] $dec bu akışta uyumlu değil, otomatik yazılım çözücüye geçildi."
-    }
     override val errFfmpegExitCode: (Int) -> String = { code -> "FFmpeg hata kodu ile durdu (kod: $code)." }
     override val errOutputNotCreated = "Çıktı dosyası oluşturulamadı."
     override val errUnexpected = "Beklenmeyen bir hata oluştu."
@@ -1223,12 +1215,6 @@ object EnglishStrings : AppStrings {
     override val logTagStep: (Int, Int) -> String = { p, t -> "[Step $p/$t]" }
     override val logTagError = "[Error]"
     override val logTagCompleted = "[Completed]"
-    override val logHybridHwDecodeActive: (String, String) -> String = { dec, enc ->
-        "[Hybrid HW] Hardware decoder ($dec) → software encoder ($enc)"
-    }
-    override val logHybridHwDecodeFallback: (String) -> String = { dec ->
-        "[Hybrid HW] $dec unsupported for this stream; fell back to software decoder."
-    }
     override val errFfmpegExitCode: (Int) -> String = { code -> "FFmpeg exited with an error (code: $code)." }
     override val errOutputNotCreated = "Output file was not created."
     override val errUnexpected = "An unexpected error occurred."
