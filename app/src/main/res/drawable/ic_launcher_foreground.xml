@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/ic_fflab_cream_icon_centered"
+        android:drawable="@drawable/ic_launcher_editorial_pencil"
         android:gravity="center" />
 </layer-list>
