@@ -55,6 +55,23 @@ object NativeCpuAffinity {
         }.getOrDefault(0)
     }
 
+    /**
+     * Temporarily redirects native `stderr` into a non-blocking pipe to capture `libx265`
+     * `using cpu capabilities:` output during the one-shot 1-frame SIMD probe.
+     */
+    fun beginStderrCapture(): Boolean {
+        if (!isLoaded) return false
+        return runCatching { nativeBeginStderrCapture() }.getOrDefault(false)
+    }
+
+    /**
+     * Restores native `stderr` and returns captured text (empty string if unavailable).
+     */
+    fun endStderrCapture(): String {
+        if (!isLoaded) return ""
+        return runCatching { nativeEndStderrCapture().orEmpty() }.getOrDefault("")
+    }
+
     @JvmStatic
     private external fun nativeSetThreadAffinity(tid: Int, cpuIds: IntArray): Int
 
@@ -66,4 +83,10 @@ object NativeCpuAffinity {
 
     @JvmStatic
     private external fun nativeGetArm64SimdMask(): Int
+
+    @JvmStatic
+    private external fun nativeBeginStderrCapture(): Boolean
+
+    @JvmStatic
+    private external fun nativeEndStderrCapture(): String?
 }

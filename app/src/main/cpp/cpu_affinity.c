@@ -1,7 +1,11 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <jni.h>
+#include <pthread.h>
 #include <sched.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/auxv.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -24,6 +28,10 @@
 #define HWCAP2_I8MM (1UL << 13)
 #endif
 #endif
+
+static pthread_mutex_t g_stderr_capture_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_saved_stderr_fd = -1;
+static int g_capture_read_fd = -1;
 
 /**
  * Pins the target thread [tid] (0 = current thread) to the intersection of [cpuIds] and the
@@ -191,4 +199,105 @@ Java_com_example_service_NativeCpuAffinity_nativeGetArm64SimdMask(
 #else
     return 0;
 #endif
+}
+
+/**
+ * Temporarily redirects POSIX `stderr` (`fd 2`) into a non-blocking pipe so short one-shot
+ * native probes (such as `libx265`, which writes `x265 [info]: using cpu capabilities: ...`
+ * directly via `fprintf(stderr)` instead of FFmpeg's `av_log`) can be captured safely without
+ * ever blocking. Must always be paired with `nativeEndStderrCapture`.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_example_service_NativeCpuAffinity_nativeBeginStderrCapture(
+        JNIEnv *env,
+        jclass clazz) {
+    (void) env;
+    (void) clazz;
+    pthread_mutex_lock(&g_stderr_capture_lock);
+    if (g_saved_stderr_fd >= 0 || g_capture_read_fd >= 0) {
+        pthread_mutex_unlock(&g_stderr_capture_lock);
+        return JNI_FALSE;
+    }
+
+    int pipeFds[2] = {-1, -1};
+    if (pipe(pipeFds) != 0) {
+        pthread_mutex_unlock(&g_stderr_capture_lock);
+        return JNI_FALSE;
+    }
+
+    int rFlags = fcntl(pipeFds[0], F_GETFL, 0);
+    if (rFlags >= 0) {
+        fcntl(pipeFds[0], F_SETFL, rFlags | O_NONBLOCK);
+    }
+    int wFlags = fcntl(pipeFds[1], F_GETFL, 0);
+    if (wFlags >= 0) {
+        fcntl(pipeFds[1], F_SETFL, wFlags | O_NONBLOCK);
+    }
+
+    fflush(stderr);
+    int saved = dup(STDERR_FILENO);
+    if (saved < 0) {
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        pthread_mutex_unlock(&g_stderr_capture_lock);
+        return JNI_FALSE;
+    }
+
+    if (dup2(pipeFds[1], STDERR_FILENO) < 0) {
+        close(saved);
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        pthread_mutex_unlock(&g_stderr_capture_lock);
+        return JNI_FALSE;
+    }
+    close(pipeFds[1]);
+
+    g_saved_stderr_fd = saved;
+    g_capture_read_fd = pipeFds[0];
+    pthread_mutex_unlock(&g_stderr_capture_lock);
+    return JNI_TRUE;
+}
+
+/**
+ * Restores POSIX `stderr` (`fd 2`), drains up to 16 KB captured from the non-blocking pipe,
+ * and returns it as a Java String.
+ */
+JNIEXPORT jstring JNICALL
+Java_com_example_service_NativeCpuAffinity_nativeEndStderrCapture(
+        JNIEnv *env,
+        jclass clazz) {
+    (void) clazz;
+    pthread_mutex_lock(&g_stderr_capture_lock);
+    int saved = g_saved_stderr_fd;
+    int readFd = g_capture_read_fd;
+    g_saved_stderr_fd = -1;
+    g_capture_read_fd = -1;
+
+    if (saved >= 0) {
+        fflush(stderr);
+        dup2(saved, STDERR_FILENO);
+        close(saved);
+    }
+    pthread_mutex_unlock(&g_stderr_capture_lock);
+
+    char buffer[16384];
+    size_t total = 0;
+    if (readFd >= 0) {
+        while (total < sizeof(buffer) - 1) {
+            ssize_t n = read(readFd, buffer + total, (sizeof(buffer) - 1) - total);
+            if (n <= 0) {
+                break;
+            }
+            total += (size_t) n;
+        }
+        close(readFd);
+    }
+    buffer[total] = '\0';
+    // Strip any embedded NUL bytes to keep NewStringUTF valid.
+    for (size_t i = 0; i < total; i++) {
+        if (buffer[i] == '\0') {
+            buffer[i] = ' ';
+        }
+    }
+    return (*env)->NewStringUTF(env, buffer);
 }

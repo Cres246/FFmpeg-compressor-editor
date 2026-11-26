@@ -1844,7 +1844,7 @@ object FfmpegMath {
     fun buildAiRawErrorReport(
         modeTitle: String,
         errorMessage: String,
-        engineLabel: String = "Android FFmpegKit GPL 8.1.9 (ffmpeg + ffprobe; libx264, libx265, aac, libmp3lame)",
+        engineLabel: String = "Android FFmpegKit GPL (ffmpeg + ffprobe; libx264, libx265, aac, libmp3lame)",
         mediaFileName: String? = null,
         mediaSummary: String? = null,
         executedCommand: String? = null,

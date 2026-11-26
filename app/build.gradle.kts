@@ -10,7 +10,21 @@ plugins {
 
 val customFfmpegAarFile = file("libs/ffmpeg-kit-custom-arm64-gpl.aar")
 val customFfmpegInfoFile = file("libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt")
+val requireCustomFfmpeg =
+  providers.gradleProperty("requireCustomFfmpeg").orNull.equals("true", ignoreCase = true)
 val useCustomSimdFfmpeg = customFfmpegAarFile.isFile && customFfmpegAarFile.length() > 1_000_000L
+if (requireCustomFfmpeg && !useCustomSimdFfmpeg) {
+  throw GradleException(
+    "FATAL: -PrequireCustomFfmpeg=true was set, but ${customFfmpegAarFile.path} is missing or invalid " +
+      "(size=${if (customFfmpegAarFile.isFile) customFfmpegAarFile.length() else -1}). " +
+      "Refusing to fall back to Maven FFmpegKit 8.1.9!"
+  )
+}
+logger.lifecycle(
+  "[ffmpeg-engine] Active engine: " +
+    if (useCustomSimdFfmpeg) "FFmpegKit Next · ARM64-O3 (${customFfmpegAarFile.name})"
+    else "Maven FFmpegKit 8.1.9 (local preview fallback)"
+)
 val customAarBundlesSmartException =
   useCustomSimdFfmpeg &&
     customFfmpegInfoFile.isFile &&

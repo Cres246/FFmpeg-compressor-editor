@@ -125,11 +125,15 @@ jobs:
 
       - name: Birim Testleri Calistir
         run: |
+          GRADLE_EXTRA_ARGS=""
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            GRADLE_EXTRA_ARGS="-PrequireCustomFfmpeg=true --no-configuration-cache"
+          fi
           if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
             chmod +x ./gradlew
-            ./gradlew testDebugUnitTest --stacktrace
+            ./gradlew testDebugUnitTest ${GRADLE_EXTRA_ARGS} --stacktrace
           else
-            gradle testDebugUnitTest --stacktrace
+            gradle testDebugUnitTest ${GRADLE_EXTRA_ARGS} --stacktrace
           fi
 
       - name: Release Keystore Hazirla
@@ -159,11 +163,15 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
         run: |
+          GRADLE_EXTRA_ARGS=""
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            GRADLE_EXTRA_ARGS="-PrequireCustomFfmpeg=true --no-configuration-cache"
+          fi
           if [ -f "./gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease --stacktrace
+            ./gradlew assembleRelease ${GRADLE_EXTRA_ARGS} --stacktrace
           else
-            gradle assembleRelease --stacktrace
+            gradle assembleRelease ${GRADLE_EXTRA_ARGS} --stacktrace
           fi
 
       - name: APK Dosyasini Yeniden Adlandir
@@ -171,6 +179,43 @@ jobs:
           mkdir -p dist
           APK_SRC=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_SRC" "dist/${{ env.APK_ADI }}"
+
+      - name: Release APK Motor ve SIMD Dogrulamasi
+        if: github.event_name != 'pull_request'
+        run: |
+          rm -rf /tmp/verify-release-apk
+          mkdir -p /tmp/verify-release-apk
+          unzip -q "dist/${{ env.APK_ADI }}" -d /tmp/verify-release-apk
+
+          echo "=== APK ABI Klasorleri ==="
+          ls -la /tmp/verify-release-apk/lib/
+          for bad_abi in armeabi-v7a x86 x86_64; do
+            if [ -d "/tmp/verify-release-apk/lib/${bad_abi}" ]; then
+              echo "::error::Release APK icine istenmeyen ABI (${bad_abi}) sizmis!"
+              exit 1
+            fi
+          done
+
+          if [ ! -f "/tmp/verify-release-apk/lib/arm64-v8a/libavutil.so" ] || [ ! -f "/tmp/verify-release-apk/lib/arm64-v8a/libavcodec.so" ]; then
+            echo "::error::Release APK icinde arm64-v8a FFmpeg kutuphaneleri bulunamadi!"
+            exit 1
+          fi
+
+          if strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -qE '^n8\.1\.'; then
+            echo "::error::KRITIK HATA: Release APK hala eski FFmpegKit 8.1.9 (n8.1.x) kutuphanesini iceriyor!"
+            exit 1
+          fi
+
+          if ! strings /tmp/verify-release-apk/classes*.dex | grep -qF "FFmpegKit Next"; then
+            echo "::error::KRITIK HATA: Release APK BuildConfig icinde 'FFmpegKit Next' bulunamadi!"
+            exit 1
+          fi
+
+          APK_FF_VER="$(strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || echo unknown)"
+          echo "Dogrulandi! Release APK aktif FFmpeg surumu: ${APK_FF_VER}"
+          echo "=== APK arm64-v8a Derlenmis SIMD Sembolleri ==="
+          strings /tmp/verify-release-apk/lib/arm64-v8a/*.so | grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' | sort -u | head -n 30 || true
+          rm -rf /tmp/verify-release-apk
 
       - name: APK Dosyasini Actions'a Yukle
         uses: actions/upload-artifact@v7
