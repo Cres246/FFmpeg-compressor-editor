@@ -252,15 +252,16 @@ fun TargetSizeModeRow(
                 border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
                 tonalElevation = 0.dp
             ) {
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp)
-                        .padding(horizontal = 11.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 11.dp, vertical = 7.dp)
                 ) {
+                    // Dead-center icon aligned vertically with the middle preset card above
                     Box(
                         modifier = Modifier
+                            .align(Alignment.Center)
                             .size(30.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(MaterialTheme.colorScheme.primaryContainer),
@@ -273,49 +274,69 @@ fun TargetSizeModeRow(
                             modifier = Modifier.size(17.dp)
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = customSizeMode.localizedTitle(strings),
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = customSizeMode.localizedSubtitle(strings),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(7.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = customSizeMode.localizedShortSubtitle(strings),
-                            style = MonoLabelStyle.copy(
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.2.sp
-                            ),
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                        )
+                        // Left wing: Title gracefully right-aligned toward the centered icon
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 25.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Text(
+                                text = customSizeMode.localizedTitle(strings),
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontFamily = SpaceGroteskFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = (-0.1).sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End
+                            )
+                        }
+
+                        // Right wing: Symmetrical MB pill beside center icon + right-edge chevron
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 25.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(7.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                                border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+                            ) {
+                                Text(
+                                    text = customSizeMode.localizedShortSubtitle(strings),
+                                    style = MonoLabelStyle.copy(
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        letterSpacing = 0.2.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
                 }
             }
         }
@@ -324,6 +345,7 @@ fun TargetSizeModeRow(
 
 /**
  * Group 2: Prominent full-width feature card for Videoyu Kes.
+ * Icon left edge (`11.dp`) and right badge edge (`31.dp`) align pixel-for-pixel with [OtherModesList].
  */
 @Composable
 fun TrimFeatureCard(
@@ -352,13 +374,13 @@ fun TrimFeatureCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 78.dp)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 11.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(11.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
@@ -366,19 +388,20 @@ fun TrimFeatureCard(
                     imageVector = modeIcon(mode),
                     contentDescription = mode.localizedTitle(strings),
                     tint = iconColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(11.dp))
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
                     text = mode.localizedTitle(strings),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontFamily = SpaceGroteskFontFamily,
                         fontSize = 16.5.sp,
+                        lineHeight = 20.sp,
                         fontWeight = FontWeight.Bold
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -387,24 +410,26 @@ fun TrimFeatureCard(
                 )
                 Text(
                     text = mode.localizedSubtitle(strings),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        lineHeight = 15.5.sp
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
             QualityStatusBadge(
                 label = if (mediaInfo != null && !mediaInfo.hasVideo) strings.noVideoBadge else mode.localizedQualityTag(strings),
                 tone = if (mediaInfo != null && !mediaInfo.hasVideo) QualityBadgeTone.LOSSY else mode.qualityTone,
                 prominent = true
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(4.dp))
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
     }
