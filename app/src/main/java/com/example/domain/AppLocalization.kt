@@ -441,8 +441,6 @@ interface AppStrings {
     val turboScreenTitle: String
     val turboGaugeSubLabel: String
     val turboHardwareChip: String
-    val inputCachedLabel: String
-    val statusCachingInput: String
     val turboStatusPreparing: String
     val turboStatusEncoding: String
     val turboStatusSaving: String
@@ -851,8 +849,6 @@ object TurkishStrings : AppStrings {
     override val turboScreenTitle = "Turbo · MediaCodec"
     override val turboGaugeSubLabel = "DONANIM HIZLANDIRMA"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
-    override val inputCachedLabel = "Hafızada"
-    override val statusCachingInput = "Hızlı okuma için hafızaya alınıyor..."
     override val turboStatusPreparing = "MediaCodec donanım motoru hazırlanıyor..."
     override val turboStatusEncoding = ""
     override val turboStatusSaving = "Çıktı Movies/FFmpeg klasörüne kaydediliyor..."
@@ -1295,8 +1291,6 @@ object EnglishStrings : AppStrings {
     override val turboScreenTitle = "Turbo · MediaCodec"
     override val turboGaugeSubLabel = "HARDWARE ACCEL"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
-    override val inputCachedLabel = "In Cache"
-    override val statusCachingInput = "Caching for fast reads..."
     override val turboStatusPreparing = "Initializing MediaCodec hardware engine..."
     override val turboStatusEncoding = ""
     override val turboStatusSaving = "Saving output to Movies/FFmpeg..."

@@ -20,8 +20,6 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.DeviceCodecInventory
 import com.example.data.FfmpegEngine
-import com.example.data.LocalInputCachePolicy
-import com.example.data.LocalInputStager
 import com.example.data.Media3TurboEngine
 import com.example.data.MediaStoreSaver
 import com.example.data.PreferencesRepository
@@ -875,11 +873,6 @@ class EncodingForegroundService : Service() {
         backgroundGuard = BackgroundExecutionGuard(applicationContext)
         cpuBooster = CpuPerformanceBooster(applicationContext)
         createNotificationChannel()
-        serviceScope.launch {
-            FfmpegEngine.cleanupOrphanTempDirsIfIdle(applicationContext) {
-                EncodingJobController.currentActiveRunId() == 0L
-            }
-        }
     }
 
     private fun teardownIfStillOwner(runId: Long, startId: Int) {
@@ -1271,47 +1264,6 @@ class EncodingForegroundService : Service() {
                 strings = s
             )
 
-            val stagedInput = LocalInputStager.stageInputIfEligible(
-                context = applicationContext,
-                media = media,
-                config = effectiveConfig,
-                workDir = workDir,
-                isHardwareTurbo = false,
-                isStillActive = { EncodingJobController.isRunActive(runId) },
-                onBeforeCopy = {
-                    if (media.sizeBytes >= 100_000_000L && EncodingJobController.isRunActive(runId)) {
-                        val liveS = AppLanguageController.currentStrings()
-                        EncodingJobController.updateStateIfActive(
-                            runId,
-                            EncodingState.Running(
-                                modeTitle = modeTitle,
-                                outputFileName = expectedOutputName,
-                                passIndex = 1,
-                                totalPasses = steps.size,
-                                statusMessage = liveS.statusCachingInput,
-                                currentTimeSec = 0.0,
-                                totalDurationSec = steps.firstOrNull()?.expectedDurationSec,
-                                percent = null,
-                                speed = "...",
-                                sizeKb = 0L,
-                                logs = currentLogs(),
-                                summaryBanner = summaryBanner,
-                                videoSpecsSummary = videoSpecsSummary,
-                                presetLabel = presetLabel,
-                                canSwitchToTurbo = canSwitchToTurbo,
-                                isInputCached = false
-                            )
-                        )
-                    }
-                }
-            )
-            if (!EncodingJobController.isRunActive(runId)) return
-
-            if (stagedInput != null) {
-                appendLog("[Cache] ${FfmpegMath.formatSizeBytes(stagedInput.bytesCopied)} · ${stagedInput.elapsedMs}ms")
-            }
-            val isInputCached = stagedInput != null || media.uri.scheme.equals("file", ignoreCase = true)
-
             for ((idx, step) in steps.withIndex()) {
                 if (!EncodingJobController.isRunActive(runId)) return
                 val passNum = idx + 1
@@ -1337,8 +1289,7 @@ class EncodingForegroundService : Service() {
                         summaryBanner = summaryBanner,
                         videoSpecsSummary = videoSpecsSummary,
                         presetLabel = presetLabel,
-                        canSwitchToTurbo = canSwitchToTurbo,
-                        isInputCached = isInputCached
+                        canSwitchToTurbo = canSwitchToTurbo
                     )
                 )
                 updateNotificationThrottled(
@@ -1353,8 +1304,7 @@ class EncodingForegroundService : Service() {
 
                 val stepArgs = step.args.map { arg ->
                     if (arg == inputPlaceholder) {
-                        stagedInput?.file?.absolutePath
-                            ?: FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                        FfmpegEngine.resolveInputPath(applicationContext, media.uri)
                     } else {
                         arg
                     }
@@ -1401,8 +1351,7 @@ class EncodingForegroundService : Service() {
                                     summaryBanner = summaryBanner,
                                     videoSpecsSummary = videoSpecsSummary,
                                     presetLabel = presetLabel,
-                                    canSwitchToTurbo = canSwitchToTurbo,
-                                    isInputCached = isInputCached
+                                    canSwitchToTurbo = canSwitchToTurbo
                                 )
                             )
                         }
@@ -2866,50 +2815,6 @@ class EncodingForegroundService : Service() {
                 return
             }
 
-            val stagedTurboInput = if (inputUriOverride == null) {
-                LocalInputStager.stageInputIfEligible(
-                    context = applicationContext,
-                    media = media,
-                    config = config,
-                    workDir = workDir,
-                    isHardwareTurbo = true,
-                    isStillActive = { EncodingJobController.isRunActive(runId) },
-                    onBeforeCopy = {
-                        if (media.sizeBytes >= 100_000_000L && EncodingJobController.isRunActive(runId)) {
-                            val liveS = AppLanguageController.currentStrings()
-                            val cur = EncodingJobController.state.value
-                            if (cur is EncodingState.Running && cur.isHardwareTurbo) {
-                                EncodingJobController.updateStateIfActive(
-                                    runId,
-                                    cur.copy(statusMessage = liveS.statusCachingInput)
-                                )
-                            }
-                        }
-                    }
-                )
-            } else {
-                null
-            }
-            if (!EncodingJobController.isRunActive(runId)) return
-
-            val effectiveTurboInputUri = inputUriOverride ?: stagedTurboInput?.let { Uri.fromFile(it.file) }
-            val isTurboInputCached = stagedTurboInput != null ||
-                (inputUriOverride?.scheme.equals("file", ignoreCase = true) == true) ||
-                media.uri.scheme.equals("file", ignoreCase = true)
-            if (isTurboInputCached) {
-                val cur = EncodingJobController.state.value
-                if (cur is EncodingState.Running && cur.isHardwareTurbo) {
-                    val liveS = AppLanguageController.currentStrings()
-                    EncodingJobController.updateStateIfActive(
-                        runId,
-                        cur.copy(
-                            statusMessage = liveS.turboStatusPreparing,
-                            isInputCached = true
-                        )
-                    )
-                }
-            }
-
             val tempOutFile = File(workDir, turboOutputName)
             var lastKnownPercent = 0
             var cachedTurboSizeKb = 0L
@@ -2929,7 +2834,7 @@ class EncodingForegroundService : Service() {
                 media = media,
                 config = config,
                 outputFile = tempOutFile,
-                inputUriOverride = effectiveTurboInputUri,
+                inputUriOverride = inputUriOverride,
                 onPlanResolved = { plan ->
                     resolvedPlan = plan
                     val liveS = AppLanguageController.currentStrings()
@@ -3044,8 +2949,7 @@ class EncodingForegroundService : Service() {
                                 presetLabel = "MediaCodec",
                                 isHardwareTurbo = true,
                                 canSwitchToTurbo = false,
-                                elapsedSec = 0.0,
-                                isInputCached = isTurboInputCached
+                                elapsedSec = 0.0
                             )
                         )
                     }
@@ -3199,7 +3103,7 @@ class EncodingForegroundService : Service() {
                     }
                     val rescued = rescueMissingTurboAudio(
                         videoOnlyFile = tempOutFile,
-                        effectiveSourceUri = effectiveTurboInputUri ?: media.uri,
+                        effectiveSourceUri = inputUriOverride ?: media.uri,
                         media = media,
                         config = config,
                         plan = resolvedPlan,
@@ -3266,8 +3170,7 @@ class EncodingForegroundService : Service() {
                     presetLabel = "MediaCodec",
                     isHardwareTurbo = true,
                     canSwitchToTurbo = false,
-                    elapsedSec = result.elapsedSec,
-                    isInputCached = isTurboInputCached
+                    elapsedSec = result.elapsedSec
                 )
             )
 
@@ -3394,29 +3297,12 @@ class EncodingForegroundService : Service() {
             ?: if (plan.isProbeOnly) s.customCmdProbeOutputPlaceholder else s.customCmdOutputLabel
         val collectedCommandOutputs = mutableListOf<String>()
 
-        val stagedCustomInput = LocalInputStager.stageInputIfEligible(
-            context = applicationContext,
-            media = media,
-            config = config,
-            workDir = workDir,
-            isHardwareTurbo = false,
-            customStepCount = totalSteps,
-            customIsProbeOnly = plan.isProbeOnly,
-            isStillActive = { EncodingJobController.isRunActive(runId) }
-        )
-        if (!EncodingJobController.isRunActive(runId)) return
-        if (stagedCustomInput != null) {
-            appendLog("[Cache] ${FfmpegMath.formatSizeBytes(stagedCustomInput.bytesCopied)} · ${stagedCustomInput.elapsedMs}ms")
-        }
-        val isCustomInputCached = stagedCustomInput != null || media.uri.scheme.equals("file", ignoreCase = true)
-
         for ((idx, step) in plan.steps.withIndex()) {
             if (!EncodingJobController.isRunActive(runId)) return
             val isProbeStep = step.tool == CustomCommandTool.FFPROBE
             val resolvedArgs = step.args.map { arg ->
                 if (arg == inputPlaceholder) {
-                    stagedCustomInput?.file?.absolutePath
-                        ?: FfmpegEngine.resolveInputPath(applicationContext, media.uri)
+                    FfmpegEngine.resolveInputPath(applicationContext, media.uri)
                 } else {
                     arg
                 }
@@ -3447,8 +3333,7 @@ class EncodingForegroundService : Service() {
                     speed = "...",
                     sizeKb = 0L,
                     logs = currentLogs(),
-                    summaryBanner = summaryBanner,
-                    isInputCached = isCustomInputCached
+                    summaryBanner = summaryBanner
                 )
             )
             updateNotificationThrottled(
@@ -3509,8 +3394,7 @@ class EncodingForegroundService : Service() {
                                     speed = spd,
                                     sizeKb = kb,
                                     logs = currentLogs(),
-                                    summaryBanner = summaryBanner,
-                                    isInputCached = isCustomInputCached
+                                    summaryBanner = summaryBanner
                                 )
                             )
                         }
@@ -3607,7 +3491,6 @@ class EncodingForegroundService : Service() {
                 n.endsWith(".mbtree.temp") ||
                 n.startsWith("ffmpeg2pass") ||
                 n.startsWith("x265_2pass") ||
-                LocalInputCachePolicy.isStagedInputFileName(n) ||
                 n == "nul"
             if (isTempPassArtifact) {
                 file.delete()

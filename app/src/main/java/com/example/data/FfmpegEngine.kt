@@ -283,6 +283,7 @@ object FfmpegEngine {
         var width: Int? = null
         var height: Int? = null
         var pixFmt: String? = null
+        var bitsPerRawSample: Int? = null
         var fps: Double? = null
         var vProfile: String? = null
         var colorTransfer: String? = null
@@ -318,6 +319,7 @@ object FfmpegEngine {
                 }
             }
             pixFmt = primaryVideoStream.getStringProperty("pix_fmt")
+            bitsPerRawSample = primaryVideoStream.getStringProperty("bits_per_raw_sample")?.toIntOrNull()
             vProfile = primaryVideoStream.getStringProperty("profile")
             colorTransfer = primaryVideoStream.getStringProperty("color_transfer")
             colorSpace = primaryVideoStream.getStringProperty("color_space")
@@ -370,7 +372,8 @@ object FfmpegEngine {
             videoProfile = vProfile,
             colorTransfer = colorTransfer,
             colorSpace = colorSpace,
-            colorPrimaries = colorPrimaries
+            colorPrimaries = colorPrimaries,
+            bitsPerRawSample = bitsPerRawSample
         )
     }
 
@@ -671,14 +674,55 @@ object FfmpegEngine {
         cachedCapabilities?.let { return@withContext it }
         try {
             ensureSilentLogcat()
-            val x264Out = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx264"))
-                .getAllLogsAsString().orEmpty()
-            val x265Out = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx265"))
-                .getAllLogsAsString().orEmpty()
+            val x264Session = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx264"))
+            val x264Out = buildString {
+                append(x264Session.getAllLogsAsString().orEmpty())
+                append('\n')
+                append(x264Session.getOutput().orEmpty())
+            }
+            val x265Session = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "encoder=libx265"))
+            val x265Out = buildString {
+                append(x265Session.getAllLogsAsString().orEmpty())
+                append('\n')
+                append(x265Session.getOutput().orEmpty())
+            }
+
+            var x265TenBit = x265Out.contains("yuv420p10le")
+            if (!x265TenBit) {
+                // FFmpeg 9 (`ffmpeg-kit-next`) may print `-h encoder=...` to POSIX stdout instead
+                // of av_log. Verify 10-bit libx265 directly via a tiny ~15ms 1-frame null test,
+                // ensuring FFmpeg did not auto-downgrade yuv420p10le to yuv420p.
+                val testSession = FFmpegKit.executeWithArguments(
+                    arrayOf(
+                        "-hide_banner",
+                        "-loglevel", "warning",
+                        "-f", "rawvideo",
+                        "-pix_fmt", "yuv420p10le",
+                        "-s", "64x64",
+                        "-r", "1",
+                        "-i", "/dev/zero",
+                        "-frames:v", "1",
+                        "-c:v", "libx265",
+                        "-pix_fmt", "yuv420p10le",
+                        "-threads", "1",
+                        "-preset", "ultrafast",
+                        "-f", "null",
+                        "/dev/null"
+                    )
+                )
+                val testLog = buildString {
+                    append(testSession.getAllLogsAsString().orEmpty())
+                    append('\n')
+                    append(testSession.getOutput().orEmpty())
+                }
+                x265TenBit = ReturnCode.isSuccess(testSession.getReturnCode()) &&
+                    !testLog.contains("Incompatible pixel format", ignoreCase = true) &&
+                    !testLog.contains("auto-selecting format", ignoreCase = true)
+            }
 
             val caps = EncoderCapabilities(
                 x264Supports10Bit = x264Out.contains("yuv420p10le"),
-                x265Supports10Bit = x265Out.contains("yuv420p10le"),
+                x265Supports10Bit = x265TenBit,
                 probed = true
             )
             cachedCapabilities = caps

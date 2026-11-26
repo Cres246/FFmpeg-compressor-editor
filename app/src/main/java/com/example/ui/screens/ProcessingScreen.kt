@@ -528,39 +528,20 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(horizontalAlignment = Alignment.Start) {
-                    Surface(
-                        shape = CircleShape,
-                        color = primary.copy(alpha = 0.14f)
-                    ) {
-                        Text(
-                            text = if (state.totalPasses > 1) {
-                                strings.passBadge(state.passIndex, state.totalPasses)
-                            } else {
-                                strings.processingBadge
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                    if (state.isInputCached) {
-                        Text(
-                            text = strings.inputCachedLabel,
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontFamily = PlayfairDisplayFontFamily,
-                                fontStyle = FontStyle.Italic,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp,
-                                lineHeight = 15.sp,
-                                letterSpacing = 0.4.sp
-                            ),
-                            color = extColors.lossless,
-                            modifier = Modifier
-                                .padding(start = 4.dp, top = 4.dp)
-                                .testTag("ffmpeg_input_cached_label")
-                        )
-                    }
+                Surface(
+                    shape = CircleShape,
+                    color = primary.copy(alpha = 0.14f)
+                ) {
+                    Text(
+                        text = if (state.totalPasses > 1) {
+                            strings.passBadge(state.passIndex, state.totalPasses)
+                        } else {
+                            strings.processingBadge
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = primary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
                 }
 
                 Column(horizontalAlignment = Alignment.End) {

@@ -25,23 +25,29 @@ data class MediaInfo(
     val videoProfile: String? = null,
     val colorTransfer: String? = null,
     val colorSpace: String? = null,
-    val colorPrimaries: String? = null
+    val colorPrimaries: String? = null,
+    val bitsPerRawSample: Int? = null
 ) {
     val bitDepthIn: String
         get() = when {
-            pixFmt?.contains("10") == true -> "10bit"
             pixFmt?.contains("12") == true -> "12bit"
-            !pixFmt.isNullOrBlank() -> "8bit"
+            pixFmt?.contains("10") == true -> "10bit"
+            (bitsPerRawSample ?: 0) >= 12 -> "12bit"
+            (bitsPerRawSample ?: 0) >= 10 -> "10bit"
+            videoProfile?.contains("12") == true -> "12bit"
             videoProfile?.contains("10") == true -> "10bit"
             else -> "8bit"
         }
 
     val bitShort: String
         get() = when {
-            pixFmt?.contains("10") == true -> "10bit"
             pixFmt?.contains("12") == true -> "12bit"
-            !pixFmt.isNullOrBlank() -> "8bit"
+            pixFmt?.contains("10") == true -> "10bit"
+            (bitsPerRawSample ?: 0) >= 12 -> "12bit"
+            (bitsPerRawSample ?: 0) >= 10 -> "10bit"
+            videoProfile?.contains("12") == true -> "12bit"
             videoProfile?.contains("10") == true -> "10bit"
+            !pixFmt.isNullOrBlank() -> "8bit"
             else -> ""
         }
 
@@ -409,8 +415,7 @@ sealed interface EncodingState {
         val isHardwareTurbo: Boolean = false,
         val canSwitchToTurbo: Boolean = false,
         val isTurboPreRemux: Boolean = false,
-        val elapsedSec: Double = 0.0,
-        val isInputCached: Boolean = false
+        val elapsedSec: Double = 0.0
     ) : EncodingState
 
     data class Success(

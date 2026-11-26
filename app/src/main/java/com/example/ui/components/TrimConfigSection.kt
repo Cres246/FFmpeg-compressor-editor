@@ -73,12 +73,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.PreviewQuality
 import com.example.data.VideoFrameScrubber
+import com.example.domain.BitDepthOption
+import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.TrimCutStrategy
 import com.example.domain.TrimSubMode
+import com.example.domain.VideoCodecOption
 import com.example.domain.localizedSubtitle
 import com.example.domain.localizedTitle
 import com.example.ui.MainViewModel
@@ -705,6 +708,7 @@ fun TrimTimeAndKeyframeSection(
     media: MediaInfo,
     config: ModeConfigState,
     viewModel: MainViewModel,
+    capabilities: EncoderCapabilities = EncoderCapabilities(),
     scrubState: TrimScrubState? = null
 ) {
     val extColors = LocalExtendedColors.current
@@ -1075,6 +1079,46 @@ fun TrimTimeAndKeyframeSection(
                             style = MaterialTheme.typography.bodySmall,
                             color = extColors.onKeyframeContainer
                         )
+                    }
+                }
+
+                val inputHighBit = media.bitDepthIn == "10bit" || media.bitDepthIn == "12bit"
+                if (inputHighBit &&
+                    config.bitDepth != BitDepthOption.BIT_10 &&
+                    capabilities.x265Supports10Bit
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("trim_native_10bit_banner"),
+                        shape = MaterialTheme.shapes.small,
+                        color = extColors.losslessContainer,
+                        border = BorderStroke(1.dp, extColors.lossless.copy(alpha = 0.42f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = extColors.lossless,
+                                modifier = Modifier
+                                    .padding(top = 1.dp)
+                                    .size(16.dp)
+                            )
+                            Text(
+                                text = if (config.codec == VideoCodecOption.H264) {
+                                    strings.nativeTenBitSwitchToHevcHint(media.bitDepthIn)
+                                } else {
+                                    strings.nativeTenBitSourceBanner(media.bitDepthIn, false)
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = extColors.lossless
+                            )
+                        }
                     }
                 }
             }

@@ -413,6 +413,7 @@ fun ModeConfigScreen(
                             media = media,
                             config = config,
                             viewModel = viewModel,
+                            capabilities = capabilities,
                             scrubState = trimScrubState
                         )
                     }
