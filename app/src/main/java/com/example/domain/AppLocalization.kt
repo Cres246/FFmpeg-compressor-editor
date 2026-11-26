@@ -413,9 +413,9 @@ interface AppStrings {
     val stepPass1: String
     val stepPass2: String
     val stepTrimLossless: String
-    val stepTrimVideoLosslessAudioAac: String
+    val stepTrimVideoLosslessAudioAac: (audioBitrateKbps: Int?) -> String
     val stepTrimCrfAudioCopy: (codecTag: String, bitTag: String, crf: Int, preset: String) -> String
-    val stepTrimCrfAudioAac: (codecTag: String, bitTag: String, crf: Int, preset: String) -> String
+    val stepTrimCrfAudioAac: (codecTag: String, bitTag: String, crf: Int, preset: String, audioBitrateKbps: Int?) -> String
     val stepRemux: String
     val stepAudioOnly: (ab: Int) -> String
     val stepVideoOnly: (codecTag: String, bitTag: String, crf: Int, preset: String) -> String
@@ -441,6 +441,8 @@ interface AppStrings {
     val turboScreenTitle: String
     val turboGaugeSubLabel: String
     val turboHardwareChip: String
+    val inputCachedLabel: String
+    val statusCachingInput: String
     val turboStatusPreparing: String
     val turboStatusEncoding: String
     val turboStatusSaving: String
@@ -818,9 +820,13 @@ object TurkishStrings : AppStrings {
     override val stepPass1 = "1/2 Geçiş (Analiz ediliyor)"
     override val stepPass2 = "2/2 Geçiş (Kodlanıyor)"
     override val stepTrimLossless = "Kayıpsız kesiliyor (-noaccurate_seek)"
-    override val stepTrimVideoLosslessAudioAac = "Görüntü kayıpsız + Ses AAC kesiliyor"
+    override val stepTrimVideoLosslessAudioAac: (Int?) -> String = { ab ->
+        if (ab != null && ab > 0) "Görüntü kayıpsız + Ses ${ab}k AAC kesiliyor" else "Görüntü kayıpsız kesiliyor"
+    }
     override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Kesilip ${codec}${bit} CRF $crf · Ses copy" }
-    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Kesilip ${codec}${bit} CRF $crf + AAC" }
+    override val stepTrimCrfAudioAac: (String, String, Int, String, Int?) -> String = { codec, bit, crf, _, ab ->
+        if (ab != null && ab > 0) "Kesilip ${codec}${bit} CRF $crf + AAC ${ab}k" else "Kesilip ${codec}${bit} CRF $crf · Sessiz"
+    }
     override val stepRemux = "Kutu / format yenileniyor (-c copy)"
     override val stepAudioOnly: (Int) -> String = { ab -> "Görüntü copy · Ses ${ab}k AAC" }
     override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Görüntü ${codec}${bit} CRF $crf · Ses copy" }
@@ -845,6 +851,8 @@ object TurkishStrings : AppStrings {
     override val turboScreenTitle = "Turbo · MediaCodec"
     override val turboGaugeSubLabel = "DONANIM HIZLANDIRMA"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
+    override val inputCachedLabel = "Hafızada"
+    override val statusCachingInput = "Hızlı okuma için hafızaya alınıyor..."
     override val turboStatusPreparing = "MediaCodec donanım motoru hazırlanıyor..."
     override val turboStatusEncoding = ""
     override val turboStatusSaving = "Çıktı Movies/FFmpeg klasörüne kaydediliyor..."
@@ -1256,9 +1264,13 @@ object EnglishStrings : AppStrings {
     override val stepPass1 = "Pass 1/2 (Analyzing)"
     override val stepPass2 = "Pass 2/2 (Encoding)"
     override val stepTrimLossless = "Trimming losslessly (-noaccurate_seek)"
-    override val stepTrimVideoLosslessAudioAac = "Trimming (Lossless Video + AAC Audio)"
+    override val stepTrimVideoLosslessAudioAac: (Int?) -> String = { ab ->
+        if (ab != null && ab > 0) "Trimming (Lossless Video + ${ab}k AAC Audio)" else "Trimming (Lossless Video)"
+    }
     override val stepTrimCrfAudioCopy: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Trimming ${codec}${bit} CRF $crf · Audio copy" }
-    override val stepTrimCrfAudioAac: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Trimming ${codec}${bit} CRF $crf + AAC" }
+    override val stepTrimCrfAudioAac: (String, String, Int, String, Int?) -> String = { codec, bit, crf, _, ab ->
+        if (ab != null && ab > 0) "Trimming ${codec}${bit} CRF $crf + AAC ${ab}k" else "Trimming ${codec}${bit} CRF $crf · Silent"
+    }
     override val stepRemux = "Remuxing container (-c copy)"
     override val stepAudioOnly: (Int) -> String = { ab -> "Video copy · Audio ${ab}k AAC" }
     override val stepVideoOnly: (String, String, Int, String) -> String = { codec, bit, crf, _ -> "Video ${codec}${bit} CRF $crf · Audio copy" }
@@ -1283,6 +1295,8 @@ object EnglishStrings : AppStrings {
     override val turboScreenTitle = "Turbo · MediaCodec"
     override val turboGaugeSubLabel = "HARDWARE ACCEL"
     override val turboHardwareChip = "Zero-Copy GPU · MediaCodec HW"
+    override val inputCachedLabel = "In Cache"
+    override val statusCachingInput = "Caching for fast reads..."
     override val turboStatusPreparing = "Initializing MediaCodec hardware engine..."
     override val turboStatusEncoding = ""
     override val turboStatusSaving = "Saving output to Movies/FFmpeg..."

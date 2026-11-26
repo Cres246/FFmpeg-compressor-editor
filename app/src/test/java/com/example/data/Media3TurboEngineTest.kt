@@ -416,7 +416,22 @@ class Media3TurboEngineTest {
         assertTrue("Expected 8bit in '$ffmpegBanner8'", ffmpegBanner8.contains("8bit"))
         assertTrue("Expected 1080p in '$ffmpegBanner8'", ffmpegBanner8.contains("1080p"))
         assertTrue("Expected 30fps in '$ffmpegBanner8'", ffmpegBanner8.contains("30fps"))
+        assertTrue("Expected explicit AAC bitrate in '$ffmpegBanner8'", ffmpegBanner8.contains("AAC 128k"))
         assertFalse("Did not expect abbreviated '8b' in '$ffmpegBanner8'", Regex("\\b8b\\b").containsMatchIn(ffmpegBanner8))
+
+        val videoAudioBanner = com.example.service.EncodingForegroundService.buildSummaryBanner(
+            media = m8,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_AND_AUDIO_CRF, audioBitrateInput = "256"),
+            s = TurkishStrings
+        )
+        assertTrue("Expected 'AAC 256k' in '$videoAudioBanner'", videoAudioBanner.contains("AAC 256k"))
+
+        val turboVideoAudioSpecs = com.example.service.EncodingForegroundService.buildTurboUnifiedSpecs(
+            media = m8,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_AND_AUDIO_CRF, audioBitrateInput = "192"),
+            s = TurkishStrings
+        )
+        assertTrue("Expected 'AAC 192k' in '$turboVideoAudioSpecs'", turboVideoAudioSpecs.contains("AAC 192k"))
 
         val turboSpecs10 = com.example.service.EncodingForegroundService.buildTurboUnifiedSpecs(
             media = m10,

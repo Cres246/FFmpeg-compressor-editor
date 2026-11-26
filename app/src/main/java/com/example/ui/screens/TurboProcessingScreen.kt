@@ -957,7 +957,25 @@ private fun TurboSpeedometerHeroCard(state: EncodingState.Running) {
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
+            if (state.isInputCached) {
+                Text(
+                    text = strings.inputCachedLabel,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontFamily = PlayfairDisplayFontFamily,
+                        fontStyle = FontStyle.Italic,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        letterSpacing = 0.4.sp
+                    ),
+                    color = extColors.lossless,
+                    modifier = Modifier
+                        .padding(top = 5.dp)
+                        .testTag("turbo_input_cached_label")
+                )
+            }
+
+            Spacer(Modifier.height(if (state.isInputCached) 10.dp else 14.dp))
 
             // Automotive Speedometer Gauge (0 -> 100%)
             CarSpeedometerGauge(

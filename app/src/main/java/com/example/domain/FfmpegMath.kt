@@ -1418,11 +1418,13 @@ object FfmpegMath {
                         if (isMp4Output && sourceIsHevc) {
                             args.addAll(listOf("-tag:v", "hvc1"))
                         }
-                        if (!media.hasAudio) {
+                        val targetAb: Int? = if (!media.hasAudio) {
                             args.add("-an")
+                            null
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 192)
                             args.addAll(listOf("-c:a", "aac", "-b:a", "${ab}k"))
+                            ab
                         }
                         args.addAll(
                             listOf(
@@ -1432,7 +1434,7 @@ object FfmpegMath {
                                 outputPath
                             )
                         )
-                        listOf(FfmpegStepSpec(strings.stepTrimVideoLosslessAudioAac, args, clipDur))
+                        listOf(FfmpegStepSpec(strings.stepTrimVideoLosslessAudioAac(targetAb), args, clipDur))
                     }
                     TrimSubMode.CRF_AUDIO_COPY -> {
                         if (startT != null) args.addAll(listOf("-ss", startT))
@@ -1480,16 +1482,18 @@ object FfmpegMath {
                             )
                         )
                         addH265CrfArgs(args)
-                        if (!media.hasAudio) {
+                        val targetAb: Int? = if (!media.hasAudio) {
                             args.add("-an")
+                            null
                         } else {
                             val ab = normalizeAudioBitrate(config.audioBitrateInput, 192)
                             args.addAll(listOf("-c:a", "aac", "-b:a", "${ab}k"))
+                            ab
                         }
                         args.addAll(listOf("-movflags", "+faststart", outputPath))
                         listOf(
                             FfmpegStepSpec(
-                                strings.stepTrimCrfAudioAac(codec.tag, config.bitDepth.tag, codec.crf, preset),
+                                strings.stepTrimCrfAudioAac(codec.tag, config.bitDepth.tag, codec.crf, preset, targetAb),
                                 args,
                                 clipDur
                             )
@@ -1615,8 +1619,9 @@ object FfmpegMath {
                     )
                 )
                 addH265CrfArgs(args)
-                if (!media.hasAudio) {
+                val targetAb: Int? = if (!media.hasAudio) {
                     args.add("-an")
+                    null
                 } else {
                     val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                     args.addAll(
@@ -1626,6 +1631,7 @@ object FfmpegMath {
                             "-af", "aresample=async=1:first_pts=0"
                         )
                     )
+                    ab
                 }
                 args.addAll(
                     listOf(
@@ -1635,9 +1641,14 @@ object FfmpegMath {
                         outputPath
                     )
                 )
+                val stepLabel = if (targetAb != null) {
+                    "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} + AAC ${targetAb}k"
+                } else {
+                    "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} · ${strings.bannerSilentAudio}"
+                }
                 listOf(
                     FfmpegStepSpec(
-                        "${codec.tag}${config.bitDepth.tag} CRF ${codec.crf} + AAC",
+                        stepLabel,
                         args,
                         media.durationSec
                     )
