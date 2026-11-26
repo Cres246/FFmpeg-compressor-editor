@@ -42,7 +42,7 @@ jobs:
           path: |
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
-          key: ffmpeg-kit-next-arm64-simd-v2-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
+          key: ffmpeg-kit-next-arm64-simd-v3-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
 
       - name: Nix Derlemesi Icin Disk Alani Ac
         if: ${{ github.event_name != 'pull_request' && (steps.ffmpeg-cache.outputs.cache-hit != 'true' || inputs.rebuild_ffmpeg_aar == true) }}

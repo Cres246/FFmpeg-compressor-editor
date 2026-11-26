@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Surgical ARM64-O3 + Runtime-Dispatched SIMD (NEON / DotProd / I8MM) patcher for
-arthenica/ffmpeg-kit-next (FFmpeg 9.0.x).
+Surgical ARM64-O3 + Zero-PLT Shared-Lib + Runtime-Dispatched SIMD (NEON / DotProd / I8MM)
+patcher for arthenica/ffmpeg-kit-next (FFmpeg 9.0.x).
 
-Safety invariants (ZERO SIGILL on older ARMv8.0 devices):
+Safety invariants (ZERO SIGILL on older ARMv8.0 devices, ZERO encoding quality loss):
   - Global CFLAGS/CXXFLAGS remain strictly baseline `armv8-a` (never global `+dotprod`/`+i8mm`),
-    upgraded from `-Os` to `-O3` for maximum software encoding throughput.
+    upgraded from BOTH `-Os` and `-O2` (used by `--speed`) to `-O3` for maximum throughput.
+  - Shared-library call overhead is minimized via `-fno-semantic-interposition`,
+    `-fomit-frame-pointer`, and `-Wl,-Bsymbolic-functions` (eliminating internal PLT stubs
+    across `libavcodec`, `libx264`, and `libx265` without touching C++ data/RTTI symbols).
   - Advanced SIMD instructions (`DotProd`, `I8MM`) are enabled ONLY via runtime-dispatched
     per-function assembly (`.arch_extension dotprod` / `.arch_extension i8mm`) or per-file
     CMake targets guarded by Linux/Android `getauxval(AT_HWCAP / AT_HWCAP2)`.
@@ -20,6 +23,56 @@ import argparse
 import re
 import sys
 from pathlib import Path
+
+
+# Reusable bash snippet injected right before ./configure or cmake inside arm64-v8a builds so
+# even flags exported outside function-android.sh are upgraded cleanly to -O3 + zero-PLT.
+ARM64_RUNTIME_FLAG_SANITIZER_TEMPLATE = """
+# {marker}
+if [[ "${{ARCH:-}}" == "arm64-v8a" || "${{FFMPEG_KIT_ARCH:-}}" == "arm64-v8a" ]]; then
+  if [[ -n "${{CFLAGS:-}}" ]]; then
+    CFLAGS="$(printf '%s' "${{CFLAGS}}" | sed -E 's/(^|[[:space:]])-O[s2]([[:space:]]|$)/\\1-O3\\2/g')"
+  fi
+  case " ${{CFLAGS:-}} " in
+    *" -O3 "*) ;;
+    *) CFLAGS="${{CFLAGS:+${{CFLAGS}} }}-O3" ;;
+  esac
+  case " ${{CFLAGS:-}} " in
+    *" -fno-semantic-interposition "*) ;;
+    *) CFLAGS="${{CFLAGS}} -fno-semantic-interposition" ;;
+  esac
+  case " ${{CFLAGS:-}} " in
+    *" -fomit-frame-pointer "*) ;;
+    *) CFLAGS="${{CFLAGS}} -fomit-frame-pointer" ;;
+  esac
+  export CFLAGS
+
+  if [[ -n "${{CXXFLAGS:-}}" ]]; then
+    CXXFLAGS="$(printf '%s' "${{CXXFLAGS}}" | sed -E 's/(^|[[:space:]])-O[s2]([[:space:]]|$)/\\1-O3\\2/g')"
+    case " ${{CXXFLAGS}} " in
+      *" -O3 "*) ;;
+      *) CXXFLAGS="${{CXXFLAGS}} -O3" ;;
+    esac
+    case " ${{CXXFLAGS}} " in
+      *" -fno-semantic-interposition "*) ;;
+      *) CXXFLAGS="${{CXXFLAGS}} -fno-semantic-interposition" ;;
+    esac
+    case " ${{CXXFLAGS}} " in
+      *" -fomit-frame-pointer "*) ;;
+      *) CXXFLAGS="${{CXXFLAGS}} -fomit-frame-pointer" ;;
+    esac
+    export CXXFLAGS
+  fi
+
+  case " ${{LDFLAGS:-}} " in
+    *" -Wl,-Bsymbolic-functions "*) ;;
+    *) LDFLAGS="${{LDFLAGS:+${{LDFLAGS}} }}-Wl,-Bsymbolic-functions" ;;
+  esac
+  export LDFLAGS
+  echo "[{tag}] Effective arm64-v8a CFLAGS=${{CFLAGS}}"
+  echo "[{tag}] Effective arm64-v8a LDFLAGS=${{LDFLAGS}}"
+fi
+"""
 
 
 def find_first(root: Path, relative_hint: str, filename: str) -> Path | None:
@@ -41,10 +94,28 @@ def patch_function_android(root: Path) -> None:
     original = target.read_text(encoding="utf-8", errors="replace")
     updated = original
 
-    # 1. Upgrade standalone -Os -> -O3 while preserving baseline armv8-a ISA (zero SIGILL).
-    updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
+    # 1. Upgrade BOTH standalone -Os AND -O2 (used by `--speed`) -> -O3 while preserving
+    #    baseline armv8-a ISA (zero SIGILL). Lookbehind/lookahead avoids linker flags like -Wl,-O2.
+    updated = re.sub(r"(?<=[\s\"'])-O[s2](?=[\s\"'])", "-O3", updated)
 
-    # 2. Enforce 16 KB ELF page-size alignment in linker flags if not already configured upstream.
+    # 2. Inject -fno-semantic-interposition -fomit-frame-pointer into arm64-v8a / common flags
+    #    to allow cross-function inlining and eliminate internal PLT stubs in PIC shared libs.
+    if "fno-semantic-interposition" not in updated:
+        updated_arm64 = re.sub(
+            r"(?<=[\s\"'])(-march=armv8-a)(?=[\s\"'])",
+            r"\1 -fno-semantic-interposition -fomit-frame-pointer",
+            updated,
+        )
+        if updated_arm64 != updated:
+            updated = updated_arm64
+        else:
+            updated = re.sub(
+                r"(?<=[\s\"'])(-fstrict-aliasing)(?=[\s\"'])",
+                r"\1 -fno-semantic-interposition -fomit-frame-pointer",
+                updated,
+            )
+
+    # 3. Enforce 16 KB ELF page-size alignment in linker flags if not already configured upstream.
     if "max-page-size=16384" not in updated:
         updated_ldflags = re.sub(
             r"(-Wl,--hash-style=both|-Wl,-z,relro)",
@@ -54,7 +125,6 @@ def patch_function_android(root: Path) -> None:
         if updated_ldflags != updated:
             updated = updated_ldflags
         else:
-            # Fallback: inject inside get_common_ldflags() echo line if present
             updated = re.sub(
                 r'(get_common_ldflags\(\)\s*\{[\s\S]{0,600}?echo\s+"[^"]*)(")',
                 r'\1 -Wl,-z,max-page-size=16384\2',
@@ -62,11 +132,33 @@ def patch_function_android(root: Path) -> None:
                 count=1,
             )
 
+    # 4. Add -Wl,-Bsymbolic-functions so internal calls across translation units inside
+    #    libavcodec/libx264/libx265 bind directly without PLT indirection (leaving C++ data/RTTI intact).
+    if "-Bsymbolic-functions" not in updated:
+        updated_bsym = re.sub(
+            r"(-Wl,-z,max-page-size=16384|-Wl,--hash-style=both|-Wl,-z,relro)",
+            r"\1 -Wl,-Bsymbolic-functions",
+            updated,
+            count=1,
+        )
+        if updated_bsym != updated:
+            updated = updated_bsym
+        else:
+            updated = re.sub(
+                r'(get_common_ldflags\(\)\s*\{[\s\S]{0,600}?echo\s+"[^"]*)(")',
+                r'\1 -Wl,-Bsymbolic-functions\2',
+                updated,
+                count=1,
+            )
+
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Upgraded -Os -> -O3 and verified 16KB LDFLAGS in {target.relative_to(root)}")
+        print(
+            f"[patch] OK: Upgraded -Os/-O2 -> -O3, added -fno-semantic-interposition "
+            f"-fomit-frame-pointer and -Wl,-Bsymbolic-functions + 16KB LDFLAGS in {target.relative_to(root)}"
+        )
     else:
-        print(f"[patch] INFO: {target.relative_to(root)} already uses -O3 / 16KB LDFLAGS.")
+        print(f"[patch] INFO: {target.relative_to(root)} already has -O3 / zero-PLT / 16KB flags.")
 
 
 def patch_ffmpeg_script(root: Path) -> None:
@@ -80,13 +172,19 @@ def patch_ffmpeg_script(root: Path) -> None:
 
     # Remove --enable-small (suppresses loop unrolling & SIMD inlining in libavcodec/libswscale)
     updated = re.sub(r"\s--enable-small\b", "", updated)
+    # Upgrade any literal -Os or -O2 in ffmpeg.sh -> -O3
+    updated = re.sub(r"(?<=[\s\"'])-O[s2](?=[\s\"'])", "-O3", updated)
 
-    # Inject a dedicated bash array FFMPEG_EXTRA_SIMD_ARGS=() directly into ./configure so we
-    # never risk mutating an upstream array/string variable like ARCH_OPTIONS.
+    # Inject runtime flag sanitizer + dedicated bash array FFMPEG_EXTRA_SIMD_ARGS=() before ./configure
     marker = "# FFmpeg-ARM64-SIMD-RUNTIME-DISPATCH"
     if marker not in updated:
+        sanitizer = ARM64_RUNTIME_FLAG_SANITIZER_TEMPLATE.format(
+            marker="FFmpeg-ARM64-O3-ZERO-PLT",
+            tag="ffmpeg",
+        )
         hook = (
-            f"\n{marker}\n"
+            f"{sanitizer}\n"
+            f"{marker}\n"
             'FFMPEG_EXTRA_SIMD_ARGS=()\n'
             'if [[ "${ARCH:-}" == "arm64-v8a" || "${FFMPEG_KIT_ARCH:-}" == "arm64-v8a" ]]; then\n'
             '  if ./configure --help 2>/dev/null | grep -q -- \'--enable-dotprod\'; then\n'
@@ -113,7 +211,7 @@ def patch_ffmpeg_script(root: Path) -> None:
         target.write_text(updated, encoding="utf-8")
         print(
             f"[patch] OK: Patched {target.relative_to(root)} "
-            "(removed --enable-small, added array-safe runtime dotprod/i8mm probe)"
+            "(removed --enable-small, enforced -O3 + zero-PLT + runtime dotprod/i8mm probe)"
         )
     else:
         print(f"[patch] INFO: No changes needed for {target.relative_to(root)}")
@@ -128,15 +226,19 @@ def patch_x264_script(root: Path) -> None:
     original = target.read_text(encoding="utf-8", errors="replace")
     updated = original
 
-    # Ensure x264 compiles with -O3 (x264's configure automatically detects Clang's
-    # `.arch_extension dotprod` and `.arch_extension i8mm` and dispatches via getauxval).
-    updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
+    # Ensure x264 compiles with -O3 (never downgraded by -Os or -O2 from --speed)
+    updated = re.sub(r"(?<=[\s\"'])-O[s2](?=[\s\"'])", "-O3", updated)
 
-    # Diagnostic check only (never git-fetch external sources inside Nix-pinned ffmpeg-kit-next)
+    # Runtime CFLAGS/LDFLAGS sanitizer + diagnostic check before ./configure
     marker = "# X264-ARM64-SIMD-DIAGNOSTIC"
     if marker not in updated:
+        sanitizer = ARM64_RUNTIME_FLAG_SANITIZER_TEMPLATE.format(
+            marker="X264-ARM64-O3-ZERO-PLT",
+            tag="x264",
+        )
         hook = (
-            f"\n{marker}\n"
+            f"{sanitizer}\n"
+            f"{marker}\n"
             'if [[ "${ARCH:-}" == "arm64-v8a" || "${FFMPEG_KIT_ARCH:-}" == "arm64-v8a" ]] && [[ -f "common/cpu.c" ]]; then\n'
             '  if grep -q "X264_CPU_I8MM" common/cpu.c 2>/dev/null; then\n'
             '    echo "[x264] Verified AArch64 NEON + DotProd + I8MM runtime dispatch in common/cpu.c."\n'
@@ -153,7 +255,7 @@ def patch_x264_script(root: Path) -> None:
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + AArch64 SIMD diagnostic)")
+        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + zero-PLT + AArch64 SIMD diagnostic)")
     else:
         print(f"[patch] INFO: No changes needed for {target.relative_to(root)}")
 
@@ -239,10 +341,21 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
     original = target.read_text(encoding="utf-8", errors="replace")
     updated = original
 
-    # 1. Upgrade -Os -> -O3
-    updated = re.sub(r"(?<=[\s\"'])-Os(?=[\s\"'])", "-O3", updated)
+    # 1. Upgrade BOTH -Os and -O2 -> -O3
+    updated = re.sub(r"(?<=[\s\"'])-O[s2](?=[\s\"'])", "-O3", updated)
 
-    # 2. Only override ENABLE_ASSEMBLY on arm64-v8a if upstream explicitly disabled it
+    # 2. Enforce -O3 + zero-PLT flags before the first cmake invocation on arm64-v8a
+    flag_marker = "# X265-ARM64-O3-ZERO-PLT"
+    if flag_marker not in updated:
+        sanitizer = ARM64_RUNTIME_FLAG_SANITIZER_TEMPLATE.format(
+            marker="X265-ARM64-O3-ZERO-PLT",
+            tag="x265",
+        )
+        cmake_match = re.search(r"^[ \t]*cmake\b", updated, flags=re.MULTILINE)
+        if cmake_match:
+            updated = updated[: cmake_match.start()] + sanitizer + "\n" + updated[cmake_match.start() :]
+
+    # 3. Only override ENABLE_ASSEMBLY on arm64-v8a if upstream explicitly disabled it
     #    (`-DENABLE_ASSEMBLY=0` or `-DENABLE_ASSEMBLY=OFF`). If ffmpeg-kit-next already
     #    enables ARM64 assembly cleanly, preserve its tested CMake setup untouched.
     marker = "# X265-ARM64-SIMD-RUNTIME-SAFE"
@@ -274,14 +387,14 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
 
     if updated != original:
         target.write_text(updated, encoding="utf-8")
-        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + runtime-safe ARM64 assembly)")
+        print(f"[patch] OK: Patched {target.relative_to(root)} (-O3 + zero-PLT + runtime-safe ARM64 assembly)")
     else:
         print(f"[patch] INFO: {target.relative_to(root)} already keeps ARM64 assembly / -O3 intact.")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Patch arthenica/ffmpeg-kit-next for ARM64-O3 runtime-dispatched SIMD."
+        description="Patch arthenica/ffmpeg-kit-next for ARM64-O3 zero-PLT + runtime-dispatched SIMD."
     )
     parser.add_argument("--repo", type=Path, help="Path to cloned arthenica/ffmpeg-kit-next repo")
     parser.add_argument("--inspect-x265", type=Path, help="Inspect x265 source/build dir and print safe CMake flags")

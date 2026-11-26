@@ -17,19 +17,21 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Sustains high multi-core throughput for both software FFmpeg (`libx264`/`libx265`) and hardware
- * Turbo (`Media3`/`DirectMediaCodec`) threads in foreground and background without fighting the
- * Linux EAS scheduler or tripping early thermal throttling:
- * 1. Samples `/proc/self/task/<tid>/stat` (single file read per thread, extracting both `(comm)`
- *    and CPU ticks at once) on a lightweight 5s cadence to identify active encoder/feeder threads.
- * 2. Keeps ALL CPU cores unlocked (Prime + Big + Little — NO `sched_setaffinity` pinning) so
- *    `x264`/`x265` and the kernel scheduler can utilize every core just like native Termux.
- * 3. Applies a clean, uniform favorable priority (`THREAD_PRIORITY_DISPLAY` / `-4`) across active
- *    encoder threads so OEM background schedulers cannot demote them to `+10` without causing
- *    internal priority skew across row/frame synchronization barriers.
- * 4. Maintains a balanced ADPF [PerformanceHintManager.Session] (`setPreferPowerEfficiency(false)`
- *    on API 35+, sustainable `16ms`/`18ms` hint) so PowerHAL sustains multi-core clocks without
- *    spiking peak voltage into premature thermal throttling.
+ * Mode-aware CPU scheduling & thermal guard for both software FFmpeg (`libx264`/`libx265`)
+ * and hardware Turbo (`Media3`/`DirectMediaCodec`):
+ *
+ * - **[BoostMode.FFMPEG_SOFTWARE] (Termux-Parity Neutral Profile):**
+ *   Keeps all CPU cores unlocked (NO `sched_setaffinity`), opens NO ADPF `PerformanceHintManager`
+ *   session (avoiding `uclamp.min` over-volting and premature MagicOS/Snapdragon thermal clamping
+ *   by Pass 2), and leaves all encoder threads at Linux default `nice 0` (`THREAD_PRIORITY_DEFAULT`)
+ *   just like native Termux. A lightweight 15s guard inspects thread priorities without parsing
+ *   `/proc/<tid>/stat` and only restores a worker thread back to `0` if an OEM background
+ *   scheduler demotes it to `> 0` (e.g., `+10` `THREAD_PRIORITY_BACKGROUND`).
+ *
+ * - **[BoostMode.TURBO_MEDIACODEC] (Low-Latency Hardware VPU Feeder Profile):**
+ *   Hardware MediaCodec/Surface transcoding uses bursty feeder threads rather than full-CPU
+ *   saturation, so it keeps `URGENT_DISPLAY`/`DISPLAY` priorities and a balanced ADPF hint
+ *   session (`setPreferPowerEfficiency(false)`, `16ms/17ms`) to prevent VPU pipeline stalls.
  */
 class CpuPerformanceBooster(private val context: Context) {
 
@@ -79,23 +81,52 @@ class CpuPerformanceBooster(private val context: Context) {
         synchronized(lock) {
             active = true
             currentMode = mode
-            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
+            tickerJob?.cancel()
+            tickerJob = null
+            earlyDiscoveryJob?.cancel()
+            earlyDiscoveryJob = null
             boostedPriorityTids.clear()
             hasPreviousCpuSample = false
-            lastSampledCpuTicks = readProcessThreadSamples().associate { it.tid to it.ticks }
+            lastSampledCpuTicks = emptyMap()
             lastSessionReassertElapsedMs = 0L
-            refreshAndPulseLocked(force = true)
 
-            tickerJob?.cancel()
+            if (mode == BoostMode.FFMPEG_SOFTWARE) {
+                // Close any lingering Turbo ADPF session so PowerHAL drops uclamp overrides
+                // immediately and Snapdragon/MagicOS schedules FFmpeg neutrally like Termux.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    runCatching { perfHintSession?.close() }
+                }
+                perfHintSession = null
+                lastRegisteredTids = IntArray(0)
+                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
+
+                tickerJob = scope?.launch(Dispatchers.Default) {
+                    while (isActive && active) {
+                        delay(SOFTWARE_GUARD_INTERVAL_MS)
+                        if (!active) break
+                        synchronized(lock) {
+                            if (!active || currentMode != BoostMode.FFMPEG_SOFTWARE) return@synchronized
+                            guardAgainstBackgroundDemotionLocked()
+                        }
+                    }
+                }
+                return
+            }
+
+            // TURBO_MEDIACODEC: low-latency feeder priority + balanced ADPF hint session
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
+            lastSampledCpuTicks = readProcessThreadSamples().associate { it.tid to it.ticks }
+            refreshTurboLocked(force = true)
+
             tickerJob = scope?.launch(Dispatchers.Default) {
                 while (isActive && active) {
-                    delay(TICKER_INTERVAL_MS)
+                    delay(TURBO_TICKER_INTERVAL_MS)
                     if (!active) break
                     synchronized(lock) {
-                        if (!active) return@synchronized
+                        if (!active || currentMode != BoostMode.TURBO_MEDIACODEC) return@synchronized
                         val now = SystemClock.elapsedRealtime()
                         val shouldForceSession = (now - lastSessionReassertElapsedMs) >= SESSION_REASSERT_INTERVAL_MS
-                        refreshAndPulseLocked(force = shouldForceSession)
+                        refreshTurboLocked(force = shouldForceSession)
                     }
                 }
             }
@@ -103,35 +134,34 @@ class CpuPerformanceBooster(private val context: Context) {
     }
 
     /**
-     * Triggers a single one-shot thread scan shortly after a new FFmpeg pass begins (~650ms),
-     * registering newly spawned native `libx264`/`libx265` worker TIDs into ADPF and `-4`
-     * priority immediately instead of waiting for the 5s steady-state ticker (critical for fast
-     * Pass 1 analysis runs). Zero steady-state overhead and zero quality impact.
+     * Triggers a one-shot thread scan shortly after a Turbo pipeline starts (~650ms).
+     * Intentionally a no-op for [BoostMode.FFMPEG_SOFTWARE], which runs at neutral `nice 0`
+     * without ADPF to match native Termux thermal/scheduler behavior.
      */
     fun scheduleEarlyThreadDiscovery(scope: CoroutineScope) {
         synchronized(lock) {
-            if (!active) return
+            if (!active || currentMode != BoostMode.TURBO_MEDIACODEC) return
             earlyDiscoveryJob?.cancel()
             earlyDiscoveryJob = scope.launch(Dispatchers.Default) {
                 delay(EARLY_DISCOVERY_DELAY_MS)
                 synchronized(lock) {
-                    if (!active) return@synchronized
-                    refreshAndPulseLocked(force = true)
+                    if (!active || currentMode != BoostMode.TURBO_MEDIACODEC) return@synchronized
+                    refreshTurboLocked(force = true)
                 }
             }
         }
     }
 
     fun pulseIfDue() {
-        if (!active) return
+        if (!active || currentMode != BoostMode.TURBO_MEDIACODEC) return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastBoostPulseElapsedMs >= PULSE_MIN_INTERVAL_MS) {
+        if (now - lastBoostPulseElapsedMs >= TURBO_PULSE_MIN_INTERVAL_MS) {
             synchronized(lock) {
-                if (!active) return
+                if (!active || currentMode != BoostMode.TURBO_MEDIACODEC) return
                 val checkNow = SystemClock.elapsedRealtime()
-                if (checkNow - lastBoostPulseElapsedMs >= PULSE_MIN_INTERVAL_MS) {
+                if (checkNow - lastBoostPulseElapsedMs >= TURBO_PULSE_MIN_INTERVAL_MS) {
                     val shouldForceSession = (checkNow - lastSessionReassertElapsedMs) >= SESSION_REASSERT_INTERVAL_MS
-                    refreshAndPulseLocked(force = shouldForceSession)
+                    refreshTurboLocked(force = shouldForceSession)
                 }
             }
         }
@@ -158,20 +188,44 @@ class CpuPerformanceBooster(private val context: Context) {
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
     }
 
-    private fun refreshAndPulseLocked(force: Boolean) {
+    /**
+     * Ultra-lightweight Termux-parity background guard for software FFmpeg:
+     * In foreground (all worker threads already at `nice <= 0`), does zero `/proc/<tid>/stat`
+     * reads and zero `setThreadPriority` syscalls. Only if an OEM scheduler demotes a worker
+     * thread to `> 0` (e.g., `+10` `THREAD_PRIORITY_BACKGROUND`) does it lazily check `comm`
+     * and restore the thread cleanly back to neutral `0` (`THREAD_PRIORITY_DEFAULT`).
+     */
+    private fun guardAgainstBackgroundDemotionLocked() {
+        if (!active) return
+        val mainPid = Process.myPid()
+        runCatching {
+            val tidNames = File("/proc/self/task").list() ?: return
+            for (tidName in tidNames) {
+                val tid = tidName.toIntOrNull() ?: continue
+                if (tid == mainPid) continue
+                val currentNice = runCatching { Process.getThreadPriority(tid) }.getOrNull() ?: continue
+                if (currentNice > Process.THREAD_PRIORITY_DEFAULT) {
+                    val comm = runCatching { File("/proc/self/task/$tid/comm").readText().trim() }
+                        .getOrNull()
+                        .orEmpty()
+                    if (!isIgnoredComm(comm, isSoftwareFfmpeg = true)) {
+                        runCatching { Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DEFAULT) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshTurboLocked(force: Boolean) {
         if (!active) return
         val now = SystemClock.elapsedRealtime()
         lastBoostPulseElapsedMs = now
         val samples = readProcessThreadSamples()
         val mainPid = Process.myPid()
-        val maxThreads = if (currentMode == BoostMode.FFMPEG_SOFTWARE) 32 else 16
+        val maxThreads = 16
 
-        val isSoftwareFfmpeg = currentMode == BoostMode.FFMPEG_SOFTWARE
-
-        // Rank worker threads by CPU delta since last sample; exclude idle non-encoder threads
-        // once a baseline exists so ADPF tracks strictly active encoder/feeder workers.
         val candidates = samples
-            .filter { sample -> sample.tid != mainPid && !isIgnoredComm(sample.comm, isSoftwareFfmpeg) }
+            .filter { sample -> sample.tid != mainPid && !isIgnoredComm(sample.comm, isSoftwareFfmpeg = false) }
             .map { sample ->
                 val prev = lastSampledCpuTicks[sample.tid] ?: 0L
                 val delta = (sample.ticks - prev).coerceAtLeast(0L)
@@ -184,7 +238,7 @@ class CpuPerformanceBooster(private val context: Context) {
             candidates.filter { it.third > 0L }.ifEmpty { candidates }
         }
 
-        val rankedEncoderTids = activeCandidates
+        val rankedFeederTids = activeCandidates
             .sortedWith(compareByDescending<Triple<Int, Long, Long>> { it.second }.thenByDescending { it.third })
             .map { it.first }
             .take(maxThreads)
@@ -192,44 +246,34 @@ class CpuPerformanceBooster(private val context: Context) {
         lastSampledCpuTicks = samples.associate { it.tid to it.ticks }
         hasPreviousCpuSample = true
 
-        val targetTids = if (rankedEncoderTids.isNotEmpty()) {
-            rankedEncoderTids.toIntArray()
+        val targetTids = if (rankedFeederTids.isNotEmpty()) {
+            rankedFeederTids.toIntArray()
         } else {
             intArrayOf(Process.myTid())
         }
 
-        // Uniform favorable priority across active workers (applied on discovery or periodic reassert
-        // to avoid redundant syscalls while still defeating OEM background demotion).
         if (force) {
             boostedPriorityTids.clear()
         }
         targetTids.forEachIndexed { index, tid ->
             if (force || boostedPriorityTids.add(tid)) {
-                if (isSoftwareFfmpeg) {
-                    setHighestAllowedPriority(
+                when {
+                    index <= 3 -> setHighestAllowedPriority(
+                        tid = tid,
+                        preferredNice = Process.THREAD_PRIORITY_URGENT_DISPLAY,
+                        fallbackNice = Process.THREAD_PRIORITY_DISPLAY
+                    )
+                    else -> setHighestAllowedPriority(
                         tid = tid,
                         preferredNice = Process.THREAD_PRIORITY_DISPLAY,
                         fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
                     )
-                } else {
-                    when {
-                        index <= 3 -> setHighestAllowedPriority(
-                            tid = tid,
-                            preferredNice = Process.THREAD_PRIORITY_URGENT_DISPLAY,
-                            fallbackNice = Process.THREAD_PRIORITY_DISPLAY
-                        )
-                        else -> setHighestAllowedPriority(
-                            tid = tid,
-                            preferredNice = Process.THREAD_PRIORITY_DISPLAY,
-                            fallbackNice = Process.THREAD_PRIORITY_MORE_FAVORABLE
-                        )
-                    }
                 }
             }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            updateAdpfSession(targetTids, force, now)
+            updateTurboAdpfSession(targetTids, force, now)
         }
     }
 
@@ -243,9 +287,8 @@ class CpuPerformanceBooster(private val context: Context) {
         }
     }
 
-    private fun updateAdpfSession(tids: IntArray, force: Boolean, nowElapsedMs: Long) {
+    private fun updateTurboAdpfSession(tids: IntArray, force: Boolean, nowElapsedMs: Long) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        // ADPF sessions work best with the hottest threads (cap at 16 TIDs for HAL stability)
         val adpfTids = if (tids.size > 16) tids.copyOf(16) else tids
         val tidsChanged = !adpfTids.contentEquals(lastRegisteredTids)
 
@@ -254,7 +297,7 @@ class CpuPerformanceBooster(private val context: Context) {
             var session = perfHintSession
 
             if (session == null) {
-                session = createSustainedSession(phm, adpfTids)
+                session = createTurboSession(phm, adpfTids)
                 if (session != null) {
                     perfHintSession = session
                     lastRegisteredTids = adpfTids.copyOf()
@@ -275,28 +318,26 @@ class CpuPerformanceBooster(private val context: Context) {
                             lastSessionReassertElapsedMs = nowElapsedMs
                         } else {
                             runCatching { session.close() }
-                            session = createSustainedSession(phm, adpfTids)
+                            session = createTurboSession(phm, adpfTids)
                             perfHintSession = session
                             lastRegisteredTids = if (session != null) adpfTids.copyOf() else IntArray(0)
                             lastSessionReassertElapsedMs = nowElapsedMs
                         }
                     } else {
                         runCatching { session.close() }
-                        session = createSustainedSession(phm, adpfTids)
+                        session = createTurboSession(phm, adpfTids)
                         perfHintSession = session
                         lastRegisteredTids = if (session != null) adpfTids.copyOf() else IntArray(0)
                         lastSessionReassertElapsedMs = nowElapsedMs
                     }
                 }
-                val actualDurationNs = currentAdpfActualDurationNs()
                 val reported = runCatching {
-                    session?.reportActualWorkDuration(actualDurationNs)
+                    session?.reportActualWorkDuration(ADPF_TURBO_ACTUAL_DURATION_NS)
                     true
                 }.getOrDefault(false)
                 if (!reported) {
-                    // Recover cleanly if OS invalidated the ADPF session during fg -> bg transition
                     runCatching { session?.close() }
-                    val recreated = createSustainedSession(phm, adpfTids)
+                    val recreated = createTurboSession(phm, adpfTids)
                     perfHintSession = recreated
                     lastRegisteredTids = if (recreated != null) adpfTids.copyOf() else IntArray(0)
                     lastSessionReassertElapsedMs = nowElapsedMs
@@ -305,14 +346,7 @@ class CpuPerformanceBooster(private val context: Context) {
         }
     }
 
-    private fun currentAdpfActualDurationNs(): Long =
-        if (currentMode == BoostMode.FFMPEG_SOFTWARE) {
-            ADPF_SOFTWARE_ACTUAL_DURATION_NS
-        } else {
-            ADPF_TURBO_ACTUAL_DURATION_NS
-        }
-
-    private fun createSustainedSession(
+    private fun createTurboSession(
         phm: PerformanceHintManager,
         tids: IntArray
     ): PerformanceHintManager.Session? {
@@ -324,7 +358,7 @@ class CpuPerformanceBooster(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
             runCatching { created.setPreferPowerEfficiency(false) }
         }
-        runCatching { created.reportActualWorkDuration(currentAdpfActualDurationNs()) }
+        runCatching { created.reportActualWorkDuration(ADPF_TURBO_ACTUAL_DURATION_NS) }
         return created
     }
 
@@ -344,7 +378,6 @@ class CpuPerformanceBooster(private val context: Context) {
                 if (openParen >= 0 && closeParen > openParen && closeParen + 2 < statText.length) {
                     val comm = statText.substring(openParen + 1, closeParen)
                     val fields = statText.substring(closeParen + 2).trim().split(' ')
-                    // After "(comm) ", field[11] = utime, field[12] = stime
                     if (fields.size > 12) {
                         val utime = fields[11].toLongOrNull() ?: 0L
                         val stime = fields[12].toLongOrNull() ?: 0L
@@ -365,14 +398,12 @@ class CpuPerformanceBooster(private val context: Context) {
     }
 
     companion object {
+        private const val SOFTWARE_GUARD_INTERVAL_MS = 15_000L
         private const val EARLY_DISCOVERY_DELAY_MS = 650L
-        private const val TICKER_INTERVAL_MS = 8_000L
-        private const val PULSE_MIN_INTERVAL_MS = 8_000L
+        private const val TURBO_TICKER_INTERVAL_MS = 8_000L
+        private const val TURBO_PULSE_MIN_INTERVAL_MS = 8_000L
         private const val SESSION_REASSERT_INTERVAL_MS = 24_000L
-        // Neutral sustained ADPF hint for software FFmpeg (actual == target): sustains multi-core
-        // clocks & resists background demotion WITHOUT over-volting Pass 1 into Pass 2 thermal throttling.
         private const val ADPF_TARGET_DURATION_NS = 16_000_000L
-        private const val ADPF_SOFTWARE_ACTUAL_DURATION_NS = 16_000_000L
         private const val ADPF_TURBO_ACTUAL_DURATION_NS = 17_000_000L
 
         /**
