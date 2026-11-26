@@ -762,6 +762,9 @@ class EncodingForegroundService : Service() {
                 com.example.domain.PresetOption.VERYSLOW -> "Very Slow"
             }
         }
+
+        private const val FFMPEG_UI_EMIT_INTERVAL_MS = 450L
+        private const val FFMPEG_NOTIF_INTERVAL_MS = 1_100L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -770,12 +773,38 @@ class EncodingForegroundService : Service() {
     private lateinit var backgroundGuard: BackgroundExecutionGuard
     private lateinit var cpuBooster: CpuPerformanceBooster
     private val lastNotifyElapsedMs = AtomicLong(0L)
+    private val openAppPendingIntent: PendingIntent by lazy {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        PendingIntent.getActivity(
+            this,
+            0,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+    private val cancelJobPendingIntent: PendingIntent by lazy {
+        val cancelIntent = Intent(this, EncodingForegroundService::class.java).apply {
+            action = ACTION_CANCEL
+        }
+        PendingIntent.getService(
+            this,
+            1,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     @Volatile
     private var lastNotification: Notification? = null
 
     @Volatile
     private var activeRunOwnerId: Long = 0L
+
+    private fun isNotificationUpdateDue(nowElapsedMs: Long): Boolean {
+        return (nowElapsedMs - lastNotifyElapsedMs.get()) >= FFMPEG_NOTIF_INTERVAL_MS
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -1235,13 +1264,13 @@ class EncodingForegroundService : Service() {
                     onProgress = { curSec, pct, spd, kb ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
                         cpuBooster.pulseIfDue()
-                        val liveStrings = AppLanguageController.currentStrings()
                         val nowMs = SystemClock.elapsedRealtime()
                         val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
                         val tenthMb = (kb * 10L) / 1024L
                         val pctChanged = pct != lastEmittedPct
                         val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                        val reachedBoundary = lastUiEmitMs == 0L || (pct == 100 && lastEmittedPct != 100)
+                        if (reachedBoundary || (visualChanged && nowMs - lastUiEmitMs >= FFMPEG_UI_EMIT_INTERVAL_MS)) {
                             lastUiEmitMs = nowMs
                             lastEmittedPct = pct
                             lastEmittedWholeSec = wholeSec
@@ -1267,25 +1296,28 @@ class EncodingForegroundService : Service() {
                                 )
                             )
                         }
-                        val notifText = FfmpegMath.formatTelemetryLine(
-                            currentSec = wholeSec.toDouble(),
-                            totalDurationSec = step.expectedDurationSec,
-                            percent = pct,
-                            speed = spd,
-                            sizeKb = kb,
-                            includePercent = false,
-                            strings = liveStrings
-                        )
-                        val titlePrefix = if (totalPasses > 1) "($passNum/$totalPasses) " else ""
-                        updateNotificationThrottled(
-                            runId = runId,
-                            title = "FFmpeg · $titlePrefix${config.mode.localizedTitle(liveStrings)}",
-                            text = notifText,
-                            percent = pct,
-                            passIndex = passNum,
-                            totalPasses = totalPasses,
-                            force = false
-                        )
+                        if (isNotificationUpdateDue(nowMs)) {
+                            val liveStrings = AppLanguageController.currentStrings()
+                            val notifText = FfmpegMath.formatTelemetryLine(
+                                currentSec = wholeSec.toDouble(),
+                                totalDurationSec = step.expectedDurationSec,
+                                percent = pct,
+                                speed = spd,
+                                sizeKb = kb,
+                                includePercent = false,
+                                strings = liveStrings
+                            )
+                            val titlePrefix = if (totalPasses > 1) "($passNum/$totalPasses) " else ""
+                            updateNotificationThrottled(
+                                runId = runId,
+                                title = "FFmpeg · $titlePrefix${config.mode.localizedTitle(liveStrings)}",
+                                text = notifText,
+                                percent = pct,
+                                passIndex = passNum,
+                                totalPasses = totalPasses,
+                                force = false
+                            )
+                        }
                     },
                     onLogLine = { line ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
@@ -1689,7 +1721,8 @@ class EncodingForegroundService : Service() {
                         val tenthMb = (kb * 10L) / 1024L
                         val pctChanged = pct != lastEmittedPct
                         val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                        val reachedBoundary = lastUiEmitMs == 0L || (pct == 100 && lastEmittedPct != 100)
+                        if (reachedBoundary || (visualChanged && nowMs - lastUiEmitMs >= FFMPEG_UI_EMIT_INTERVAL_MS)) {
                             lastUiEmitMs = nowMs
                             lastEmittedPct = pct
                             lastEmittedWholeSec = wholeSec
@@ -1717,15 +1750,17 @@ class EncodingForegroundService : Service() {
                                 )
                             )
                         }
-                        updateNotificationThrottled(
-                            runId = runId,
-                            title = "FFmpeg · ${liveS.turboRemuxModeTitle}",
-                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedDur, pct, spd, kb, includePercent = false, strings = liveS),
-                            percent = pct,
-                            passIndex = 1,
-                            totalPasses = 1,
-                            force = false
-                        )
+                        if (isNotificationUpdateDue(nowMs)) {
+                            updateNotificationThrottled(
+                                runId = runId,
+                                title = "FFmpeg · ${liveS.turboRemuxModeTitle}",
+                                text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedDur, pct, spd, kb, includePercent = false, strings = liveS),
+                                percent = pct,
+                                passIndex = 1,
+                                totalPasses = 1,
+                                force = false
+                            )
+                        }
                     },
                     onLogLine = { line ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
@@ -1974,7 +2009,8 @@ class EncodingForegroundService : Service() {
                     val tenthMb = (kb * 10L) / 1024L
                     val pctChanged = pct != lastEmittedPct
                     val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                    if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                    val reachedBoundary = lastUiEmitMs == 0L || (pct == 100 && lastEmittedPct != 100)
+                    if (reachedBoundary || (visualChanged && nowMs - lastUiEmitMs >= FFMPEG_UI_EMIT_INTERVAL_MS)) {
                         lastUiEmitMs = nowMs
                         lastEmittedPct = pct
                         lastEmittedWholeSec = wholeSec
@@ -2002,15 +2038,17 @@ class EncodingForegroundService : Service() {
                             )
                         )
                     }
-                    updateNotificationThrottled(
-                        runId = runId,
-                        title = "FFmpeg · ${liveS.turboAudioConvertModeTitle}",
-                        text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedAudioDur, pct, spd, kb, includePercent = false, strings = liveS),
-                        percent = pct,
-                        passIndex = 1,
-                        totalPasses = 1,
-                        force = false
-                    )
+                    if (isNotificationUpdateDue(nowMs)) {
+                        updateNotificationThrottled(
+                            runId = runId,
+                            title = "FFmpeg · ${liveS.turboAudioConvertModeTitle}",
+                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), expectedAudioDur, pct, spd, kb, includePercent = false, strings = liveS),
+                            percent = pct,
+                            passIndex = 1,
+                            totalPasses = 1,
+                            force = false
+                        )
+                    }
                 },
                 onLogLine = { line ->
                     if (!EncodingJobController.isRunActive(runId)) return@executeStep
@@ -2235,7 +2273,8 @@ class EncodingForegroundService : Service() {
                         val tenthMb = (kb * 10L) / 1024L
                         val pctChanged = pct != lastEmittedPct
                         val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                        val reachedBoundary = lastUiEmitMs == 0L || (pct == 100 && lastEmittedPct != 100)
+                        if (reachedBoundary || (visualChanged && nowMs - lastUiEmitMs >= FFMPEG_UI_EMIT_INTERVAL_MS)) {
                             lastUiEmitMs = nowMs
                             lastEmittedPct = pct
                             lastEmittedWholeSec = wholeSec
@@ -2263,15 +2302,17 @@ class EncodingForegroundService : Service() {
                                 )
                             )
                         }
-                        updateNotificationThrottled(
-                            runId = runId,
-                            title = "FFmpeg · $liveTitle",
-                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), step.expectedDurationSec, pct, spd, kb, includePercent = false, strings = liveS),
-                            percent = pct,
-                            passIndex = passNum,
-                            totalPasses = totalPasses,
-                            force = false
-                        )
+                        if (isNotificationUpdateDue(nowMs)) {
+                            updateNotificationThrottled(
+                                runId = runId,
+                                title = "FFmpeg · $liveTitle",
+                                text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), step.expectedDurationSec, pct, spd, kb, includePercent = false, strings = liveS),
+                                percent = pct,
+                                passIndex = passNum,
+                                totalPasses = totalPasses,
+                                force = false
+                            )
+                        }
                     },
                     onLogLine = { line ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
@@ -3268,13 +3309,13 @@ class EncodingForegroundService : Service() {
                     onProgress = { curSec, pct, spd, kb ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
                         cpuBooster.pulseIfDue()
-                        val liveS = AppLanguageController.currentStrings()
                         val nowMs = SystemClock.elapsedRealtime()
                         val wholeSec = kotlin.math.floor(curSec.coerceAtLeast(0.0)).toLong()
                         val tenthMb = (kb * 10L) / 1024L
                         val pctChanged = pct != lastEmittedPct
                         val visualChanged = pctChanged || wholeSec != lastEmittedWholeSec || tenthMb != lastEmittedTenthMb
-                        if (pctChanged || (visualChanged && nowMs - lastUiEmitMs >= 250L)) {
+                        val reachedBoundary = lastUiEmitMs == 0L || (pct == 100 && lastEmittedPct != 100)
+                        if (reachedBoundary || (visualChanged && nowMs - lastUiEmitMs >= FFMPEG_UI_EMIT_INTERVAL_MS)) {
                             lastUiEmitMs = nowMs
                             lastEmittedPct = pct
                             lastEmittedWholeSec = wholeSec
@@ -3297,16 +3338,19 @@ class EncodingForegroundService : Service() {
                                 )
                             )
                         }
-                        val titlePrefix = if (totalSteps > 1) "($passNum/$totalSteps) " else ""
-                        updateNotificationThrottled(
-                            runId = runId,
-                            title = "FFmpeg · $titlePrefix${liveS.customCmdOutputLabel}",
-                            text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), stepExpectedDur, pct, spd, kb, includePercent = false, strings = liveS),
-                            percent = pct,
-                            passIndex = passNum,
-                            totalPasses = totalSteps,
-                            force = false
-                        )
+                        if (isNotificationUpdateDue(nowMs)) {
+                            val liveS = AppLanguageController.currentStrings()
+                            val titlePrefix = if (totalSteps > 1) "($passNum/$totalSteps) " else ""
+                            updateNotificationThrottled(
+                                runId = runId,
+                                title = "FFmpeg · $titlePrefix${liveS.customCmdOutputLabel}",
+                                text = FfmpegMath.formatTelemetryLine(wholeSec.toDouble(), stepExpectedDur, pct, spd, kb, includePercent = false, strings = liveS),
+                                percent = pct,
+                                passIndex = passNum,
+                                totalPasses = totalSteps,
+                                force = false
+                            )
+                        }
                     },
                     onLogLine = { line ->
                         if (!EncodingJobController.isRunActive(runId)) return@executeStep
@@ -3546,7 +3590,7 @@ class EncodingForegroundService : Service() {
         if (!EncodingJobController.isRunActive(runId)) return
         val now = SystemClock.elapsedRealtime()
         val prev = lastNotifyElapsedMs.get()
-        if (!force && now - prev < 500L) return
+        if (!force && now - prev < FFMPEG_NOTIF_INTERVAL_MS) return
         if (!force && !lastNotifyElapsedMs.compareAndSet(prev, now)) return
         if (force) {
             lastNotifyElapsedMs.set(now)
@@ -3593,25 +3637,8 @@ class EncodingForegroundService : Service() {
         passIndex: Int,
         totalPasses: Int
     ): Notification {
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val openPending = PendingIntent.getActivity(
-            this,
-            0,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val cancelIntent = Intent(this, EncodingForegroundService::class.java).apply {
-            action = ACTION_CANCEL
-        }
-        val cancelPending = PendingIntent.getService(
-            this,
-            1,
-            cancelIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val openPending = openAppPendingIntent
+        val cancelPending = cancelJobPendingIntent
 
         val s = AppLanguageController.currentStrings()
         val safePct = (percent ?: 0).coerceIn(0, 100)

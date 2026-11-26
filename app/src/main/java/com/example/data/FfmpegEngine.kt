@@ -846,6 +846,10 @@ object FfmpegEngine {
         val logsBuffer = mutableListOf<String>()
         var lastStatsEmitMs = 0L
         val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
+        val hasVideoFilter = args.any {
+            it == "-vf" || it == "-filter:v" || it == "-filter_complex" || it == "-lavfi"
+        }
+        val hasStatsPeriod = args.any { it.equals("-stats_period", ignoreCase = true) }
         val fullArgs = buildList {
             add("-hide_banner")
             if (!hasExplicitLogLevel) {
@@ -853,7 +857,11 @@ object FfmpegEngine {
                 add(if (captureRawOutput) "info" else "warning")
             }
             add("-stats")
-            if (!args.contains("-filter_threads")) {
+            if (!hasStatsPeriod) {
+                add("-stats_period")
+                add("0.5")
+            }
+            if (hasVideoFilter && !args.contains("-filter_threads")) {
                 add("-filter_threads")
                 add("0")
             }
@@ -911,12 +919,12 @@ object FfmpegEngine {
                 { stats ->
                     if (stats != null) {
                         val nowMs = SystemClock.elapsedRealtime()
-                        if (lastStatsEmitMs != 0L && nowMs - lastStatsEmitMs < 220L) {
+                        val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
+                        val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
+                        if (lastStatsEmitMs != 0L && pct != 100 && nowMs - lastStatsEmitMs < 400L) {
                             return@executeWithArgumentsAsync
                         }
                         lastStatsEmitMs = nowMs
-                        val curSec = (stats.time / 1000.0).coerceAtLeast(0.0)
-                        val pct = FfmpegMath.calculatePercent(curSec, expectedDurationSec)
                         val speedStr = if (stats.speed > 0.0) {
                             String.format(Locale.US, "%.2fx", stats.speed)
                         } else {

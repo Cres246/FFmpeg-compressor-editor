@@ -10,8 +10,6 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -593,13 +591,9 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
             Spacer(Modifier.height(16.dp))
 
             if (state.percent != null) {
-                val smoothProgressState = animateFloatAsState(
-                    targetValue = (state.percent / 100f).coerceIn(0f, 1f),
-                    animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-                    label = "ffmpeg_linear_progress"
-                )
+                val fraction = (state.percent / 100f).coerceIn(0f, 1f)
                 LinearProgressIndicator(
-                    progress = { smoothProgressState.value },
+                    progress = { fraction },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(10.dp)

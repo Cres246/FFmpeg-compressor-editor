@@ -64,6 +64,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -91,6 +93,7 @@ import com.example.domain.CompletedOutput
 import com.example.domain.CpuSimdProfile
 import com.example.domain.EncodingState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import com.example.domain.LanguagePreference
 import com.example.domain.LocalAppStrings
@@ -136,6 +139,7 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private var isIgnoringBatteryOptimizations by mutableStateOf(true)
+    private var isCpuEncodingRefreshRelaxed: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -153,6 +157,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
                     onRequestIgnoreBatteryOptimizations = ::requestIgnoreBatteryOptimizations,
+                    onSetCpuEncodingRefreshRelaxed = ::setCpuEncodingRefreshRelaxed,
                     onOpenOutput = ::openCompletedOutput,
                     onShareOutput = ::shareCompletedOutput,
                     onPlaySourceMedia = ::openSourceMedia
@@ -165,7 +170,11 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         AppLanguageController.init(applicationContext)
         isIgnoringBatteryOptimizations = checkIgnoringBatteryOptimizations()
-        requestHighestRefreshRate()
+        if (isCpuEncodingRefreshRelaxed) {
+            relaxRefreshRateForCpuEncoding()
+        } else {
+            requestHighestRefreshRate()
+        }
     }
 
     private fun checkIgnoringBatteryOptimizations(): Boolean {
@@ -190,7 +199,39 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            if (isCpuEncodingRefreshRelaxed) {
+                relaxRefreshRateForCpuEncoding()
+            } else {
+                requestHighestRefreshRate()
+            }
+        }
+    }
+
+    private fun setCpuEncodingRefreshRelaxed(relaxed: Boolean) {
+        if (isCpuEncodingRefreshRelaxed == relaxed) return
+        isCpuEncodingRefreshRelaxed = relaxed
+        if (relaxed) {
+            relaxRefreshRateForCpuEncoding()
+        } else {
             requestHighestRefreshRate()
+        }
+    }
+
+    /**
+     * Relaxes forced 120Hz display lock while CPU-bound FFmpeg software encoding is settled so
+     * LTPO/MagicOS can idle the display & GPU and preserve shared SoC thermal headroom for Pass 2.
+     */
+    private fun relaxRefreshRateForCpuEncoding() {
+        runCatching {
+            val lp = window.attributes
+            if (lp.preferredDisplayModeId != 0 || lp.preferredRefreshRate != 0f) {
+                lp.preferredDisplayModeId = 0
+                lp.preferredRefreshRate = 0f
+                window.attributes = lp
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                window.decorView.requestedFrameRate = android.view.View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
+            }
         }
     }
 
@@ -310,6 +351,7 @@ private fun FFLabAppRoot(
     viewModel: MainViewModel,
     isIgnoringBatteryOptimizations: Boolean,
     onRequestIgnoreBatteryOptimizations: () -> Unit,
+    onSetCpuEncodingRefreshRelaxed: (Boolean) -> Unit,
     onOpenOutput: (CompletedOutput) -> Unit,
     onShareOutput: (CompletedOutput) -> Unit,
     onPlaySourceMedia: (com.example.domain.MediaInfo) -> Unit
@@ -389,6 +431,20 @@ private fun FFLabAppRoot(
         encodingState !is EncodingState.Idle -> AppScreenStage.PROCESSING
         uiState.activeConfig != null && uiState.mediaInfo != null -> AppScreenStage.CONFIG
         else -> AppScreenStage.HOME
+    }
+
+    val isSoftwareEncodingRunning = currentStage == AppScreenStage.PROCESSING && encodingState is EncodingState.Running
+    LaunchedEffect(isSoftwareEncodingRunning) {
+        if (isSoftwareEncodingRunning) {
+            // Wait for the 880ms 120Hz vertical push transition to finish cleanly before relaxing refresh rate
+            delay(950L)
+            onSetCpuEncodingRefreshRelaxed(true)
+        } else {
+            onSetCpuEncodingRefreshRelaxed(false)
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSetCpuEncodingRefreshRelaxed(false) }
     }
 
     // Keep the last rendered screen payload alive while exiting without triggering extra recompositions

@@ -1297,7 +1297,7 @@ object FfmpegMath {
                 val vbvMaxKbps = if (stress.tier >= 2) (vkbps * 1.45).roundToInt().coerceAtLeast(vkbps + 40) else null
                 val vbvBufKbps = if (stress.tier >= 2) (vkbps * 2.5).roundToInt().coerceAtLeast(vkbps * 2) else null
 
-                val pass1 = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                val pass1 = mutableListOf("-y", "-i", inputTokenProvider())
                 config.fps.ffmpegValue?.let { pass1.addAll(listOf("-r", it)) }
                 vf?.let { pass1.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                 pass1.addAll(
@@ -1328,7 +1328,7 @@ object FfmpegMath {
                 }
                 pass1.addAll(listOf("-an", "-f", "null", "/dev/null"))
 
-                val pass2 = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                val pass2 = mutableListOf("-y", "-i", inputTokenProvider())
                 config.fps.ffmpegValue?.let { pass2.addAll(listOf("-r", it)) }
                 vf?.let { pass2.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                 pass2.addAll(
@@ -1438,7 +1438,7 @@ object FfmpegMath {
                         if (startT != null) args.addAll(listOf("-ss", startT))
                         if (endT != null) args.addAll(listOf("-to", endT))
                         val vf = buildScaleFilter(media.width, media.height, config.resolution, media.needsEvenScale)
-                        args.addAll(listOf("-threads", "0", "-i", inputTokenProvider()))
+                        args.addAll(listOf("-i", inputTokenProvider()))
                         config.fps.ffmpegValue?.let { args.addAll(listOf("-r", it)) }
                         vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                         args.addAll(
@@ -1466,7 +1466,7 @@ object FfmpegMath {
                         if (startT != null) args.addAll(listOf("-ss", startT))
                         if (endT != null) args.addAll(listOf("-to", endT))
                         val vf = buildScaleFilter(media.width, media.height, config.resolution, media.needsEvenScale)
-                        args.addAll(listOf("-threads", "0", "-i", inputTokenProvider()))
+                        args.addAll(listOf("-i", inputTokenProvider()))
                         config.fps.ffmpegValue?.let { args.addAll(listOf("-r", it)) }
                         vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
                         args.addAll(
@@ -1548,7 +1548,7 @@ object FfmpegMath {
 
             ProcessingMode.VIDEO_ONLY_CRF -> {
                 val vf = buildScaleFilter(media.width, media.height, ResolutionOption.ORIGINAL, media.needsEvenScale)
-                val args = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                val args = mutableListOf("-y", "-i", inputTokenProvider())
                 args.addAll(listOf("-map", "0:v:0"))
                 if (media.hasAudio) {
                     args.addAll(listOf("-map", "0:a:0?"))
@@ -1597,7 +1597,7 @@ object FfmpegMath {
 
             ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
                 val vf = buildScaleFilter(media.width, media.height, ResolutionOption.ORIGINAL, media.needsEvenScale)
-                val args = mutableListOf("-y", "-threads", "0", "-i", inputTokenProvider())
+                val args = mutableListOf("-y", "-i", inputTokenProvider())
                 args.addAll(listOf("-map", "0:v:0"))
                 if (media.hasAudio) {
                     args.addAll(listOf("-map", "0:a:0?"))
