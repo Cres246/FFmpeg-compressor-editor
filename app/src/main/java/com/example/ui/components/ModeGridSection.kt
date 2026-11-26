@@ -411,7 +411,8 @@ fun TrimFeatureCard(
                 Text(
                     text = mode.localizedSubtitle(strings),
                     style = MaterialTheme.typography.bodySmall.copy(
-                        lineHeight = 15.5.sp
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
