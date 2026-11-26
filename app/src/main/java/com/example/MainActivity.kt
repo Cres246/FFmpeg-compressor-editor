@@ -100,6 +100,7 @@ import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
 import com.example.domain.isHardwareTurboState
 import com.example.domain.stringsFor
+import com.example.service.EncodingJobController
 import com.example.service.NativeCpuAffinity
 import com.example.ui.MainViewModel
 import com.example.ui.components.MediaHeroCard
@@ -865,6 +866,21 @@ private fun OpenSourceCreditsDialog(
                 val simdProfile = remember {
                     CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask)
                 }
+                val activeEncoderSimd by produceState(initialValue = FfmpegEngine.getCachedActiveEncoderSimd()) {
+                    if (value == null && EncodingJobController.state.value !is EncodingState.Running) {
+                        value = withContext(Dispatchers.IO) {
+                            FfmpegEngine.probeActiveEncoderSimd()
+                        }
+                    }
+                }
+                val simdExtraNote = remember(simdProfile, activeEncoderSimd) {
+                    val encoderLine = activeEncoderSimd?.formatCompactLine()
+                    if (encoderLine != null) {
+                        "CPU SIMD: ${simdProfile.summaryLabel()}\n$encoderLine"
+                    } else {
+                        "CPU SIMD: ${simdProfile.summaryLabel()}"
+                    }
+                }
                 CreditEntryCard(
                     sectionLabel = strings.creditsCoreSectionLabel,
                     libraryName = "FFmpeg",
@@ -879,7 +895,7 @@ private fun OpenSourceCreditsDialog(
                         libraryName = "FFmpegKit Next (Full GPL · ARM64-O3)",
                         packageTag = "arthenica/ffmpeg-kit-next · Runtime SIMD",
                         authorLine = strings.creditsOriginalLibCreator,
-                        extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
+                        extraNote = simdExtraNote,
                         borderColor = extColors.subtleBorder
                     )
                 } else {
@@ -895,7 +911,7 @@ private fun OpenSourceCreditsDialog(
                         libraryName = "FFmpegKit Maintained (Full GPL)",
                         packageTag = "dev.ffmpegkit-maintained · v8.1.9",
                         authorLine = strings.creditsForkMaintainer,
-                        extraNote = "CPU SIMD: ${simdProfile.summaryLabel()}",
+                        extraNote = simdExtraNote,
                         borderColor = extColors.subtleBorder
                     )
                 }

@@ -380,3 +380,38 @@ data class CpuSimdProfile(
         }
     }
 }
+
+/**
+ * Actual runtime SIMD capabilities reported directly by bundled `libx264` and `libx265`
+ * (`using cpu capabilities: ...`) during a lightweight 1-frame null probe, proving which
+ * SIMD extensions (NEON, DotProd, I8MM) are actively executing in the compiled encoders.
+ */
+data class ActiveEncoderSimdReport(
+    val x264Caps: String? = null,
+    val x265Caps: String? = null
+) {
+    fun formatCompactLine(): String? {
+        val parts = buildList {
+            x264Caps?.takeIf { it.isNotBlank() }?.let { add("x264: $it") }
+            x265Caps?.takeIf { it.isNotBlank() }?.let { add("x265: $it") }
+        }
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
+    }
+
+    companion object {
+        private val CPU_CAPS_REGEX = Regex(
+            pattern = """using\s+cpu\s+capabilities\s*:\s*([^\r\n]+)""",
+            option = RegexOption.IGNORE_CASE
+        )
+
+        fun parseEncoderCapabilities(logs: String): String? {
+            if (logs.isBlank()) return null
+            val match = CPU_CAPS_REGEX.find(logs) ?: return null
+            return match.groupValues.getOrNull(1)
+                ?.trim()
+                ?.replace(Regex("""\s+"""), " ")
+                ?.takeIf { it.isNotEmpty() }
+        }
+    }
+}
+

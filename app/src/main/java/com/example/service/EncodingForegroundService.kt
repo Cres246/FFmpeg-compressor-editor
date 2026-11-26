@@ -1134,6 +1134,16 @@ class EncodingForegroundService : Service() {
         val versionSuffix = runtimeFfmpegVer?.let { " (v$it)" }.orEmpty()
         appendLog("${s.logTagStarted} $modeTitle — $summaryBanner")
         appendLog("[FFmpeg] ${BuildConfig.FFMPEG_ENGINE_VARIANT}$versionSuffix · CPU: $simdSummary")
+        if (config.mode != ProcessingMode.REMUX_FORMAT &&
+            config.mode != ProcessingMode.EXTRACT_AUDIO &&
+            config.mode != ProcessingMode.AUDIO_ONLY_AAC &&
+            config.mode != ProcessingMode.CUSTOM_COMMAND
+        ) {
+            val encoderSimdLine = FfmpegEngine.probeActiveEncoderSimd().formatCompactLine()
+            if (encoderSimdLine != null) {
+                appendLog("[SIMD] $encoderSimdLine")
+            }
+        }
 
         try {
             if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
@@ -1218,6 +1228,7 @@ class EncodingForegroundService : Service() {
                 var lastEmittedTenthMb = -1L
                 var lastLogEmitMs = 0L
 
+                cpuBooster.scheduleEarlyThreadDiscovery(serviceScope)
                 val stepResult = FfmpegEngine.executeStep(
                     args = stepArgs,
                     expectedDurationSec = step.expectedDurationSec,
@@ -2210,6 +2221,7 @@ class EncodingForegroundService : Service() {
                 var lastEmittedTenthMb = -1L
                 var lastLogEmitMs = 0L
 
+                cpuBooster.scheduleEarlyThreadDiscovery(serviceScope)
                 val stepResult = FfmpegEngine.executeStep(
                     args = stepArgs,
                     expectedDurationSec = step.expectedDurationSec,
@@ -3248,6 +3260,7 @@ class EncodingForegroundService : Service() {
                     }
                 )
             } else {
+                cpuBooster.scheduleEarlyThreadDiscovery(serviceScope)
                 FfmpegEngine.executeStep(
                     args = resolvedArgs,
                     expectedDurationSec = stepExpectedDur,

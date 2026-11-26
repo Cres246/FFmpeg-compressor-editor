@@ -50,6 +50,7 @@ class CpuPerformanceBooster(private val context: Context) {
     private var lastBoostPulseElapsedMs: Long = 0L
     private var lastSessionReassertElapsedMs: Long = 0L
     private var tickerJob: Job? = null
+    private var earlyDiscoveryJob: Job? = null
 
     private val ignoredThreadPrefixes = listOf(
         "Binder:", "RenderThread", "HeapTaskDaemon", "ReferenceQueue",
@@ -93,6 +94,26 @@ class CpuPerformanceBooster(private val context: Context) {
         }
     }
 
+    /**
+     * Triggers a single one-shot thread scan shortly after a new FFmpeg pass begins (~650ms),
+     * registering newly spawned native `libx264`/`libx265` worker TIDs into ADPF and `-4`
+     * priority immediately instead of waiting for the 5s steady-state ticker (critical for fast
+     * Pass 1 analysis runs). Zero steady-state overhead and zero quality impact.
+     */
+    fun scheduleEarlyThreadDiscovery(scope: CoroutineScope) {
+        synchronized(lock) {
+            if (!active) return
+            earlyDiscoveryJob?.cancel()
+            earlyDiscoveryJob = scope.launch(Dispatchers.Default) {
+                delay(EARLY_DISCOVERY_DELAY_MS)
+                synchronized(lock) {
+                    if (!active) return@synchronized
+                    refreshAndPulseLocked(force = true)
+                }
+            }
+        }
+    }
+
     fun pulseIfDue() {
         if (!active) return
         val now = SystemClock.elapsedRealtime()
@@ -113,6 +134,8 @@ class CpuPerformanceBooster(private val context: Context) {
             active = false
             tickerJob?.cancel()
             tickerJob = null
+            earlyDiscoveryJob?.cancel()
+            earlyDiscoveryJob = null
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching { perfHintSession?.close() }
             }
@@ -306,6 +329,7 @@ class CpuPerformanceBooster(private val context: Context) {
     }
 
     companion object {
+        private const val EARLY_DISCOVERY_DELAY_MS = 650L
         private const val TICKER_INTERVAL_MS = 5_000L
         private const val PULSE_MIN_INTERVAL_MS = 5_000L
         private const val SESSION_REASSERT_INTERVAL_MS = 20_000L

@@ -217,4 +217,28 @@ class CpuTopologyTest {
         assertFalse(legacy.hasI8mm)
         assertEquals("NEON", legacy.summaryLabel())
     }
+
+    @Test
+    fun activeEncoderSimdReport_parsesX264AndX265CapabilityLogs() {
+        val x264Log = """
+            [libx264 @ 0xb400007] using cpu capabilities: ARMv8 NEON DotProd I8MM
+            [libx264 @ 0xb400007] profile High, level 1.0
+        """.trimIndent()
+        val x265Log = """
+            x265 [info]: HEVC encoder version 4.1
+            x265 [info]: using cpu capabilities: NEON Neon_DotProd
+        """.trimIndent()
+
+        val x264Caps = ActiveEncoderSimdReport.parseEncoderCapabilities(x264Log)
+        val x265Caps = ActiveEncoderSimdReport.parseEncoderCapabilities(x265Log)
+
+        assertEquals("ARMv8 NEON DotProd I8MM", x264Caps)
+        assertEquals("NEON Neon_DotProd", x265Caps)
+        assertEquals(
+            "x264: ARMv8 NEON DotProd I8MM · x265: NEON Neon_DotProd",
+            ActiveEncoderSimdReport(x264Caps, x265Caps).formatCompactLine()
+        )
+        assertEquals(null, ActiveEncoderSimdReport.parseEncoderCapabilities("no caps line here"))
+    }
 }
+
