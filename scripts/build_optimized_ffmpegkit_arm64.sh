@@ -112,6 +112,77 @@ if [[ -z "${NIX_PROFILE}" ]]; then
 fi
 echo "[nix] Selected Android NDK profile: ${NIX_PROFILE}"
 
+# 4b. Upgrade NDK compiler generation to newest official Google NDK r29/r30 (Clang 21) when
+#     the Nix profile ships an older NDK (e.g. r27d · Clang 18), matching Termux's Clang 21
+#     AArch64 vectorizer/codegen while keeping Nix's reproducible tool dependencies intact.
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+NIX_NDK_MAJOR="$(sed -nE 's/^android-r([0-9]+).*/\1/p' <<< "${NIX_PROFILE}" | head -n 1 || true)"
+NIX_NDK_MAJOR="${NIX_NDK_MAJOR:-0}"
+OVERRIDE_NDK_VER=""
+
+if [[ -z "${FFMPEGKIT_OVERRIDE_NDK_ROOT:-}" ]] && [[ "${FFMPEGKIT_DISABLE_NDK_UPGRADE:-0}" != "1" ]] && (( NIX_NDK_MAJOR < 29 )) && [[ -x "${SDKMANAGER}" ]]; then
+  echo "[ndk] Nix profile ${NIX_PROFILE} uses NDK r${NIX_NDK_MAJOR}; probing Google SDK repo for NDK r29/r30 (Clang 20/21)..."
+  yes | "${SDKMANAGER}" --licenses >/dev/null 2>&1 || true
+  BEST_NDK_PKG="$(python3 - "${SDKMANAGER}" "${ANDROID_SDK_ROOT}" <<'PYEOF'
+import pathlib, re, subprocess, sys
+
+sdkmanager = sys.argv[1]
+sdk_root = pathlib.Path(sys.argv[2])
+
+candidates = set()
+# Include already-installed host NDKs
+ndk_dir = sdk_root / "ndk"
+if ndk_dir.is_dir():
+    for d in ndk_dir.iterdir():
+        if d.is_dir() and (d / "source.properties").is_file():
+            candidates.add(f"ndk;{d.name}")
+
+# Query remote sdkmanager catalog for newest NDK r28+/r29+/r30+
+try:
+    out = subprocess.check_output([sdkmanager, "--list"], text=True, errors="replace", timeout=90)
+    for m in re.finditer(r"\b(ndk;(\d+)\.(\d+)\.(\d+)(?:-[A-Za-z0-9.]+)?)\b", out):
+        candidates.add(m.group(1))
+except Exception:
+    pass
+
+def parse_ver(pkg: str):
+    ver = pkg.split(";", 1)[1]
+    # Prefer stable releases over beta/rc unless no stable exists for that major
+    is_prerelease = 1 if "-" in ver else 0
+    nums = [int(x) for x in re.findall(r"\d+", ver.split("-", 1)[0])]
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], 1 - is_prerelease, nums[1], nums[2], ver)
+
+# Accept NDK r28+ (Clang 19+), strongly preferring r29/r30 (Clang 20/21)
+valid = [p for p in candidates if parse_ver(p)[0] >= 28]
+if valid:
+    best = sorted(valid, key=parse_ver)[-1]
+    print(best)
+PYEOF
+)"
+  if [[ -n "${BEST_NDK_PKG}" ]]; then
+    BEST_NDK_VER="${BEST_NDK_PKG#ndk;}"
+    CANDIDATE_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/${BEST_NDK_VER}"
+    if [[ ! -f "${CANDIDATE_NDK_ROOT}/source.properties" ]]; then
+      echo "[ndk] Installing ${BEST_NDK_PKG} via sdkmanager..."
+      yes | "${SDKMANAGER}" "${BEST_NDK_PKG}" >/dev/null || true
+    fi
+    if [[ -f "${CANDIDATE_NDK_ROOT}/source.properties" ]] && [[ -x "${CANDIDATE_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" ]]; then
+      export FFMPEGKIT_OVERRIDE_NDK_ROOT="${CANDIDATE_NDK_ROOT}"
+      OVERRIDE_NDK_VER="${BEST_NDK_VER}"
+      CLANG_VER_LINE="$("${CANDIDATE_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version 2>/dev/null | head -n 1 || true)"
+      echo "[ndk] Upgraded active compiler to Google Android NDK ${OVERRIDE_NDK_VER}: ${CLANG_VER_LINE}"
+    else
+      echo "[ndk] WARN: ${BEST_NDK_PKG} installation incomplete; keeping Nix profile ${NIX_PROFILE}."
+    fi
+  else
+    echo "[ndk] INFO: No newer NDK r28+ found in sdkmanager; using Nix profile ${NIX_PROFILE}."
+  fi
+fi
+
 # 5. Detect whether ./nix-android.sh uses `--` separator and capture the REAL android.sh --help
 #    output from inside Nix (plus scripts/function*.sh where display_help & library options live)
 USE_DOUBLE_DASH="$(python3 - "./nix-android.sh" <<'PYEOF'
@@ -269,17 +340,43 @@ PYEOF
   fi
 fi
 
-set +e
-if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
-  echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} -- ${BUILD_FLAGS[*]}"
-  ./nix-android.sh -p "${NIX_PROFILE}" -- "${BUILD_FLAGS[@]}"
-  BUILD_RC=$?
-else
-  echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} ${BUILD_FLAGS[*]}"
-  ./nix-android.sh -p "${NIX_PROFILE}" "${BUILD_FLAGS[@]}"
-  BUILD_RC=$?
+run_nix_android_build() {
+  set +e
+  if [[ "${USE_DOUBLE_DASH}" == "true" ]]; then
+    echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} -- ${BUILD_FLAGS[*]}"
+    ./nix-android.sh -p "${NIX_PROFILE}" -- "${BUILD_FLAGS[@]}"
+    BUILD_RC=$?
+  else
+    echo "[build] Running ./nix-android.sh -p ${NIX_PROFILE} ${BUILD_FLAGS[*]}"
+    ./nix-android.sh -p "${NIX_PROFILE}" "${BUILD_FLAGS[@]}"
+    BUILD_RC=$?
+  fi
+  set -e
+}
+
+run_nix_android_build
+
+# Automatic bulletproof fallback: if the upgraded NDK r29/r30 (Clang 21) build fails before
+# compiling native libraries (e.g. a future upstream library incompatibility), cleanly retry
+# once with Nix's pinned NDK profile while keeping all -O3 / -Wl,--lto-O3 / SIMD / dav1d patches.
+if (( BUILD_RC != 0 )) && [[ -n "${FFMPEGKIT_OVERRIDE_NDK_ROOT:-}" ]]; then
+  BUILT_AVCODEC_CHECK="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android" \
+    -type f -name 'libavcodec.so' 2>/dev/null | head -n 1 || true)"
+  if [[ -z "${BUILT_AVCODEC_CHECK}" ]]; then
+    echo "==================================================================" >&2
+    echo " [warn] Upgraded NDK (${OVERRIDE_NDK_VER}) build failed (rc=${BUILD_RC})." >&2
+    if [[ -f "${WORK_DIR}/ffmpeg-kit-next/build.log" ]]; then
+      echo " === NDK override build.log (last 80 lines) ===" >&2
+      tail -n 80 "${WORK_DIR}/ffmpeg-kit-next/build.log" >&2 || true
+    fi
+    echo " [fallback] Cleaning partial artifacts and retrying with Nix profile ${NIX_PROFILE}..." >&2
+    echo "==================================================================" >&2
+    unset FFMPEGKIT_OVERRIDE_NDK_ROOT
+    OVERRIDE_NDK_VER=""
+    rm -rf "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android/libs" "${WORK_DIR}/ffmpeg-kit-next/android/obj"
+    run_nix_android_build
+  fi
 fi
-set -e
 
 if (( BUILD_RC != 0 )); then
   echo "==================================================================" >&2
@@ -459,21 +556,26 @@ if failed or count == 0:
 print(f"[verify] Gate 3 passed: all {count} arm64-v8a .so libraries have 16 KB ELF alignment.")
 PYEOF
 
-# Gate 4: Extract compiled FFmpeg version + SIMD capability telemetry
+# Gate 4: Extract compiled FFmpeg version + compiler + configuration + SIMD capability telemetry
 DETECTED_FFMPEG_VER="$(grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' <<< "$(strings "${ARM64_JNI_DIR}/libavutil.so" 2>/dev/null || true)" | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || true)"
+DETECTED_CLANG_VER="$(readelf -p .comment "${ARM64_JNI_DIR}/libffmpegkit.so" 2>/dev/null | grep -i 'clang' | head -n 1 | sed 's/^[[:space:]]*\[[^]]*\][[:space:]]*//' || true)"
+DETECTED_FFMPEG_CONF="$(strings "${ARM64_JNI_DIR}/libavutil.so" 2>/dev/null | grep -E '^--' | head -n 1 || true)"
 SIMD_REPORT="$(grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' <<< "${CODEC_STRINGS}" | sort -u | head -n 12 || true)"
 AAR_MB="$(awk "BEGIN { printf \"%.2f\", ${AAR_SIZE} / 1048576 }")"
 
 cp "${BUILT_AAR}" "${OUT_AAR}"
 {
-  echo "engine=FFmpegKit-Next-ARM64-O3-SIMD"
+  echo "engine=FFmpegKit-Next-ARM64-O3-LTO3-SIMD"
   echo "upstream_repo=${FFMPEGKIT_REPO_URL}"
   echo "upstream_commit=${UPSTREAM_COMMIT}"
   echo "detected_ffmpeg_version=${DETECTED_FFMPEG_VER:-unknown}"
   echo "nix_profile=${NIX_PROFILE}"
+  echo "effective_ndk=${OVERRIDE_NDK_VER:-nix-${NIX_PROFILE}}"
+  echo "detected_clang=${DETECTED_CLANG_VER:-unknown}"
   echo "aar_size_mb=${AAR_MB}"
   echo "bundles_smart_exception=${BUNDLES_SMART_EXCEPTION}"
   echo "flags=${BUILD_FLAGS[*]}"
+  echo "ffmpeg_configuration=${DETECTED_FFMPEG_CONF:-unknown}"
   echo "simd_symbols_found:"
   echo "${SIMD_REPORT:-"(standard NEON)"}"
 } > "${OUT_INFO}"

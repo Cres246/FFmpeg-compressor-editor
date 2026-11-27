@@ -42,7 +42,7 @@ jobs:
           path: |
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
-          key: ffmpeg-kit-next-arm64-simd-v3-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
+          key: ffmpeg-kit-next-arm64-simd-v4-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
 
       - name: Nix Derlemesi Icin Disk Alani Ac
         if: ${{ github.event_name != 'pull_request' && (steps.ffmpeg-cache.outputs.cache-hit != 'true' || inputs.rebuild_ffmpeg_aar == true) }}
@@ -213,6 +213,10 @@ jobs:
 
           APK_FF_VER="$(strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || echo unknown)"
           echo "Dogrulandi! Release APK aktif FFmpeg surumu: ${APK_FF_VER}"
+          echo "=== APK arm64-v8a Derleyici (.comment) ==="
+          readelf -p .comment /tmp/verify-release-apk/lib/arm64-v8a/libffmpegkit.so 2>/dev/null | grep -i clang || true
+          echo "=== APK arm64-v8a FFmpeg Configuration ==="
+          strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -E '^--' | head -n 1 || true
           echo "=== APK arm64-v8a Derlenmis SIMD Sembolleri ==="
           strings /tmp/verify-release-apk/lib/arm64-v8a/*.so | grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' | sort -u | head -n 30 || true
           rm -rf /tmp/verify-release-apk

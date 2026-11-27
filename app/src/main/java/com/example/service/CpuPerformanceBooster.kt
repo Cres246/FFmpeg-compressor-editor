@@ -55,6 +55,7 @@ class CpuPerformanceBooster(private val context: Context) {
     private var lastSessionReassertElapsedMs: Long = 0L
     private var tickerJob: Job? = null
     private var earlyDiscoveryJob: Job? = null
+    private var allocatorEncodingModeActive: Boolean = false
 
     private val commonIgnoredThreadPrefixes = listOf(
         "Binder:", "RenderThread", "HeapTaskDaemon", "ReferenceQueue",
@@ -99,6 +100,10 @@ class CpuPerformanceBooster(private val context: Context) {
                 perfHintSession = null
                 lastRegisteredTids = IntArray(0)
                 runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
+                if (!allocatorEncodingModeActive) {
+                    NativeCpuAffinity.setAllocatorEncodingMode(true)
+                    allocatorEncodingModeActive = true
+                }
 
                 tickerJob = scope?.launch(Dispatchers.Default) {
                     while (isActive && active) {
@@ -113,7 +118,12 @@ class CpuPerformanceBooster(private val context: Context) {
                 return
             }
 
-            // TURBO_MEDIACODEC: low-latency feeder priority + balanced ADPF hint session
+            // TURBO_MEDIACODEC: release any cached software-FFmpeg pages before MediaCodec init
+            if (allocatorEncodingModeActive) {
+                allocatorEncodingModeActive = false
+                NativeCpuAffinity.setAllocatorEncodingMode(false)
+            }
+            // Low-latency feeder priority + balanced ADPF hint session
             runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
             lastSampledCpuTicks = readProcessThreadSamples().associate { it.tid to it.ticks }
             refreshTurboLocked(force = true)
@@ -184,6 +194,10 @@ class CpuPerformanceBooster(private val context: Context) {
             lastSampledCpuTicks = emptyMap()
             lastBoostPulseElapsedMs = 0L
             lastSessionReassertElapsedMs = 0L
+            if (allocatorEncodingModeActive) {
+                allocatorEncodingModeActive = false
+                NativeCpuAffinity.setAllocatorEncodingMode(false)
+            }
         }
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
     }
