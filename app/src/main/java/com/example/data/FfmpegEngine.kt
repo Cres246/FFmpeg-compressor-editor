@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
-import android.os.Process
 import android.os.SystemClock
 import android.provider.OpenableColumns
 import com.arthenica.ffmpegkit.FFmpegKit
@@ -39,6 +38,77 @@ data class FfmpegStepResult(
     val logs: List<String>,
     val rawOutput: String = ""
 )
+
+/**
+ * Reassembles partial FFmpeg `av_log` callback fragments (e.g. `"  Stream #0"`, `":0"`, `"(eng)"`,
+ * `"\n"`) into complete logical lines before emitting them to UI terminal logs, while cleanly
+ * discarding in-place `\r` progress overwrites (`frame=...`, `size=...`).
+ */
+internal class FfmpegLogLineAssembler(
+    private val maxLineChars: Int = 2048
+) {
+    private val pending = StringBuilder(256)
+
+    fun append(chunk: String): List<String> {
+        if (chunk.isEmpty()) return emptyList()
+        var emitted: MutableList<String>? = null
+        var i = 0
+        val len = chunk.length
+        while (i < len) {
+            when (val ch = chunk[i]) {
+                '\n' -> {
+                    val line = drainPending()
+                    if (line != null) {
+                        if (emitted == null) emitted = ArrayList(2)
+                        emitted.add(line)
+                    }
+                }
+                '\r' -> {
+                    if (i + 1 < len && chunk[i + 1] == '\n') {
+                        i++
+                        val line = drainPending()
+                        if (line != null) {
+                            if (emitted == null) emitted = ArrayList(2)
+                            emitted.add(line)
+                        }
+                    } else {
+                        // Standalone '\r' is used by FFmpeg for in-place progress overwrites.
+                        // Drop progress lines cleanly; flush other non-empty text.
+                        if (pending.isNotEmpty()) {
+                            val current = pending.toString()
+                            pending.setLength(0)
+                            if (!FfmpegEngine.isFastDropProgressLine(current)) {
+                                if (emitted == null) emitted = ArrayList(2)
+                                emitted.add(current)
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    pending.append(ch)
+                    if (pending.length >= maxLineChars) {
+                        val line = drainPending()
+                        if (line != null) {
+                            if (emitted == null) emitted = ArrayList(2)
+                            emitted.add(line)
+                        }
+                    }
+                }
+            }
+            i++
+        }
+        return emitted ?: emptyList()
+    }
+
+    fun flush(): String? = drainPending()
+
+    private fun drainPending(): String? {
+        if (pending.isEmpty()) return null
+        val line = pending.toString()
+        pending.setLength(0)
+        return line
+    }
+}
 
 object FfmpegEngine {
 
@@ -886,9 +956,27 @@ object FfmpegEngine {
         captureRawOutput: Boolean = false
     ): FfmpegStepResult = suspendCancellableCoroutine { cont ->
         ensureSilentLogcat()
-        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
         val logsBuffer = mutableListOf<String>()
+        val logLineAssembler = FfmpegLogLineAssembler()
         var lastStatsEmitMs = 0L
+
+        fun emitAssembledLine(rawLine: String) {
+            if (isFastDropProgressLine(rawLine)) return
+            val msg = rawLine.trim()
+            if (!isImportantLogLine(msg)) return
+            var added = false
+            synchronized(logsBuffer) {
+                if (logsBuffer.lastOrNull() != msg) {
+                    if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
+                    logsBuffer.add(msg)
+                    added = true
+                }
+            }
+            if (added) {
+                onLogLine(msg)
+            }
+        }
+
         val hasExplicitLogLevel = args.any { it.equals("-loglevel", ignoreCase = true) || it.equals("-v", ignoreCase = true) }
         val hasVideoFilter = args.any {
             it == "-vf" || it == "-filter:v" || it == "-filter_complex" || it == "-lavfi"
@@ -919,6 +1007,10 @@ object FfmpegEngine {
             FFmpegKit.executeWithArgumentsAsync(
                 fullArgs,
                 { completedSession ->
+                    val trailingLine = synchronized(logLineAssembler) { logLineAssembler.flush() }
+                    if (trailingLine != null) {
+                        emitAssembledLine(trailingLine)
+                    }
                     sessionDone.complete(Unit)
                     activeSessionCompletion.compareAndSet(sessionDone, null)
                     val rc = completedSession.getReturnCode()
@@ -944,20 +1036,12 @@ object FfmpegEngine {
                 },
                 { log ->
                     val raw = log?.message ?: return@executeWithArgumentsAsync
-                    if (isFastDropProgressLine(raw)) return@executeWithArgumentsAsync
-                    val msg = raw.trim()
-                    if (isImportantLogLine(msg)) {
-                        var added = false
-                        synchronized(logsBuffer) {
-                            if (logsBuffer.lastOrNull() != msg) {
-                                if (logsBuffer.size >= 80) logsBuffer.removeAt(0)
-                                logsBuffer.add(msg)
-                                added = true
-                            }
-                        }
-                        if (added) {
-                            onLogLine(msg)
-                        }
+                    val completedLines = synchronized(logLineAssembler) {
+                        logLineAssembler.append(raw)
+                    }
+                    if (completedLines.isEmpty()) return@executeWithArgumentsAsync
+                    for (line in completedLines) {
+                        emitAssembledLine(line)
                     }
                 },
                 { stats ->
@@ -1055,7 +1139,7 @@ object FfmpegEngine {
         }
     }
 
-    private fun isFastDropProgressLine(raw: String): Boolean {
+    internal fun isFastDropProgressLine(raw: String): Boolean {
         var idx = 0
         val len = raw.length
         while (idx < len && raw[idx] <= ' ') idx++

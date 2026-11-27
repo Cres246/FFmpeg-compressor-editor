@@ -72,6 +72,17 @@ object NativeCpuAffinity {
         return runCatching { nativeEndStderrCapture().orEmpty() }.getOrDefault("")
     }
 
+    /**
+     * Configures Bionic/Scudo page decay for heavy native video frame churn:
+     * - `active = true`: switches from Zygote's immediate `M_DECAY_TIME = 0` purge to lazy decay
+     *   (`M_DECAY_TIME = 1`), preventing `madvise`/page-fault kernel `stime` storms on 1080p/4K frames.
+     * - `active = false`: restores `M_DECAY_TIME = 0` and triggers `M_PURGE` to release native RAM.
+     */
+    fun setAllocatorEncodingMode(active: Boolean): Boolean {
+        if (!isLoaded) return false
+        return runCatching { nativeSetAllocatorEncodingMode(active) }.getOrDefault(false)
+    }
+
     @JvmStatic
     private external fun nativeSetThreadAffinity(tid: Int, cpuIds: IntArray): Int
 
@@ -89,4 +100,7 @@ object NativeCpuAffinity {
 
     @JvmStatic
     private external fun nativeEndStderrCapture(): String?
+
+    @JvmStatic
+    private external fun nativeSetAllocatorEncodingMode(encodingActive: Boolean): Boolean
 }

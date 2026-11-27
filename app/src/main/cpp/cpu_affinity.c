@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
@@ -9,6 +10,24 @@
 #include <sys/auxv.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+/* Android Bionic / Scudo mallopt extensions (API 26+ symbol resolved via dlsym for minSdk 24) */
+#ifndef M_DECAY_TIME
+#define M_DECAY_TIME (-100)
+#endif
+#ifndef M_PURGE
+#define M_PURGE (-101)
+#endif
+
+#if defined(__ANDROID__)
+typedef int (*bionic_mallopt_fn)(int, int);
+static pthread_once_t g_mallopt_once = PTHREAD_ONCE_INIT;
+static bionic_mallopt_fn g_mallopt_fn = NULL;
+
+static void resolve_mallopt_once(void) {
+    g_mallopt_fn = (bionic_mallopt_fn) dlsym(RTLD_DEFAULT, "mallopt");
+}
+#endif
 
 #if defined(__aarch64__)
 #include <asm/hwcap.h>
@@ -300,4 +319,43 @@ Java_com_example_service_NativeCpuAffinity_nativeEndStderrCapture(
         }
     }
     return (*env)->NewStringUTF(env, buffer);
+}
+
+/**
+ * Tunes Android Bionic's Scudo/jemalloc page-decay policy during heavy software video decode/encode.
+ *
+ * Android's Zygote configures app processes with `M_DECAY_TIME = 0` (immediate `madvise(MADV_DONTNEED)`
+ * on freed blocks), whereas standalone CLI tools like Termux keep lazy page decay. During 1080p/4K
+ * decoding and encoding, FFmpeg constantly frees and reallocates multi-megabyte AVFrame buffers;
+ * immediate purging causes thousands of extra `madvise`/page-fault kernel transitions (`stime`).
+ *
+ * - `encodingActive == JNI_TRUE`: enables lazy page decay (`M_DECAY_TIME = 1`) so hot frame buffers
+ *   are reused without kernel page-fault storms.
+ * - `encodingActive == JNI_FALSE`: restores immediate decay (`M_DECAY_TIME = 0`) and purges cached
+ *   pages (`M_PURGE`) so native memory is immediately returned to Android OS after the job ends.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_example_service_NativeCpuAffinity_nativeSetAllocatorEncodingMode(
+        JNIEnv *env,
+        jclass clazz,
+        jboolean encodingActive) {
+    (void) env;
+    (void) clazz;
+#if defined(__ANDROID__)
+    pthread_once(&g_mallopt_once, resolve_mallopt_once);
+    if (g_mallopt_fn == NULL) {
+        return JNI_FALSE;
+    }
+    if (encodingActive == JNI_TRUE) {
+        int ok = g_mallopt_fn(M_DECAY_TIME, 1);
+        return ok == 1 ? JNI_TRUE : JNI_FALSE;
+    } else {
+        int okDecay = g_mallopt_fn(M_DECAY_TIME, 0);
+        int okPurge = g_mallopt_fn(M_PURGE, 0);
+        return (okDecay == 1 || okPurge == 1) ? JNI_TRUE : JNI_FALSE;
+    }
+#else
+    (void) encodingActive;
+    return JNI_FALSE;
+#endif
 }

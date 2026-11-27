@@ -8,6 +8,8 @@ Bu doküman, **`Cres246/FFmpeg-compressor-editor`** projesini devralan yapay zek
 
 Bir göreve başlamadan önce aşağıdaki indeksi kontrol et. YALNIZCA görevin doğrudan dokunduğu alan(lar)ın ilgili dosyasını baştan sona oku; görevinle ilgisiz dosyaları okuyarak gereksiz bağlam/kota tüketme.
 
+Her ara adımda doküman güncelleme; yalnızca özellik/bugfix tamamlanıp onaylandığında, sadece ilgili tek docs/*.md dosyasına kısa ve nokta atışı ekleme yap, diğer dokümanları okuma
+
 ## Dokümantasyon İndeksi
 
 | Dosya Referansı | Ne Zaman Okunması Zorunlu? (Tetikleyici / Klasör / Anahtar Kelimeler) | İçerdiği Başlıklar |
