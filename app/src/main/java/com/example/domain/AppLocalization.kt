@@ -194,6 +194,8 @@ interface AppStrings {
     val modeVideoAndAudioSub: String
     val modeCustomCmdTitle: String
     val modeCustomCmdSub: String
+    val modeEmbedSubtitlesTitle: String
+    val modeEmbedSubtitlesSub: String
     val badgeLossless: String
     val badgeLossy: String
 
@@ -582,6 +584,8 @@ object TurkishStrings : AppStrings {
     override val modeVideoAndAudioSub = "CRF 16/20 · 8/10-bit · AAC"
     override val modeCustomCmdTitle = "Özel FFmpeg Komutu"
     override val modeCustomCmdSub = "Tam komut yapıştır (&& zinciri dahil)"
+    override val modeEmbedSubtitlesTitle = "Altyazı Göm"
+    override val modeEmbedSubtitlesSub = "Hardsub · Softsub"
     override val badgeLossless = "Kayıpsız"
     override val badgeLossy = "Kayıplı"
 
@@ -809,8 +813,8 @@ object TurkishStrings : AppStrings {
     override val bannerExtractAudio: (String) -> String = { fmt -> "Ses Çıkarma · $fmt" }
     override val bannerCustomCmd = "Özel FFmpeg Komutu (Çıktılar otomatik taşınır)"
     override val hintTrimLosslessAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa (ör. Opus/DTS/EAC3) 2. kesim modunu (Görüntü Kayıpsız + Ses AAC Değiştir) seçin."
-    override val hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa 10 · Görüntüyü + Sesi Dönüştür seçeneğini kullanın."
-    override val hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa 08 · Sadece Sesi Dönüştür veya 10 · Görüntüyü + Sesi Dönüştür seçeneğini deneyin."
+    override val hintVideoOnlyAudio = "İpucu: Ses kodeği MP4 kutusuna uymuyorsa Görüntüyü + Sesi Dönüştür seçeneğini kullanın."
+    override val hintRemuxCompat = "İpucu: Ses veya video kodeği MP4 kabıyla uyumsuzsa Sadece Sesi Dönüştür veya Görüntüyü + Sesi Dönüştür seçeneğini deneyin."
     override val errSafReadFailed = "Dosya okuma erişimi alınamadı (SAF)"
     override val errUnknown = "Bilinmeyen hata"
     override val errMediaStoreInsertFailed = "MediaStore kaydı oluşturulamadı"
@@ -1024,6 +1028,8 @@ object EnglishStrings : AppStrings {
     override val modeVideoAndAudioSub = "CRF 16/20 · 8/10-bit · AAC"
     override val modeCustomCmdTitle = "Custom FFmpeg Command"
     override val modeCustomCmdSub = "Paste full CLI command (supports && chains)"
+    override val modeEmbedSubtitlesTitle = "Embed Subtitles"
+    override val modeEmbedSubtitlesSub = "Hardsub · Softsub"
     override val badgeLossless = "Lossless"
     override val badgeLossy = "Lossy"
 
@@ -1253,8 +1259,8 @@ object EnglishStrings : AppStrings {
     override val bannerExtractAudio: (String) -> String = { fmt -> "Extract Audio · $fmt" }
     override val bannerCustomCmd = "Custom FFmpeg Command (Outputs saved automatically)"
     override val hintTrimLosslessAudio = "Tip: If the audio codec isn't MP4-compatible (e.g., Opus/DTS/EAC3), select trim mode 2 (Lossless Video + Convert Audio to AAC)."
-    override val hintVideoOnlyAudio = "Tip: If the audio codec isn't MP4-compatible, use 10 · Re-encode Video + Audio instead."
-    override val hintRemuxCompat = "Tip: If the video or audio codec is incompatible with MP4, try 08 · Re-encode Audio Only or 10 · Re-encode Video + Audio."
+    override val hintVideoOnlyAudio = "Tip: If the audio codec isn't MP4-compatible, use Re-encode Video + Audio instead."
+    override val hintRemuxCompat = "Tip: If the video or audio codec is incompatible with MP4, try Re-encode Audio Only or Re-encode Video + Audio."
     override val errSafReadFailed = "Unable to open file for reading (SAF)"
     override val errUnknown = "Unknown error"
     override val errMediaStoreInsertFailed = "Could not create MediaStore entry"

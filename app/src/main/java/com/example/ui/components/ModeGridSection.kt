@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.HorizontalDivider
@@ -150,8 +151,9 @@ fun ModeCategoryHeader(
 }
 
 /**
- * Group 1: First 3 presets (Discord, WhatsApp, Gmail) as side-by-side vertical cards,
- * with a wide full-width horizontal card for Özel Boyut / Custom Size right underneath.
+ * Group 1: All 4 target-size modes (Discord, WhatsApp, Gmail, Özel Boyut / Custom Size)
+ * placed side-by-side in a single balanced row with identical height, spacing, icon framing,
+ * and visual styling.
  */
 @Composable
 fun TargetSizeModeRow(
@@ -161,181 +163,67 @@ fun TargetSizeModeRow(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
-    val presetModes = modes.filter { it != ProcessingMode.CUSTOM_SIZE }
-    val customSizeMode = modes.firstOrNull { it == ProcessingMode.CUSTOM_SIZE }
 
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (presetModes.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                presetModes.forEach { mode ->
-                    val available = mediaInfo != null &&
-                        (!mode.requiresAudio || mediaInfo.hasAudio) &&
-                        (!mode.requiresVideo || mediaInfo.hasVideo)
-                    val iconColor = MaterialTheme.colorScheme.primary
+    if (modes.isNotEmpty()) {
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            modes.forEach { mode ->
+                val available = mediaInfo != null &&
+                    (!mode.requiresAudio || mediaInfo.hasAudio) &&
+                    (!mode.requiresVideo || mediaInfo.hasVideo)
+                val iconColor = MaterialTheme.colorScheme.primary
 
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .alpha(if (available) 1f else 0.84f)
-                            .clip(MaterialTheme.shapes.medium)
-                            .clickable { onSelectMode(mode) }
-                            .testTag("mode_card_${mode.number}"),
-                        shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
-                        tonalElevation = 0.dp
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                ModeGlyphIcon(
-                                    mode = mode,
-                                    contentDescription = mode.localizedTitle(strings),
-                                    tint = iconColor,
-                                    size = 19.dp
-                                )
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = mode.localizedShortTitle(strings),
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
-                                text = mode.localizedShortSubtitle(strings),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (customSizeMode != null) {
-            val available = mediaInfo != null &&
-                (!customSizeMode.requiresAudio || mediaInfo.hasAudio) &&
-                (!customSizeMode.requiresVideo || mediaInfo.hasVideo)
-            val iconColor = MaterialTheme.colorScheme.primary
-
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .alpha(if (available) 1f else 0.84f)
-                    .clip(MaterialTheme.shapes.small)
-                    .clickable { onSelectMode(customSizeMode) }
-                    .testTag("mode_card_${customSizeMode.number}"),
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
-                tonalElevation = 0.dp
-            ) {
-                Box(
+                Surface(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .padding(horizontal = 11.dp, vertical = 7.dp)
+                        .weight(1f)
+                        .alpha(if (available) 1f else 0.84f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onSelectMode(mode) }
+                        .testTag("mode_card_${mode.number}"),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
+                    tonalElevation = 0.dp
                 ) {
-                    // Dead-center icon aligned vertically with the middle preset card above
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = modeIcon(customSizeMode),
-                            contentDescription = customSizeMode.localizedTitle(strings),
-                            tint = iconColor,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .align(Alignment.Center),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 4.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Left wing: Title gracefully right-aligned toward the centered icon
                         Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 25.dp),
-                            contentAlignment = Alignment.CenterEnd
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = customSizeMode.localizedTitle(strings),
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontFamily = SpaceGroteskFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    letterSpacing = (-0.1).sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.End
+                            ModeGlyphIcon(
+                                mode = mode,
+                                contentDescription = mode.localizedTitle(strings),
+                                tint = iconColor,
+                                size = 19.dp
                             )
                         }
-
-                        // Right wing: Symmetrical MB pill beside center icon + right-edge chevron
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(start = 25.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(7.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-                                border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
-                            ) {
-                                Text(
-                                    text = customSizeMode.localizedShortSubtitle(strings),
-                                    style = MonoLabelStyle.copy(
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        letterSpacing = 0.2.sp
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        Spacer(Modifier.height(6.dp))
+                        AutoFitSingleLineText(
+                            text = mode.localizedShortTitle(strings),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            minFontSize = 10.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        AutoFitSingleLineText(
+                            text = mode.localizedShortSubtitle(strings),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            minFontSize = 9.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -452,6 +340,10 @@ fun OtherModesList(
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         modes.forEach { mode ->
+            if (mode == ProcessingMode.CUSTOM_COMMAND) {
+                EmbedSubtitlesPlaceholderRow(mediaInfo = mediaInfo)
+            }
+
             val missingAudio = mediaInfo != null && mode.requiresAudio && !mediaInfo.hasAudio
             val missingVideo = mediaInfo != null && mode.requiresVideo && !mediaInfo.hasVideo
             val available = mediaInfo != null && !missingAudio && !missingVideo
@@ -520,6 +412,85 @@ fun OtherModesList(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Planned placeholder row positioned directly above Custom FFmpeg Command ("Özel FFmpeg Komutu"),
+ * keeping identical row height, icon framing, alignment, and right chevron while the
+ * Embed Subtitles (Hardsub / Softsub) workflow is being planned.
+ */
+@Composable
+private fun EmbedSubtitlesPlaceholderRow(
+    mediaInfo: MediaInfo?
+) {
+    val strings = LocalAppStrings.current
+    val available = mediaInfo != null && mediaInfo.hasVideo
+    val iconColor = MaterialTheme.colorScheme.primary
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (available) 1f else 0.84f)
+            .clip(MaterialTheme.shapes.small)
+            .testTag("mode_card_embed_subtitles_placeholder"),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 11.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Subtitles,
+                    contentDescription = strings.modeEmbedSubtitlesTitle,
+                    tint = iconColor,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(
+                    text = strings.modeEmbedSubtitlesTitle,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = strings.modeEmbedSubtitlesSub,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 10.5.sp,
+                        lineHeight = 13.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }

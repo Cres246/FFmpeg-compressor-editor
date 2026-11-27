@@ -330,7 +330,7 @@ class EncodingForegroundService : Service() {
 
         fun startEncoding(context: Context, media: MediaInfo, config: ModeConfigState) {
             val s = AppLanguageController.currentStrings()
-            val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(s)}"
+            val modeTitle = config.mode.localizedTitle(s)
             val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
             val summaryBanner = buildSummaryBanner(media, config, s)
             val presetLabel = resolvePresetDisplayLabel(config)
@@ -378,7 +378,7 @@ class EncodingForegroundService : Service() {
 
         fun startTurboEncoding(context: Context, media: MediaInfo, config: ModeConfigState) {
             val s = AppLanguageController.currentStrings()
-            val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(s)}"
+            val modeTitle = config.mode.localizedTitle(s)
             val baseOut = FfmpegMath.computeOutputFileName(media, config, s)
             val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
             val unifiedSpecs = buildTurboUnifiedSpecs(media, config, s)
@@ -1227,7 +1227,7 @@ class EncodingForegroundService : Service() {
         val collectedLogs = mutableListOf<String>()
         var logsSnapshot: List<String> = emptyList()
         val modeLocalizedTitle = config.mode.localizedTitle(s)
-        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val modeTitle = modeLocalizedTitle
         val expectedOutputName = FfmpegMath.computeOutputFileName(media, config, s)
         val summaryBanner = buildSummaryBanner(media, config, s)
         val videoSpecsSummary: String? = null
@@ -1735,7 +1735,7 @@ class EncodingForegroundService : Service() {
         val collectedLogs = mutableListOf<String>()
         var logsSnapshot: List<String> = emptyList()
         val modeLocalizedTitle = config.mode.localizedTitle(s)
-        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val modeTitle = modeLocalizedTitle
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -2014,7 +2014,7 @@ class EncodingForegroundService : Service() {
         val collectedLogs = mutableListOf<String>()
         var logsSnapshot: List<String> = emptyList()
         val modeLocalizedTitle = config.mode.localizedTitle(s)
-        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val modeTitle = modeLocalizedTitle
         val safeAb = audioBitrateKbps.coerceIn(32, 768)
 
         fun appendLog(line: String) {
@@ -2283,7 +2283,7 @@ class EncodingForegroundService : Service() {
         var logsSnapshot: List<String> = emptyList()
         val summaryBanner = buildSummaryBanner(media, prepConfig, s)
         val presetLabel = resolvePresetDisplayLabel(prepConfig)
-        val targetModeTitle = "${turboTargetConfig.mode.formattedNumber} · ${turboTargetConfig.mode.localizedTitle(s)}"
+        val targetModeTitle = turboTargetConfig.mode.localizedTitle(s)
 
         fun appendLog(line: String) {
             synchronized(collectedLogs) {
@@ -2608,7 +2608,7 @@ class EncodingForegroundService : Service() {
         cpuBooster.stop()
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
         val curS = AppLanguageController.currentStrings()
-        val modeTitle = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(curS)}"
+        val modeTitle = config.mode.localizedTitle(curS)
         val baseOut = FfmpegMath.computeOutputFileName(media, config, curS)
         val turboOut = Media3TurboEngine.buildTurboOutputFileName(baseOut)
         val turboUnifiedSpecs = buildTurboUnifiedSpecs(media, config, curS)
@@ -2784,7 +2784,7 @@ class EncodingForegroundService : Service() {
         val s = AppLanguageController.currentStrings()
         val workDir = FfmpegEngine.createWorkDir(applicationContext)
         val modeLocalizedTitle = config.mode.localizedTitle(s)
-        val modeTitle = "${config.mode.formattedNumber} · $modeLocalizedTitle"
+        val modeTitle = modeLocalizedTitle
         val baseOutputName = FfmpegMath.computeOutputFileName(media, config, s)
         val turboOutputName = Media3TurboEngine.buildTurboOutputFileName(baseOutputName)
         var liveTurboSpecs = buildTurboUnifiedSpecs(media, config, s)

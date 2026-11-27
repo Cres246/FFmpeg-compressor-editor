@@ -161,7 +161,7 @@ fun ModeConfigScreen(
                 title = {
                     Column {
                         Text(
-                            text = "${config.mode.formattedNumber} · ${config.mode.localizedTitle(strings)}",
+                            text = config.mode.localizedTitle(strings),
                             style = MaterialTheme.typography.titleLarge
                         )
                         Text(
