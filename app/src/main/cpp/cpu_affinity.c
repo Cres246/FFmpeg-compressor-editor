@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
-#include <malloc.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
@@ -11,12 +11,22 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* Android Bionic / Scudo mallopt extensions (defined in <malloc.h> on API 29+/31+) */
+/* Android Bionic / Scudo mallopt extensions (API 26+ symbol resolved via dlsym for minSdk 24) */
 #ifndef M_DECAY_TIME
 #define M_DECAY_TIME (-100)
 #endif
 #ifndef M_PURGE
 #define M_PURGE (-101)
+#endif
+
+#if defined(__ANDROID__)
+typedef int (*bionic_mallopt_fn)(int, int);
+static pthread_once_t g_mallopt_once = PTHREAD_ONCE_INIT;
+static bionic_mallopt_fn g_mallopt_fn = NULL;
+
+static void resolve_mallopt_once(void) {
+    g_mallopt_fn = (bionic_mallopt_fn) dlsym(RTLD_DEFAULT, "mallopt");
+}
 #endif
 
 #if defined(__aarch64__)
@@ -332,12 +342,16 @@ Java_com_example_service_NativeCpuAffinity_nativeSetAllocatorEncodingMode(
     (void) env;
     (void) clazz;
 #if defined(__ANDROID__)
+    pthread_once(&g_mallopt_once, resolve_mallopt_once);
+    if (g_mallopt_fn == NULL) {
+        return JNI_FALSE;
+    }
     if (encodingActive == JNI_TRUE) {
-        int ok = mallopt(M_DECAY_TIME, 1);
+        int ok = g_mallopt_fn(M_DECAY_TIME, 1);
         return ok == 1 ? JNI_TRUE : JNI_FALSE;
     } else {
-        int okDecay = mallopt(M_DECAY_TIME, 0);
-        int okPurge = mallopt(M_PURGE, 0);
+        int okDecay = g_mallopt_fn(M_DECAY_TIME, 0);
+        int okPurge = g_mallopt_fn(M_PURGE, 0);
         return (okDecay == 1 || okPurge == 1) ? JNI_TRUE : JNI_FALSE;
     }
 #else
