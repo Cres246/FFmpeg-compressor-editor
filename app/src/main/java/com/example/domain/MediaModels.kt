@@ -415,7 +415,8 @@ sealed interface EncodingState {
         val isHardwareTurbo: Boolean = false,
         val canSwitchToTurbo: Boolean = false,
         val isTurboPreRemux: Boolean = false,
-        val elapsedSec: Double = 0.0
+        val elapsedSec: Double = 0.0,
+        val activePerfStamps: List<String> = emptyList()
     ) : EncodingState
 
     data class Success(

@@ -350,6 +350,7 @@ interface AppStrings {
     val failedErrorTitle: String
     val logConsoleHeader: String
     val logConsoleEmpty: String
+    val activePerfStampTitle: String
 
     // Validation & ViewModel errors
     val errAnalyzeFailed: (detail: String) -> String
@@ -373,6 +374,7 @@ interface AppStrings {
     val notifChannelDesc: String
     val notifPreparing: String
     val logTagStarted: String
+    val logTagActive: String
     val logTagStep: (passNum: Int, totalPasses: Int) -> String
     val logTagError: String
     val logTagCompleted: String
@@ -758,6 +760,7 @@ object TurkishStrings : AppStrings {
     override val failedErrorTitle = "Hata Oluştu"
     override val logConsoleHeader = "Durum ve Hata Günlüğü"
     override val logConsoleEmpty = "Başlatıldı, aşama değişiklikleri ve varsa hatalar burada gösterilir."
+    override val activePerfStampTitle = "Aktif Motor Damgası"
 
     override val errAnalyzeFailed: (String) -> String = { detail -> "Dosya analiz edilemedi: $detail" }
     override val errSelectMediaFirst = "Önce yukarıdan bir video veya dosya seçin."
@@ -779,6 +782,7 @@ object TurkishStrings : AppStrings {
     override val notifChannelDesc = "FFmpeg dönüştürme ve kesim ilerleme bildirimi"
     override val notifPreparing = "Hazırlanıyor..."
     override val logTagStarted = "[Başlatıldı]"
+    override val logTagActive = "[Aktif]"
     override val logTagStep: (Int, Int) -> String = { p, t -> "[Aşama $p/$t]" }
     override val logTagError = "[Hata]"
     override val logTagCompleted = "[Tamamlandı]"
@@ -1198,6 +1202,7 @@ object EnglishStrings : AppStrings {
     override val failedErrorTitle = "Encoding Failed"
     override val logConsoleHeader = "Status & Error Log"
     override val logConsoleEmpty = "Startup status, pass transitions, and any errors will appear here."
+    override val activePerfStampTitle = "Active Engine Seal"
 
     override val errAnalyzeFailed: (String) -> String = { detail -> "Failed to analyze file: $detail" }
     override val errSelectMediaFirst = "Select a video or media file above first."
@@ -1219,6 +1224,7 @@ object EnglishStrings : AppStrings {
     override val notifChannelDesc = "FFmpeg transcoding and trimming progress notification"
     override val notifPreparing = "Preparing..."
     override val logTagStarted = "[Started]"
+    override val logTagActive = "[Active]"
     override val logTagStep: (Int, Int) -> String = { p, t -> "[Step $p/$t]" }
     override val logTagError = "[Error]"
     override val logTagCompleted = "[Completed]"

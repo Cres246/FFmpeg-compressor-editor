@@ -25,6 +25,7 @@ import com.example.data.MediaStoreSaver
 import com.example.data.PreferencesRepository
 import com.example.data.FfmpegStepResult
 import com.example.data.TurboBitratePlan
+import com.example.domain.ActivePerformanceStamps
 import com.example.domain.AppLanguageController
 import com.example.domain.AppStrings
 import com.example.domain.CompletedOutput
@@ -1187,6 +1188,33 @@ class EncodingForegroundService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Resolves active performance optimizations ONCE before an FFmpeg job starts (zero polling
+     * during encoding). Probes only the encoder actually used by this job (cached per process),
+     * and omits any feature that is not genuinely active for this specific workload.
+     */
+    private suspend fun resolveOneShotActivePerfStamps(
+        workload: ActivePerformanceStamps.SoftwareWorkloadKind,
+        usesSafRead: Boolean
+    ): List<String> {
+        val cpuSimd = CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask)
+        val encoderSimd = when (workload) {
+            ActivePerformanceStamps.SoftwareWorkloadKind.VIDEO_X264 ->
+                FfmpegEngine.probeActiveEncoderSimd(probeX264 = true, probeX265 = false)
+            ActivePerformanceStamps.SoftwareWorkloadKind.VIDEO_X265 ->
+                FfmpegEngine.probeActiveEncoderSimd(probeX264 = false, probeX265 = true)
+            else -> null
+        }
+        return ActivePerformanceStamps.resolve(
+            workload = workload,
+            customSimdBuild = BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG,
+            cpuSimd = cpuSimd,
+            encoderSimd = encoderSimd,
+            scudoLazyDecayActive = cpuBooster.isScudoLazyDecayActive,
+            usesSafRead = usesSafRead
+        )
+    }
+
     private suspend fun runEncodingPipeline(
         runId: Long,
         startId: Int,
@@ -1217,21 +1245,7 @@ class EncodingForegroundService : Service() {
 
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
-        val simdSummary = CpuSimdProfile.detect(NativeCpuAffinity::getArm64SimdMask).summaryLabel()
-        val runtimeFfmpegVer = FfmpegEngine.getRuntimeFfmpegVersion()
-        val versionSuffix = runtimeFfmpegVer?.let { " (v$it)" }.orEmpty()
         appendLog("${s.logTagStarted} $modeTitle — $summaryBanner")
-        appendLog("[FFmpeg] ${BuildConfig.FFMPEG_ENGINE_VARIANT}$versionSuffix · CPU: $simdSummary")
-        if (config.mode != ProcessingMode.REMUX_FORMAT &&
-            config.mode != ProcessingMode.EXTRACT_AUDIO &&
-            config.mode != ProcessingMode.AUDIO_ONLY_AAC &&
-            config.mode != ProcessingMode.CUSTOM_COMMAND
-        ) {
-            val encoderSimdLine = FfmpegEngine.probeActiveEncoderSimd().formatCompactLine()
-            if (encoderSimdLine != null) {
-                appendLog("[SIMD] $encoderSimdLine")
-            }
-        }
 
         try {
             if (config.mode == ProcessingMode.CUSTOM_COMMAND) {
@@ -1248,6 +1262,12 @@ class EncodingForegroundService : Service() {
                 )
                 return
             }
+
+            val activePerfStamps = resolveOneShotActivePerfStamps(
+                workload = ActivePerformanceStamps.classifyStandardWorkload(media, config),
+                usesSafRead = media.uri.scheme.equals("content", ignoreCase = true)
+            )
+            ActivePerformanceStamps.formatTerminalLine(s.logTagActive, activePerfStamps)?.let(::appendLog)
 
             val effectiveConfig = resolveAutoTrimKeyframesIfNeeded(media, config)
             if (!EncodingJobController.isRunActive(runId)) return
@@ -1289,7 +1309,8 @@ class EncodingForegroundService : Service() {
                         summaryBanner = summaryBanner,
                         videoSpecsSummary = videoSpecsSummary,
                         presetLabel = presetLabel,
-                        canSwitchToTurbo = canSwitchToTurbo
+                        canSwitchToTurbo = canSwitchToTurbo,
+                        activePerfStamps = activePerfStamps
                     )
                 )
                 updateNotificationThrottled(
@@ -1351,7 +1372,8 @@ class EncodingForegroundService : Service() {
                                     summaryBanner = summaryBanner,
                                     videoSpecsSummary = videoSpecsSummary,
                                     presetLabel = presetLabel,
-                                    canSwitchToTurbo = canSwitchToTurbo
+                                    canSwitchToTurbo = canSwitchToTurbo,
+                                    activePerfStamps = activePerfStamps
                                 )
                             )
                         }
@@ -1727,6 +1749,11 @@ class EncodingForegroundService : Service() {
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
         appendLog("${s.logTagStarted} ${s.turboRemuxModeTitle} — ${s.bannerRemux}")
+        val remuxActiveStamps = resolveOneShotActivePerfStamps(
+            workload = ActivePerformanceStamps.SoftwareWorkloadKind.STREAM_COPY,
+            usesSafRead = media.uri.scheme.equals("content", ignoreCase = true)
+        )
+        ActivePerformanceStamps.formatTerminalLine(s.logTagActive, remuxActiveStamps)?.let(::appendLog)
         var handedOffToTurbo = false
 
         try {
@@ -1805,7 +1832,8 @@ class EncodingForegroundService : Service() {
                                     presetLabel = null,
                                     isHardwareTurbo = false,
                                     canSwitchToTurbo = false,
-                                    isTurboPreRemux = true
+                                    isTurboPreRemux = true,
+                                    activePerfStamps = remuxActiveStamps
                                 )
                             )
                         }
@@ -2001,6 +2029,11 @@ class EncodingForegroundService : Service() {
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
         appendLog("${s.logTagStarted} ${s.turboAudioConvertModeTitle} — ${s.bannerAudioOnly(safeAb)}")
+        val audioPrepActiveStamps = resolveOneShotActivePerfStamps(
+            workload = ActivePerformanceStamps.SoftwareWorkloadKind.AUDIO_TRANSCODE,
+            usesSafRead = media.uri.scheme.equals("content", ignoreCase = true)
+        )
+        ActivePerformanceStamps.formatTerminalLine(s.logTagActive, audioPrepActiveStamps)?.let(::appendLog)
         var handedOffToTurbo = false
 
         try {
@@ -2093,7 +2126,8 @@ class EncodingForegroundService : Service() {
                                 presetLabel = null,
                                 isHardwareTurbo = false,
                                 canSwitchToTurbo = false,
-                                isTurboPreRemux = true
+                                isTurboPreRemux = true,
+                                activePerfStamps = audioPrepActiveStamps
                             )
                         )
                     }
@@ -2263,6 +2297,11 @@ class EncodingForegroundService : Service() {
         fun currentLogs(): List<String> = synchronized(collectedLogs) { logsSnapshot }
 
         appendLog("${s.logTagStarted} ${resolvePrepTitle(s)} — $summaryBanner")
+        val prepActiveStamps = resolveOneShotActivePerfStamps(
+            workload = ActivePerformanceStamps.classifyStandardWorkload(media, prepConfig),
+            usesSafRead = media.uri.scheme.equals("content", ignoreCase = true)
+        )
+        ActivePerformanceStamps.formatTerminalLine(s.logTagActive, prepActiveStamps)?.let(::appendLog)
         var handedOffToTurbo = false
 
         try {
@@ -2357,7 +2396,8 @@ class EncodingForegroundService : Service() {
                                     presetLabel = presetLabel,
                                     isHardwareTurbo = false,
                                     canSwitchToTurbo = false,
-                                    isTurboPreRemux = true
+                                    isTurboPreRemux = true,
+                                    activePerfStamps = prepActiveStamps
                                 )
                             )
                         }
@@ -3296,6 +3336,13 @@ class EncodingForegroundService : Service() {
         val displayOutName = plan.primaryFinalOutputName
             ?: if (plan.isProbeOnly) s.customCmdProbeOutputPlaceholder else s.customCmdOutputLabel
         val collectedCommandOutputs = mutableListOf<String>()
+        val customUsesSafRead = media.uri.scheme.equals("content", ignoreCase = true) &&
+            plan.steps.any { step -> step.args.any { it == inputPlaceholder } }
+        val customActivePerfStamps = resolveOneShotActivePerfStamps(
+            workload = ActivePerformanceStamps.classifyCustomCommandWorkload(plan.steps),
+            usesSafRead = customUsesSafRead
+        )
+        ActivePerformanceStamps.formatTerminalLine(s.logTagActive, customActivePerfStamps)?.let(appendLog)
 
         for ((idx, step) in plan.steps.withIndex()) {
             if (!EncodingJobController.isRunActive(runId)) return
@@ -3333,7 +3380,8 @@ class EncodingForegroundService : Service() {
                     speed = "...",
                     sizeKb = 0L,
                     logs = currentLogs(),
-                    summaryBanner = summaryBanner
+                    summaryBanner = summaryBanner,
+                    activePerfStamps = customActivePerfStamps
                 )
             )
             updateNotificationThrottled(
@@ -3394,7 +3442,8 @@ class EncodingForegroundService : Service() {
                                     speed = spd,
                                     sizeKb = kb,
                                     logs = currentLogs(),
-                                    summaryBanner = summaryBanner
+                                    summaryBanner = summaryBanner,
+                                    activePerfStamps = customActivePerfStamps
                                 )
                             )
                         }

@@ -415,3 +415,228 @@ data class ActiveEncoderSimdReport(
     }
 }
 
+/**
+ * Zero-polling, one-shot resolver for active runtime performance optimizations on a given
+ * FFmpeg job. Computes the exact immutable stamp list ONCE at job startup (never polled or
+ * re-checked while encoding runs) and only includes features that are genuinely active for
+ * that specific workload.
+ */
+object ActivePerformanceStamps {
+
+    enum class SoftwareWorkloadKind {
+        VIDEO_X264,
+        VIDEO_X265,
+        VIDEO_OTHER_TRANSCODE,
+        AUDIO_TRANSCODE,
+        STREAM_COPY,
+        PROBE_ONLY
+    }
+
+    fun classifyStandardWorkload(
+        media: MediaInfo,
+        config: ModeConfigState
+    ): SoftwareWorkloadKind = when (config.mode) {
+        ProcessingMode.CUSTOM_SIZE,
+        ProcessingMode.DISCORD_20MB,
+        ProcessingMode.WHATSAPP_100MB,
+        ProcessingMode.GMAIL_25MB,
+        ProcessingMode.VIDEO_ONLY_CRF,
+        ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
+            if (config.codec == VideoCodecOption.H265) {
+                SoftwareWorkloadKind.VIDEO_X265
+            } else {
+                SoftwareWorkloadKind.VIDEO_X264
+            }
+        }
+        ProcessingMode.TRIM_VIDEO -> when (config.trimSubMode) {
+            TrimSubMode.FULL_LOSSLESS -> SoftwareWorkloadKind.STREAM_COPY
+            TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
+                if (media.hasAudio) SoftwareWorkloadKind.AUDIO_TRANSCODE else SoftwareWorkloadKind.STREAM_COPY
+            }
+            TrimSubMode.CRF_AUDIO_COPY,
+            TrimSubMode.CRF_AUDIO_AAC -> {
+                if (config.codec == VideoCodecOption.H265) {
+                    SoftwareWorkloadKind.VIDEO_X265
+                } else {
+                    SoftwareWorkloadKind.VIDEO_X264
+                }
+            }
+        }
+        ProcessingMode.REMUX_FORMAT -> SoftwareWorkloadKind.STREAM_COPY
+        ProcessingMode.AUDIO_ONLY_AAC -> SoftwareWorkloadKind.AUDIO_TRANSCODE
+        ProcessingMode.EXTRACT_AUDIO -> when (config.audioExtractFormat) {
+            AudioExtractFormat.ORIGINAL -> SoftwareWorkloadKind.STREAM_COPY
+            AudioExtractFormat.AAC -> {
+                if (media.audioCodec?.equals("aac", ignoreCase = true) == true) {
+                    SoftwareWorkloadKind.STREAM_COPY
+                } else {
+                    SoftwareWorkloadKind.AUDIO_TRANSCODE
+                }
+            }
+            AudioExtractFormat.MP3 -> {
+                if (media.audioCodec?.equals("mp3", ignoreCase = true) == true) {
+                    SoftwareWorkloadKind.STREAM_COPY
+                } else {
+                    SoftwareWorkloadKind.AUDIO_TRANSCODE
+                }
+            }
+        }
+        ProcessingMode.CUSTOM_COMMAND -> SoftwareWorkloadKind.VIDEO_OTHER_TRANSCODE
+    }
+
+    fun classifyCustomCommandWorkload(steps: List<CustomCommandStep>): SoftwareWorkloadKind {
+        val ffmpegSteps = steps.filter { it.tool == CustomCommandTool.FFMPEG }
+        if (ffmpegSteps.isEmpty()) return SoftwareWorkloadKind.PROBE_ONLY
+
+        var usesX265 = false
+        var usesX264 = false
+        var anyNonCopyVideo = false
+        var anyAudioEncode = false
+
+        for (step in ffmpegSteps) {
+            val args = step.args
+            var vCodec: String? = null
+            var aCodec: String? = null
+            var allCodec: String? = null
+            var hasVn = false
+            var hasAn = false
+            var hasVideoFilter = false
+
+            var i = 0
+            while (i < args.size) {
+                val token = args[i].lowercase()
+                val next = args.getOrNull(i + 1)?.lowercase()
+                when (token) {
+                    "-c", "-codec" -> {
+                        allCodec = next
+                        i += 2
+                        continue
+                    }
+                    "-c:v", "-vcodec", "-codec:v" -> {
+                        vCodec = next
+                        i += 2
+                        continue
+                    }
+                    "-c:a", "-acodec", "-codec:a" -> {
+                        aCodec = next
+                        i += 2
+                        continue
+                    }
+                    "-vn" -> hasVn = true
+                    "-an" -> hasAn = true
+                    "-vf", "-filter:v", "-filter_complex" -> hasVideoFilter = true
+                }
+                i++
+            }
+
+            val effV = vCodec ?: allCodec
+            val effA = aCodec ?: allCodec
+            when {
+                effV == "libx265" || effV == "hevc" -> usesX265 = true
+                effV == "libx264" || effV == "h264" -> usesX264 = true
+                !hasVn && (effV != "copy" || hasVideoFilter) -> anyNonCopyVideo = true
+            }
+            if (!hasAn && effA != null && effA != "copy") {
+                anyAudioEncode = true
+            }
+        }
+
+        return when {
+            usesX265 -> SoftwareWorkloadKind.VIDEO_X265
+            usesX264 -> SoftwareWorkloadKind.VIDEO_X264
+            anyNonCopyVideo -> SoftwareWorkloadKind.VIDEO_OTHER_TRANSCODE
+            anyAudioEncode -> SoftwareWorkloadKind.AUDIO_TRANSCODE
+            else -> SoftwareWorkloadKind.STREAM_COPY
+        }
+    }
+
+    /**
+     * Extracts clean canonical active SIMD extension names from raw `libx264`/`libx265`
+     * `using cpu capabilities:` output (e.g., `"ARMv8 NEON DotProd I8MM"` or
+     * `"NEON Neon_DotProd Neon_I8MM"` -> `["NEON", "DotProd", "I8MM"]`).
+     */
+    fun extractSimdTokens(rawCaps: String?): List<String> {
+        if (rawCaps.isNullOrBlank()) return emptyList()
+        val normalized = rawCaps.lowercase()
+        val tokens = normalized.split(Regex("""[\s,;/]+""")).filter { it.isNotEmpty() }
+        val hasNeon = tokens.any { it == "neon" || it == "asimd" || it.startsWith("neon_") }
+        val hasDotProd = tokens.any { it == "dotprod" || it == "neon_dotprod" || it == "asimddp" }
+        val hasI8mm = tokens.any { it == "i8mm" || it == "neon_i8mm" }
+        val hasSve2 = tokens.any { it == "sve2" }
+        val hasSve = tokens.any { it == "sve" }
+
+        return buildList(4) {
+            if (hasNeon) add("NEON")
+            if (hasDotProd) add("DotProd")
+            if (hasI8mm) add("I8MM")
+            if (hasSve2) add("SVE2") else if (hasSve) add("SVE")
+        }
+    }
+
+    fun resolve(
+        workload: SoftwareWorkloadKind,
+        customSimdBuild: Boolean,
+        cpuSimd: CpuSimdProfile,
+        encoderSimd: ActiveEncoderSimdReport?,
+        scudoLazyDecayActive: Boolean,
+        usesSafRead: Boolean
+    ): List<String> = buildList(8) {
+        when (workload) {
+            SoftwareWorkloadKind.VIDEO_X264 -> {
+                val verified = extractSimdTokens(encoderSimd?.x264Caps)
+                if (verified.isNotEmpty()) {
+                    addAll(verified)
+                } else if (customSimdBuild) {
+                    if (cpuSimd.hasNeon) add("NEON")
+                    if (cpuSimd.hasDotProd) add("DotProd")
+                    if (cpuSimd.hasI8mm) add("I8MM")
+                }
+            }
+            SoftwareWorkloadKind.VIDEO_X265 -> {
+                val verified = extractSimdTokens(encoderSimd?.x265Caps)
+                if (verified.isNotEmpty()) {
+                    addAll(verified)
+                } else if (customSimdBuild) {
+                    if (cpuSimd.hasNeon) add("NEON")
+                    if (cpuSimd.hasDotProd) add("DotProd")
+                    if (cpuSimd.hasI8mm) add("I8MM")
+                }
+            }
+            SoftwareWorkloadKind.VIDEO_OTHER_TRANSCODE -> {
+                if (cpuSimd.hasNeon) add("NEON")
+                if (customSimdBuild && cpuSimd.hasDotProd) add("DotProd")
+                if (customSimdBuild && cpuSimd.hasI8mm) add("I8MM")
+            }
+            SoftwareWorkloadKind.AUDIO_TRANSCODE -> {
+                if (cpuSimd.hasNeon) add("NEON")
+            }
+            SoftwareWorkloadKind.STREAM_COPY,
+            SoftwareWorkloadKind.PROBE_ONLY -> {
+                // No codec SIMD active for pure stream copy / ffprobe metadata read
+            }
+        }
+
+        if (customSimdBuild) {
+            add("-O3")
+            add("LTO-O3")
+            add("Zero-PLT")
+        }
+        if (scudoLazyDecayActive && workload != SoftwareWorkloadKind.PROBE_ONLY) {
+            add("Scudo")
+        }
+        if (customSimdBuild && usesSafRead) {
+            add("256K SAF")
+        }
+    }
+
+    /**
+     * Formats a single concise one-shot terminal line with only the active items.
+     * Returns `null` if nothing is active so the terminal stays completely clean.
+     */
+    fun formatTerminalLine(tag: String, stamps: List<String>): String? {
+        if (stamps.isEmpty()) return null
+        return "$tag ${stamps.joinToString(" · ")}"
+    }
+}
+
+

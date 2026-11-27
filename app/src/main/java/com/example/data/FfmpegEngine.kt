@@ -129,6 +129,12 @@ object FfmpegEngine {
     @Volatile
     private var cachedEncoderSimd: ActiveEncoderSimdReport? = null
 
+    @Volatile
+    private var x264SimdProbed: Boolean = false
+
+    @Volatile
+    private var x265SimdProbed: Boolean = false
+
     private val previewFallbackMutex = Mutex()
     private val simdProbeMutex = Mutex()
     private val activeSessionCompletion = AtomicReference<CompletableDeferred<Unit>?>(null)
@@ -151,56 +157,76 @@ object FfmpegEngine {
     fun getCachedActiveEncoderSimd(): ActiveEncoderSimdReport? = cachedEncoderSimd
 
     /**
-     * Runs an ultra-lightweight (~25-45ms total, 1 frame of 128x128 /dev/zero rawvideo) null probe
-     * against both bundled `libx264` and `libx265` to read their REAL runtime `using cpu capabilities:`
-     * lines (verifying whether NEON / DotProd / I8MM actually fire at encode time).
-     * Because `libx265` prints its capabilities directly to POSIX `stderr` (`fprintf(stderr)`)
-     * rather than FFmpeg's `av_log` callback, a non-blocking pipe briefly captures `stderr` during
-     * the 1-frame `libx265` probe. Cached in memory so it executes at most once per process.
+     * Runs an ultra-lightweight (~15-25ms per codec, 1 frame of 128x128 /dev/zero rawvideo) null
+     * probe against only the requested encoder(s) (`libx264` and/or `libx265`) to read their REAL
+     * runtime `using cpu capabilities:` lines (verifying whether NEON / DotProd / I8MM actually
+     * fire at encode time). Cached independently per encoder so each codec is probed at most once
+     * per process and never polled during encoding.
      */
-    suspend fun probeActiveEncoderSimd(): ActiveEncoderSimdReport = withContext(Dispatchers.IO) {
-        cachedEncoderSimd?.let { return@withContext it }
+    suspend fun probeActiveEncoderSimd(
+        probeX264: Boolean = true,
+        probeX265: Boolean = true
+    ): ActiveEncoderSimdReport = withContext(Dispatchers.IO) {
+        val needX264Fast = probeX264 && !x264SimdProbed
+        val needX265Fast = probeX265 && !x265SimdProbed
+        if (!needX264Fast && !needX265Fast) {
+            return@withContext cachedEncoderSimd ?: ActiveEncoderSimdReport()
+        }
         simdProbeMutex.withLock {
-            cachedEncoderSimd?.let { return@withLock it }
+            val needX264 = probeX264 && !x264SimdProbed
+            val needX265 = probeX265 && !x265SimdProbed
+            if (!needX264 && !needX265) {
+                return@withLock cachedEncoderSimd ?: ActiveEncoderSimdReport()
+            }
             ensureSilentLogcat()
-            val x264Caps = runCatching {
-                val session = FFmpegKit.executeWithArguments(
-                    arrayOf(
-                        "-hide_banner", "-loglevel", "info",
-                        "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "128x128", "-r", "1",
-                        "-i", "/dev/zero",
-                        "-frames:v", "1",
-                        "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast",
-                        "-f", "null", "/dev/null"
-                    )
-                )
-                ActiveEncoderSimdReport.parseEncoderCapabilities(session.getAllLogsAsString().orEmpty())
-            }.getOrNull()
+            val prev = cachedEncoderSimd ?: ActiveEncoderSimdReport()
 
-            val x265Caps = runCatching {
-                val capturing = com.example.service.NativeCpuAffinity.beginStderrCapture()
-                var avLogs = ""
-                var stderrOut = ""
-                try {
+            val x264Caps = if (needX264) {
+                runCatching {
                     val session = FFmpegKit.executeWithArguments(
                         arrayOf(
                             "-hide_banner", "-loglevel", "info",
                             "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "128x128", "-r", "1",
                             "-i", "/dev/zero",
                             "-frames:v", "1",
-                            "-c:v", "libx265", "-preset", "ultrafast",
-                            "-x265-params", "log-level=info:pools=1",
+                            "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast",
                             "-f", "null", "/dev/null"
                         )
                     )
-                    avLogs = session.getAllLogsAsString().orEmpty()
-                } finally {
-                    if (capturing) {
-                        stderrOut = com.example.service.NativeCpuAffinity.endStderrCapture()
+                    ActiveEncoderSimdReport.parseEncoderCapabilities(session.getAllLogsAsString().orEmpty())
+                }.getOrNull().also { x264SimdProbed = true }
+            } else {
+                prev.x264Caps
+            }
+
+            val x265Caps = if (needX265) {
+                runCatching {
+                    val capturing = com.example.service.NativeCpuAffinity.beginStderrCapture()
+                    var avLogs = ""
+                    var stderrOut = ""
+                    try {
+                        val session = FFmpegKit.executeWithArguments(
+                            arrayOf(
+                                "-hide_banner", "-loglevel", "info",
+                                "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "128x128", "-r", "1",
+                                "-i", "/dev/zero",
+                                "-frames:v", "1",
+                                "-c:v", "libx265", "-preset", "ultrafast",
+                                "-x265-params", "log-level=info:pools=1",
+                                "-f", "null", "/dev/null"
+                            )
+                        )
+                        avLogs = session.getAllLogsAsString().orEmpty()
+                    } finally {
+                        if (capturing) {
+                            stderrOut = com.example.service.NativeCpuAffinity.endStderrCapture()
+                        }
                     }
-                }
-                ActiveEncoderSimdReport.parseEncoderCapabilities("$avLogs\n$stderrOut")
-            }.getOrNull()
+                    ActiveEncoderSimdReport.parseEncoderCapabilities("$avLogs\n$stderrOut")
+                }.getOrNull().also { x265SimdProbed = true }
+            } else {
+                prev.x265Caps
+            }
 
             val report = ActiveEncoderSimdReport(x264Caps = x264Caps, x265Caps = x265Caps)
             if (x264Caps != null || x265Caps != null) {

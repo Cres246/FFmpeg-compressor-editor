@@ -57,6 +57,10 @@ class CpuPerformanceBooster(private val context: Context) {
     private var earlyDiscoveryJob: Job? = null
     private var allocatorEncodingModeActive: Boolean = false
 
+    @Volatile
+    var isScudoLazyDecayActive: Boolean = false
+        private set
+
     private val commonIgnoredThreadPrefixes = listOf(
         "Binder:", "RenderThread", "HeapTaskDaemon", "ReferenceQueue",
         "FinalizerDaemon", "FinalizerWatch", "Profile Saver", "Jit thread",
@@ -101,8 +105,9 @@ class CpuPerformanceBooster(private val context: Context) {
                 lastRegisteredTids = IntArray(0)
                 runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }
                 if (!allocatorEncodingModeActive) {
-                    NativeCpuAffinity.setAllocatorEncodingMode(true)
-                    allocatorEncodingModeActive = true
+                    val applied = NativeCpuAffinity.setAllocatorEncodingMode(true)
+                    allocatorEncodingModeActive = applied
+                    isScudoLazyDecayActive = applied
                 }
 
                 tickerJob = scope?.launch(Dispatchers.Default) {
@@ -121,7 +126,10 @@ class CpuPerformanceBooster(private val context: Context) {
             // TURBO_MEDIACODEC: release any cached software-FFmpeg pages before MediaCodec init
             if (allocatorEncodingModeActive) {
                 allocatorEncodingModeActive = false
+                isScudoLazyDecayActive = false
                 NativeCpuAffinity.setAllocatorEncodingMode(false)
+            } else {
+                isScudoLazyDecayActive = false
             }
             // Low-latency feeder priority + balanced ADPF hint session
             runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
@@ -196,7 +204,10 @@ class CpuPerformanceBooster(private val context: Context) {
             lastSessionReassertElapsedMs = 0L
             if (allocatorEncodingModeActive) {
                 allocatorEncodingModeActive = false
+                isScudoLazyDecayActive = false
                 NativeCpuAffinity.setAllocatorEncodingMode(false)
+            } else {
+                isScudoLazyDecayActive = false
             }
         }
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) }

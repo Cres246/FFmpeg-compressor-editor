@@ -21,6 +21,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,6 +58,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -99,6 +102,7 @@ import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.service.CpuPerformanceBooster
 import com.example.ui.components.AutoFitSingleLineText
+import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -643,6 +647,14 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            if (state.activePerfStamps.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                ActivePerfStampBox(
+                    stamps = state.activePerfStamps,
+                    title = strings.activePerfStampTitle
+                )
+            }
+
             if (Build.VERSION.SDK_INT >= 36) {
                 val context = LocalContext.current
                 val lifecycleOwner = LocalLifecycleOwner.current
@@ -685,6 +697,101 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                             text = strings.enableMagicCapsuleButton,
                             style = MaterialTheme.typography.labelMedium
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActivePerfStampBox(
+    stamps: List<String>,
+    title: String
+) {
+    val extColors = LocalExtendedColors.current
+    val stampInk = extColors.lossless
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("active_perf_stamp_box"),
+        shape = RoundedCornerShape(12.dp),
+        color = extColors.losslessContainer.copy(alpha = 0.28f),
+        border = BorderStroke(1.dp, stampInk.copy(alpha = 0.34f))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Verified,
+                    contentDescription = null,
+                    tint = stampInk,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontFamily = PlayfairDisplayFontFamily,
+                        fontStyle = FontStyle.Italic,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp,
+                        letterSpacing = 0.35.sp
+                    ),
+                    color = stampInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(0.75.dp)
+                        .background(stampInk.copy(alpha = 0.22f))
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                stamps.forEach { stamp ->
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(0.85.dp, stampInk.copy(alpha = 0.38f))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(stampInk)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = stamp,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 13.sp,
+                                    letterSpacing = 0.5.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
