@@ -360,9 +360,11 @@ run_nix_android_build
 # compiling native libraries (e.g. a future upstream library incompatibility), cleanly retry
 # once with Nix's pinned NDK profile while keeping all -O3 / -Wl,--lto-O3 / SIMD / dav1d patches.
 if (( BUILD_RC != 0 )) && [[ -n "${FFMPEGKIT_OVERRIDE_NDK_ROOT:-}" ]]; then
+  BUILT_FFMPEGKIT_CHECK="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android" \
+    -type f -name 'libffmpegkit.so' 2>/dev/null | head -n 1 || true)"
   BUILT_AVCODEC_CHECK="$(find "${WORK_DIR}/ffmpeg-kit-next/prebuilt" "${WORK_DIR}/ffmpeg-kit-next/android" \
     -type f -name 'libavcodec.so' 2>/dev/null | head -n 1 || true)"
-  if [[ -z "${BUILT_AVCODEC_CHECK}" ]]; then
+  if [[ -z "${BUILT_FFMPEGKIT_CHECK}" ]] || [[ -z "${BUILT_AVCODEC_CHECK}" ]]; then
     echo "==================================================================" >&2
     echo " [warn] Upgraded NDK (${OVERRIDE_NDK_VER}) build failed (rc=${BUILD_RC})." >&2
     if [[ -f "${WORK_DIR}/ffmpeg-kit-next/build.log" ]]; then
@@ -557,8 +559,15 @@ print(f"[verify] Gate 3 passed: all {count} arm64-v8a .so libraries have 16 KB E
 PYEOF
 
 # Gate 4: Extract compiled FFmpeg version + compiler + configuration + SIMD capability telemetry
+if [[ -f "${WORK_DIR}/ffmpeg-kit-next/build.log" ]]; then
+  echo "[verify] === Build log FFmpeg/NDK verification lines ==="
+  grep -E '\[(ndk-override|ffmpeg|ffmpeg-verify|dav1d|libvpx|x264|x265)\]' "${WORK_DIR}/ffmpeg-kit-next/build.log" | tail -n 50 || true
+fi
 DETECTED_FFMPEG_VER="$(grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' <<< "$(strings "${ARM64_JNI_DIR}/libavutil.so" 2>/dev/null || true)" | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || true)"
-DETECTED_CLANG_VER="$(readelf -p .comment "${ARM64_JNI_DIR}/libffmpegkit.so" 2>/dev/null | grep -i 'clang' | head -n 1 | sed 's/^[[:space:]]*\[[^]]*\][[:space:]]*//' || true)"
+DETECTED_CLANG_VER="$(readelf -p .comment "${ARM64_JNI_DIR}/libavcodec.so" 2>/dev/null | grep -i 'clang' | head -n 1 | sed 's/^[[:space:]]*\[[^]]*\][[:space:]]*//' || true)"
+if [[ -z "${DETECTED_CLANG_VER}" ]]; then
+  DETECTED_CLANG_VER="$(readelf -p .comment "${ARM64_JNI_DIR}/libffmpegkit.so" 2>/dev/null | grep -i 'clang' | head -n 1 | sed 's/^[[:space:]]*\[[^]]*\][[:space:]]*//' || true)"
+fi
 DETECTED_FFMPEG_CONF="$(strings "${ARM64_JNI_DIR}/libavutil.so" 2>/dev/null | grep -E '^--' | head -n 1 || true)"
 SIMD_REPORT="$(grep -iE 'DotProd|I8MM|Neon_DotProd|Neon_I8MM|using cpu capabilities' <<< "${CODEC_STRINGS}" | sort -u | head -n 12 || true)"
 AAR_MB="$(awk "BEGIN { printf \"%.2f\", ${AAR_SIZE} / 1048576 }")"

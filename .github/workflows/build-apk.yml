@@ -214,7 +214,8 @@ jobs:
           APK_FF_VER="$(strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?$' | grep -E '^[7-9]\.|^[1-9][0-9]\.' | head -n 1 || echo unknown)"
           echo "Dogrulandi! Release APK aktif FFmpeg surumu: ${APK_FF_VER}"
           echo "=== APK arm64-v8a Derleyici (.comment) ==="
-          readelf -p .comment /tmp/verify-release-apk/lib/arm64-v8a/libffmpegkit.so 2>/dev/null | grep -i clang || true
+          readelf -p .comment /tmp/verify-release-apk/lib/arm64-v8a/libavcodec.so 2>/dev/null | grep -i clang | head -n 3 || true
+          readelf -p .comment /tmp/verify-release-apk/lib/arm64-v8a/libffmpegkit.so 2>/dev/null | grep -i clang | head -n 3 || true
           echo "=== APK arm64-v8a FFmpeg Configuration ==="
           strings /tmp/verify-release-apk/lib/arm64-v8a/libavutil.so | grep -E '^--' | head -n 1 || true
           echo "=== APK arm64-v8a Derlenmis SIMD Sembolleri ==="

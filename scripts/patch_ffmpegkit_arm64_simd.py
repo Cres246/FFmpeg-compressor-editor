@@ -121,7 +121,19 @@ def patch_android_sh(root: Path) -> None:
             '  export ANDROID_NDK_HOME="${ANDROID_NDK_ROOT}"\n'
             '  export ANDROID_NDK="${ANDROID_NDK_ROOT}"\n'
             '  unset ANDROID_TOOLCHAIN\n'
+            '  _CLEAN_PATH=""\n'
+            '  IFS=":" read -r -a _PATH_PARTS <<< "${PATH}"\n'
+            '  for _P in "${_PATH_PARTS[@]}"; do\n'
+            '    case "${_P}" in\n'
+            '      */ndk/*/toolchains/llvm/prebuilt/*/bin|*/ndk/[0-9]*) ;;\n'
+            '      "") ;;\n'
+            '      *) _CLEAN_PATH="${_CLEAN_PATH:+${_CLEAN_PATH}:}${_P}" ;;\n'
+            '    esac\n'
+            '  done\n'
+            '  export PATH="${_CLEAN_PATH}:${ANDROID_NDK_ROOT}:${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin"\n'
             '  echo "[ndk-override] Switched ANDROID_NDK_ROOT -> ${ANDROID_NDK_ROOT}"\n'
+            '  echo "[ndk-override] Active compiler: $(command -v aarch64-linux-android24-clang 2>/dev/null || echo not-found)"\n'
+            '  aarch64-linux-android24-clang --version 2>/dev/null | head -n 1 || true\n'
             'fi\n'
         )
         m = re.search(r"^[ \t]*export[ \t]+DETECTED_NDK_VERSION=", updated, flags=re.MULTILINE)
@@ -216,7 +228,7 @@ def patch_function_android(root: Path) -> None:
             updated = updated_ldflags
         else:
             updated = re.sub(
-                r'(get_common_ldflags\(\)\s*\{[\s\S]{0,600}?echo\s+"[^"]*)(")',
+                r'(get_common_ldflags\(\)\s*\{[\s\S]{0,2000}?echo\s+"[^"]*)(")',
                 r'\1 -Wl,-z,max-page-size=16384\2',
                 updated,
                 count=1,
@@ -247,7 +259,7 @@ def patch_function_android(root: Path) -> None:
 
     # Clean accidental compiler-only flags that regex #4 may have inserted after -march=armv8-a in LDFLAGS
     updated = re.sub(
-        r"(get_arch_specific_ldflags\(\)\s*\{[\s\S]{0,600}?)(?=\n\})",
+        r"(get_arch_specific_ldflags\(\)\s*\{[\s\S]{0,4000}?)(?=\n\})",
         lambda m: m.group(1)
         .replace(" -fno-semantic-interposition", "")
         .replace(" -fomit-frame-pointer", ""),
@@ -311,8 +323,10 @@ def patch_ffmpeg_script(root: Path) -> None:
             '  if grep -qE -- \'--(en|dis)able-i8mm\\b\' <<< "${FFMPEG_HELP_OUT}"; then\n'
             '    FFMPEG_EXTRA_SIMD_ARGS+=("--enable-i8mm")\n'
             '  fi\n'
-            '  if [[ -n "${AS:-}" ]]; then\n'
+            '  if [[ "${AS:-}" == *clang* ]]; then\n'
             '    FFMPEG_EXTRA_SIMD_ARGS+=("--as=${AS}")\n'
+            '  elif [[ -n "${CC:-}" ]]; then\n'
+            '    FFMPEG_EXTRA_SIMD_ARGS+=("--as=${CC}")\n'
             '  fi\n'
             '  FFMPEG_EXTRA_SIMD_ARGS+=("--optflags=-O3 -fno-math-errno -fno-signed-zeros")\n'
             '  FFMPEG_EXTRA_SIMD_ARGS+=("--extra-cflags=-O3 -fno-semantic-interposition -fomit-frame-pointer")\n'
@@ -392,9 +406,11 @@ def patch_ffkitsaf_protocol(root: Path) -> None:
         )
         replacement = (
             r"\1\n"
+            "#ifdef AVIO_FLAG_READ\n"
             f"    {marker}\n"
             "    else if (!h->is_streamed && (flags & AVIO_FLAG_READ))\n"
-            "        h->max_packet_size = 262144;"
+            "        h->max_packet_size = 262144;\n"
+            "#endif"
         )
         updated = pattern.sub(replacement, updated, count=1)
 
