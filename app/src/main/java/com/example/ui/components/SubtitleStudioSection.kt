@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.view.TextureView
+import android.view.ViewGroup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
@@ -98,10 +99,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.DeviceCodecInventory
 import com.example.data.PreviewQuality
@@ -124,13 +129,21 @@ import com.example.domain.localizedLabel
 import com.example.domain.localizedTag
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
+
+/**
+ * Plain non-state holder for the live preview [TextureView] so [AndroidView] factory/update/release
+ * callbacks never mutate Compose snapshot state during layout or commit (Redline #10).
+ */
+private class TextureViewHolder(var view: TextureView? = null)
 
 /**
  * Interactive Subtitle Studio:
@@ -159,58 +172,96 @@ fun SubtitleStudioSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val appContext = remember(context) { context.applicationContext }
+    val lifecycleOwner = LocalLifecycleOwner.current
     val strings = LocalAppStrings.current
     val extColors = LocalExtendedColors.current
 
     val totalDurationSec = remember(media.durationSec, config.subtitleCues) {
         val mediaDur = media.durationSec?.takeIf { it.isFinite() && it > 0.2 }
-        val lastCueEnd = config.subtitleCues.maxOfOrNull { it.endSec }
+        val lastCueEnd = config.subtitleCues
+            .mapNotNull { it.endSec.takeIf { end -> end.isFinite() && end > 0.0 } }
+            .maxOrNull()
         maxOf(mediaDur ?: 0.0, lastCueEnd ?: 0.0, 10.0)
     }
 
-    val initialUnsupported = remember(media.uri, media.videoCodec, media.extension) {
-        val compat = Media3CompatibilityAdvisor.diagnose(
-            media = media,
-            config = config,
-            device = DeviceCodecInventory.queryCurrentDevice()
-        )
-        compat.issueKind == Media3IssueKind.VIDEO_INCOMPATIBLE ||
-            compat.issueKind == Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE ||
-            media.extension.lowercase() in Media3CompatibilityAdvisor.UNSUPPORTED_CONTAINERS
+    // Check container support instantly without Binder IPC; probe MediaCodecList off Main Thread
+    val containerUnsupported = remember(media.extension) {
+        media.extension.lowercase() in Media3CompatibilityAdvisor.UNSUPPORTED_CONTAINERS
+    }
+    var compatChecked by remember(media.uri) { mutableStateOf(containerUnsupported) }
+    var useFrameFallback by remember(media.uri) { mutableStateOf(containerUnsupported) }
+    // Defer heavy ExoPlayer + hardware TextureView mount until the 880ms vertical slide finishes
+    // (or immediately if user taps Play early) to avoid surface/clip races on Honor/Android 15-16.
+    var stageReady by remember(media.uri, isActiveStage) { mutableStateOf(false) }
+    var userRequestedPlayEarly by remember(media.uri, isActiveStage) { mutableStateOf(false) }
+
+    LaunchedEffect(media.uri, media.videoCodec, media.extension, isActiveStage) {
+        if (!isActiveStage) {
+            stageReady = false
+            return@LaunchedEffect
+        }
+        if (!compatChecked) {
+            val codecUnsupported = withContext(Dispatchers.Default) {
+                runCatching {
+                    val compat = Media3CompatibilityAdvisor.diagnose(
+                        media = media,
+                        config = config,
+                        device = DeviceCodecInventory.queryCurrentDevice()
+                    )
+                    compat.issueKind == Media3IssueKind.VIDEO_INCOMPATIBLE ||
+                        compat.issueKind == Media3IssueKind.VIDEO_AND_AUDIO_INCOMPATIBLE
+                }.getOrDefault(true)
+            }
+            if (codecUnsupported) {
+                useFrameFallback = true
+            }
+            compatChecked = true
+        }
+        if (!stageReady && !userRequestedPlayEarly) {
+            delay(920L)
+            stageReady = true
+        }
     }
 
-    var useFrameFallback by remember(media.uri) { mutableStateOf(initialUnsupported) }
     var currentTimeSec by remember(media.uri) { mutableDoubleStateOf(0.0) }
     var isPlaying by remember(media.uri) { mutableStateOf(false) }
     var isScrubbing by remember(media.uri) { mutableStateOf(false) }
     var showPlayOverlay by remember(media.uri) { mutableStateOf(true) }
     var selectedCueId by remember(media.uri) { mutableStateOf<Long?>(null) }
     var videoAspect by remember(media.uri) {
-        val w = media.width ?: 16
-        val h = media.height ?: 9
-        mutableFloatStateOf((w.toFloat() / h.toFloat().coerceAtLeast(1f)).coerceIn(0.45f, 2.5f))
+        val w = (media.width ?: 16).coerceAtLeast(1)
+        val h = (media.height ?: 9).coerceAtLeast(1)
+        mutableFloatStateOf((w.toFloat() / h.toFloat()).coerceIn(0.45f, 2.5f))
     }
 
-    // Media3 ExoPlayer lifecycle strictly bound to isActiveStage (Redline #15: zero lingering VPU)
+    // Media3 ExoPlayer lifecycle strictly bound to isActiveStage + stageReady (Redline #15: zero lingering VPU)
     var exoPlayer by remember(media.uri) { mutableStateOf<ExoPlayer?>(null) }
-    var textureViewRef by remember(media.uri) { mutableStateOf<TextureView?>(null) }
+    val textureHolder = remember(media.uri) { TextureViewHolder() }
     var lastExoSeekWallMs by remember(media.uri) { mutableLongStateOf(0L) }
 
-    DisposableEffect(media.uri, isActiveStage, useFrameFallback) {
-        if (!isActiveStage || useFrameFallback) {
+    val shouldRunExoPlayer = isActiveStage && compatChecked && stageReady && !useFrameFallback
+    val shouldRunFallback = isActiveStage && compatChecked && stageReady && useFrameFallback
+
+    DisposableEffect(media.uri, shouldRunExoPlayer) {
+        if (!shouldRunExoPlayer) {
             exoPlayer = null
-            isPlaying = false
+            if (!useFrameFallback) isPlaying = false
             onDispose {}
         } else {
             val player = runCatching {
-                ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(media.uri))
-                    prepare()
-                    playWhenReady = false
-                    if (currentTimeSec > 0.05) {
-                        seekTo((currentTimeSec * 1000.0).toLong())
+                val renderersFactory = DefaultRenderersFactory(appContext)
+                    .setEnableDecoderFallback(true)
+                ExoPlayer.Builder(appContext, renderersFactory)
+                    .build()
+                    .apply {
+                        setMediaItem(MediaItem.fromUri(media.uri))
+                        prepare()
+                        playWhenReady = userRequestedPlayEarly
+                        if (currentTimeSec > 0.05) {
+                            seekTo((currentTimeSec * 1000.0).toLong())
+                        }
                     }
-                }
             }.getOrNull()
 
             if (player == null) {
@@ -239,20 +290,57 @@ fun SubtitleStudioSection(
 
                     override fun onVideoSizeChanged(videoSize: VideoSize) {
                         if (videoSize.width > 0 && videoSize.height > 0) {
-                            videoAspect = (videoSize.width.toFloat() / videoSize.height.toFloat()).coerceIn(0.45f, 2.5f)
+                            val ratio = (videoSize.width.toFloat() * videoSize.pixelWidthHeightRatio) /
+                                videoSize.height.toFloat()
+                            if (ratio.isFinite() && ratio > 0f) {
+                                videoAspect = ratio.coerceIn(0.45f, 2.5f)
+                            }
                         }
                     }
                 }
-                player.addListener(listener)
-                textureViewRef?.let { tv -> runCatching { player.setVideoTextureView(tv) } }
-                exoPlayer = player
-                onDispose {
-                    runCatching { player.removeListener(listener) }
-                    textureViewRef?.let { tv -> runCatching { player.clearVideoTextureView(tv) } }
+                val attached = runCatching {
+                    player.addListener(listener)
+                    textureHolder.view?.let { tv -> player.setVideoTextureView(tv) }
+                }.isSuccess
+                if (!attached) {
                     runCatching { player.release() }
-                    exoPlayer = null
-                    isPlaying = false
+                    useFrameFallback = true
+                    onDispose {}
+                } else {
+                    exoPlayer = player
+                    userRequestedPlayEarly = false
+                    onDispose {
+                        runCatching { player.removeListener(listener) }
+                        textureHolder.view?.let { tv -> runCatching { player.clearVideoTextureView(tv) } }
+                        runCatching { player.release() }
+                        exoPlayer = null
+                        isPlaying = false
+                    }
                 }
+            }
+        }
+    }
+
+    // Pause ExoPlayer cleanly whenever app moves to background
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val player = exoPlayer
+        if (player == null) {
+            onDispose {}
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                    runCatching {
+                        if (player.isPlaying) {
+                            player.pause()
+                        }
+                    }
+                    isPlaying = false
+                    showPlayOverlay = true
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
             }
         }
     }
@@ -269,8 +357,13 @@ fun SubtitleStudioSection(
     LaunchedEffect(exoPlayer, isPlaying, isScrubbing) {
         val player = exoPlayer ?: return@LaunchedEffect
         while (isActive && isPlaying && !isScrubbing) {
-            val posSec = (player.currentPosition.coerceAtLeast(0L)) / 1000.0
-            currentTimeSec = posSec.coerceIn(0.0, totalDurationSec)
+            val posMs = runCatching { player.currentPosition.coerceAtLeast(0L) }.getOrNull()
+            if (posMs == null) {
+                isPlaying = false
+                useFrameFallback = true
+                break
+            }
+            currentTimeSec = (posMs / 1000.0).coerceIn(0.0, totalDurationSec)
             delay(16L)
         }
     }
@@ -279,16 +372,18 @@ fun SubtitleStudioSection(
     var fallbackScrubber by remember(media.uri) { mutableStateOf<VideoFrameScrubber?>(null) }
     var fallbackBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
 
-    DisposableEffect(media.uri, isActiveStage, useFrameFallback) {
-        if (!isActiveStage || !useFrameFallback) {
+    DisposableEffect(media.uri, shouldRunFallback) {
+        if (!shouldRunFallback) {
             fallbackScrubber = null
             onDispose {}
         } else {
-            val scrubber = VideoFrameScrubber(context, media.uri, media.durationSec)
+            val scrubber = runCatching {
+                VideoFrameScrubber(appContext, media.uri, media.durationSec)
+            }.getOrNull()
             fallbackScrubber = scrubber
             onDispose {
                 fallbackScrubber = null
-                scrubber.close()
+                runCatching { scrubber?.close() }
             }
         }
     }
@@ -296,24 +391,26 @@ fun SubtitleStudioSection(
     // Pre-warm fallback scrubber timeline gently once when fallback opens
     LaunchedEffect(fallbackScrubber) {
         val s = fallbackScrubber ?: return@LaunchedEffect
-        s.prewarmTimeline(maxSamples = 18)
+        runCatching { s.prewarmTimeline(maxSamples = 18) }
     }
 
     // Progressive 120Hz frame decode for fallback mode (0ms RAM peek -> FAST_SCRUB -> EXACT_CRISP)
     LaunchedEffect(fallbackScrubber, currentTimeSec, isScrubbing) {
         val scrubber = fallbackScrubber ?: return@LaunchedEffect
-        scrubber.peekInstantFrame(currentTimeSec, allowNearbyFallback = true)?.let { cached ->
-            fallbackBitmap = cached.bitmap
-        }
-        val quality = if (isScrubbing) PreviewQuality.FAST_SCRUB else PreviewQuality.EXACT_CRISP
-        val decoded = scrubber.extractFrame(currentTimeSec, quality)
-        if (decoded != null) {
-            fallbackBitmap = decoded
-        }
-        if (!isScrubbing && !scrubber.hasCrispFrame(currentTimeSec)) {
-            delay(85L)
-            scrubber.extractFrame(currentTimeSec, PreviewQuality.EXACT_CRISP)?.let { crisp ->
-                fallbackBitmap = crisp
+        runCatching {
+            scrubber.peekInstantFrame(currentTimeSec, allowNearbyFallback = true)?.let { cached ->
+                fallbackBitmap = cached.bitmap
+            }
+            val quality = if (isScrubbing) PreviewQuality.FAST_SCRUB else PreviewQuality.EXACT_CRISP
+            val decoded = scrubber.extractFrame(currentTimeSec, quality)
+            if (decoded != null) {
+                fallbackBitmap = decoded
+            }
+            if (!isScrubbing && !scrubber.hasCrispFrame(currentTimeSec)) {
+                delay(85L)
+                scrubber.extractFrame(currentTimeSec, PreviewQuality.EXACT_CRISP)?.let { crisp ->
+                    fallbackBitmap = crisp
+                }
             }
         }
     }
@@ -349,29 +446,44 @@ fun SubtitleStudioSection(
 
     fun pausePlayback() {
         val player = exoPlayer
-        if (player != null && player.isPlaying) {
-            runCatching { player.pause() }
+        if (player != null) {
+            runCatching {
+                if (player.isPlaying) {
+                    player.pause()
+                }
+            }
         }
         isPlaying = false
     }
 
     fun togglePlayPause() {
+        if (!stageReady) {
+            userRequestedPlayEarly = true
+            stageReady = true
+            return
+        }
         if (!useFrameFallback) {
             val player = exoPlayer ?: return
-            if (player.isPlaying) {
-                player.pause()
-                isPlaying = false
-                showPlayOverlay = true
-            } else {
-                if (player.playbackState == Player.STATE_ENDED || currentTimeSec >= totalDurationSec - 0.15) {
-                    player.seekTo(0L)
-                    currentTimeSec = 0.0
+            val ok = runCatching {
+                if (player.isPlaying) {
+                    player.pause()
+                    isPlaying = false
+                    showPlayOverlay = true
                 } else {
-                    player.seekTo((currentTimeSec * 1000.0).toLong())
+                    if (player.playbackState == Player.STATE_ENDED || currentTimeSec >= totalDurationSec - 0.15) {
+                        player.seekTo(0L)
+                        currentTimeSec = 0.0
+                    } else {
+                        player.seekTo((currentTimeSec * 1000.0).toLong())
+                    }
+                    player.play()
+                    isPlaying = true
+                    showPlayOverlay = true
                 }
-                player.play()
-                isPlaying = true
-                showPlayOverlay = true
+            }.isSuccess
+            if (!ok) {
+                isPlaying = false
+                useFrameFallback = true
             }
         } else {
             if (isPlaying) {
@@ -389,10 +501,10 @@ fun SubtitleStudioSection(
 
     // Load exact bundled UTF-8 Typeface for live Compose overlay (matches FFmpeg libass & Media3 overlay 1:1)
     val previewFontFamily = remember(config.subtitleFont) {
-        val tf = runCatching {
-            Typeface.createFromAsset(context.assets, config.subtitleFont.assetPath)
-        }.getOrDefault(Typeface.DEFAULT_BOLD)
-        FontFamily(tf)
+        runCatching {
+            val tf = Typeface.createFromAsset(appContext.assets, config.subtitleFont.assetPath)
+            FontFamily(tf)
+        }.getOrDefault(FontFamily.SansSerif)
     }
 
     val activeCueIndex = remember(config.subtitleCues, currentTimeSec) {
@@ -564,7 +676,7 @@ fun SubtitleStudioSection(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Large Horizontal 16:9 Video Frame (Media3 ExoPlayer with audio OR Seamless Frame Scrubber fallback)
-                Box(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
@@ -580,32 +692,39 @@ fun SubtitleStudioSection(
                         .testTag("subtitle_video_stage"),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!useFrameFallback) {
-                        val videoFitModifier = if (videoAspect > (16f / 9f)) {
-                            Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(videoAspect, matchHeightConstraintsFirst = false)
-                        } else {
-                            Modifier
-                                .fillMaxHeight()
-                                .aspectRatio(videoAspect, matchHeightConstraintsFirst = true)
-                        }
+                    if (shouldRunExoPlayer) {
+                        val stageW = maxWidth
+                        val stageH = maxHeight
+                        val safeAspect = videoAspect.takeIf { it.isFinite() && it > 0f } ?: (16f / 9f)
+                        val stageAspect = (stageW.value / stageH.value.coerceAtLeast(1f)).coerceAtLeast(0.1f)
+                        val fitW = if (safeAspect > stageAspect) stageW else stageH * safeAspect
+                        val fitH = if (safeAspect > stageAspect) stageW / safeAspect else stageH
                         AndroidView(
                             factory = { ctx ->
-                                TextureView(ctx).also { tv ->
-                                    textureViewRef = tv
-                                    exoPlayer?.let { p -> runCatching { p.setVideoTextureView(tv) } }
+                                TextureView(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    textureHolder.view = this
+                                    exoPlayer?.let { p -> runCatching { p.setVideoTextureView(this) } }
                                 }
                             },
                             update = { tv ->
-                                if (textureViewRef !== tv) {
-                                    textureViewRef = tv
-                                    exoPlayer?.let { p -> runCatching { p.setVideoTextureView(tv) } }
+                                if (textureHolder.view !== tv) {
+                                    textureHolder.view = tv
+                                }
+                                exoPlayer?.let { p -> runCatching { p.setVideoTextureView(tv) } }
+                            },
+                            onRelease = { tv ->
+                                exoPlayer?.let { p -> runCatching { p.clearVideoTextureView(tv) } }
+                                if (textureHolder.view === tv) {
+                                    textureHolder.view = null
                                 }
                             },
-                            modifier = videoFitModifier
+                            modifier = Modifier.size(width = fitW, height = fitH)
                         )
-                    } else {
+                    } else if (shouldRunFallback) {
                         val bmp = fallbackBitmap
                         if (bmp != null) {
                             Image(
@@ -1557,15 +1676,16 @@ fun SubtitleFontAndSizeSection(
     onSelectSize: (SubtitleFontSizeOption) -> Unit
 ) {
     val context = LocalContext.current
+    val appContext = remember(context) { context.applicationContext }
     val strings = LocalAppStrings.current
     val extColors = LocalExtendedColors.current
 
     val loadedFontFamilies = remember {
         SubtitleFontOption.entries.associateWith { opt ->
-            val tf = runCatching {
-                Typeface.createFromAsset(context.assets, opt.assetPath)
-            }.getOrDefault(Typeface.DEFAULT_BOLD)
-            FontFamily(tf)
+            runCatching {
+                val tf = Typeface.createFromAsset(appContext.assets, opt.assetPath)
+                FontFamily(tf)
+            }.getOrDefault(FontFamily.SansSerif)
         }
     }
 

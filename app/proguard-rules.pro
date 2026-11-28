@@ -14,4 +14,10 @@
 # Keep Media3 & Throwable class names readable for runtime compatibility checks and AI error reports
 -keepattributes SourceFile,LineNumberTable
 -keepnames class * extends java.lang.Throwable
+-keep class androidx.media3.exoplayer.** { *; }
+-keep class androidx.media3.extractor.** { *; }
+-keep class androidx.media3.datasource.** { *; }
+-keep class androidx.media3.effect.** { *; }
+-keep class androidx.media3.common.** { *; }
 -dontwarn androidx.media3.**
+
