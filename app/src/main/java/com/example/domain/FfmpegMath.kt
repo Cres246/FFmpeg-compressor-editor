@@ -368,14 +368,14 @@ object FfmpegMath {
         }
 
         val bpsFromDur = if (durPacketCount >= 5 && totalDurationSec >= 0.15 && totalBytesAll > 0L) {
-            ((totalBytesAll * 8.0) / totalDurationSec).toLong()
+            kotlin.math.round((totalBytesAll * 8.0) / totalDurationSec).toLong()
         } else null
 
         val bpsFromSpan = if (timedPacketCount >= 5 && firstTimeSec != null && lastTimeSec != null) {
             val span = lastTimeSec - firstTimeSec
             val effectiveBytes = (totalBytesTimed - lastPacketSize).coerceAtLeast(0L)
             if (span >= 0.15 && effectiveBytes > 0L) {
-                ((effectiveBytes * 8.0) / span).toLong()
+                kotlin.math.round((effectiveBytes * 8.0) / span).toLong()
             } else null
         } else null
 

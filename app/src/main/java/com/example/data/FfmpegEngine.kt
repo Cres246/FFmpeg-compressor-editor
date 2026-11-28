@@ -818,7 +818,7 @@ object FfmpegEngine {
                     }
                 }
                 if (accumSpanUs >= 200_000L && accumBytes > 0L) {
-                    val estimatedBps = ((accumBytes * 8.0 * 1_000_000.0) / accumSpanUs).toLong()
+                    val estimatedBps = kotlin.math.round((accumBytes * 8.0 * 1_000_000.0) / accumSpanUs).toLong()
                     if (estimatedBps in 8_000L..20_000_000L) return estimatedBps
                 }
             }
