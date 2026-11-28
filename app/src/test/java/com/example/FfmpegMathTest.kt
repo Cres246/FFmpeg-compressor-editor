@@ -876,4 +876,167 @@ class FfmpegMathTest {
             cmd
         )
     }
+
+    @Test
+    fun preserveSubtitlesMapsSafelyAcrossMkvMp4WebmAndSkipsBitmapInMp4() {
+        val mixedSubs = listOf(
+            com.example.domain.SubtitleTrackInfo(0, 2, "subrip", "tur"),
+            com.example.domain.SubtitleTrackInfo(1, 3, "hdmv_pgs_subtitle", "eng"),
+            com.example.domain.SubtitleTrackInfo(2, 4, "ass", "jpn")
+        )
+        val mkvWithSubs = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "anime.mkv",
+            baseName = "anime",
+            extension = "mkv",
+            sizeBytes = 500_000_000L,
+            durationSec = 1440.0,
+            videoCodec = "hevc",
+            width = 1920,
+            height = 1080,
+            pixFmt = "yuv420p10le",
+            audioCodec = "aac",
+            audioBitrateKbps = 256,
+            subtitleTracks = mixedSubs
+        )
+
+        // 1) Default OFF -> -sn -dn (0 change to existing fast path)
+        val offArgs = FfmpegMath.buildFfmpegSteps(
+            media = mkvWithSubs,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF, preserveSubtitles = false),
+            inputTokenProvider = { "\$IN" },
+            outputPath = "out.mp4",
+            passLogPrefix = "/tmp/p"
+        ).single().args
+        assertTrue(offArgs.contains("-sn") && offArgs.contains("-dn"))
+
+        // 2) MP4 CRF with preserveSubtitles = true -> maps ONLY text tracks (0:s:0 and 0:s:2) as mov_text, skips PGS (0:s:1)!
+        val mp4SubArgs = FfmpegMath.buildFfmpegSteps(
+            media = mkvWithSubs,
+            config = ModeConfigState(mode = ProcessingMode.VIDEO_ONLY_CRF, preserveSubtitles = true),
+            inputTokenProvider = { "\$IN" },
+            outputPath = "out.mp4",
+            passLogPrefix = "/tmp/p"
+        ).single().args
+        assertTrue(mp4SubArgs.contains("0:s:0"))
+        assertTrue(mp4SubArgs.contains("0:s:2"))
+        assertFalse("Bitmap PGS track 0:s:1 must never be mapped into MP4", mp4SubArgs.contains("0:s:1"))
+        assertTrue(mp4SubArgs.contains("-c:s") && mp4SubArgs.contains("mov_text"))
+
+        // 3) TRIM_VIDEO FULL_LOSSLESS with preserveSubtitles = true on ASS/PGS source -> keeps .mkv + copies fonts!
+        val trimCfg = ModeConfigState(
+            mode = ProcessingMode.TRIM_VIDEO,
+            trimSubMode = TrimSubMode.FULL_LOSSLESS,
+            startTimeInput = "00:01:00",
+            endTimeInput = "00:02:00",
+            preserveSubtitles = true
+        )
+        val trimOutName = FfmpegMath.computeOutputFileName(mkvWithSubs, trimCfg)
+        assertTrue("Preserving ASS/PGS in FULL_LOSSLESS trim must keep .mkv", trimOutName.endsWith(".mkv"))
+        val trimMkvArgs = FfmpegMath.buildFfmpegSteps(mkvWithSubs, trimCfg, { "\$IN" }, trimOutName, "/tmp/p").single().args
+        assertTrue(trimMkvArgs.contains("0:s?") && trimMkvArgs.contains("-c:s"))
+        assertTrue("MKV with ASS must also copy embedded fonts (0:t?)", trimMkvArgs.contains("0:t?") && trimMkvArgs.contains("-c:t"))
+    }
+
+    @Test
+    fun remuxMultiFormatAppliesContainerSpecificFlagsAndPopularityOrder() {
+        assertEquals(com.example.domain.RemuxOutputFormat.MP4, com.example.domain.RemuxOutputFormat.entries.first())
+        assertTrue(com.example.domain.RemuxOutputFormat.MP4.isRecommended)
+        assertEquals(com.example.domain.RemuxOutputFormat.MKV, com.example.domain.RemuxOutputFormat.entries[1])
+
+        val hevcMedia = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "movie.mkv",
+            baseName = "movie",
+            extension = "mkv",
+            sizeBytes = 100_000_000L,
+            durationSec = 60.0,
+            videoCodec = "hevc",
+            width = 1920,
+            height = 1080,
+            pixFmt = "yuv420p",
+            audioCodec = "aac"
+        )
+
+        // MKV remux must NOT emit ISO-BMFF -movflags or hvc1
+        val mkvCfg = ModeConfigState(mode = ProcessingMode.REMUX_FORMAT, remuxFormat = com.example.domain.RemuxOutputFormat.MKV)
+        assertEquals("movie_Remux.mkv", FfmpegMath.computeOutputFileName(hevcMedia, mkvCfg))
+        val mkvArgs = FfmpegMath.buildFfmpegSteps(hevcMedia, mkvCfg, { "\$IN" }, "movie_Remux.mkv", "/tmp/p").single().args
+        assertFalse(mkvArgs.contains("-movflags"))
+        assertFalse(mkvArgs.contains("hvc1"))
+
+        // MOV remux MUST emit ISO-BMFF -movflags +faststart and hvc1
+        val movCfg = ModeConfigState(mode = ProcessingMode.REMUX_FORMAT, remuxFormat = com.example.domain.RemuxOutputFormat.MOV)
+        assertEquals("movie_Remux.mov", FfmpegMath.computeOutputFileName(hevcMedia, movCfg))
+        val movArgs = FfmpegMath.buildFfmpegSteps(hevcMedia, movCfg, { "\$IN" }, "movie_Remux.mov", "/tmp/p").single().args
+        assertTrue(movArgs.contains("-movflags") && movArgs.contains("+faststart"))
+        assertTrue(movArgs.contains("-tag:v") && movArgs.contains("hvc1"))
+        assertEquals("video/mp2t", FfmpegMath.resolveMimeType("clip.ts"))
+        assertEquals("video/x-flv", FfmpegMath.resolveMimeType("clip.flv"))
+        assertEquals("video/3gpp", FfmpegMath.resolveMimeType("clip.3gp"))
+    }
+
+    @Test
+    fun embedSubtitlesSoftsubHardsubAndTurboEligibility() {
+        val sampleVideo = MediaInfo(
+            uri = Uri.EMPTY,
+            fileName = "clip.mp4",
+            baseName = "clip",
+            extension = "mp4",
+            sizeBytes = 20_000_000L,
+            durationSec = 45.0,
+            videoCodec = "h264",
+            width = 1920,
+            height = 1080,
+            pixFmt = "yuv420p",
+            audioCodec = "aac"
+        )
+        val cues = listOf(com.example.domain.SubtitleCue(1L, 1.0, 4.0, "Merhaba!"))
+
+        // Softsub MP4: -c:v copy, -c:a copy, -c:s mov_text, Turbo = false
+        val softCfg = ModeConfigState(
+            mode = ProcessingMode.EMBED_SUBTITLES,
+            subtitleEmbedMode = com.example.domain.SubtitleEmbedMode.SOFTSUB,
+            subtitleSoftsubContainer = com.example.domain.SubtitleSoftsubContainer.MP4,
+            subtitleCues = cues
+        )
+        assertFalse(com.example.domain.supportsMedia3HardwareTurbo(sampleVideo, softCfg))
+        assertEquals("clip_Softsub.mp4", FfmpegMath.computeOutputFileName(sampleVideo, softCfg))
+        val softArgs = FfmpegMath.buildFfmpegSteps(
+            media = sampleVideo,
+            config = softCfg,
+            inputTokenProvider = { "\$IN" },
+            outputPath = "/tmp/clip_Softsub.mp4",
+            passLogPrefix = "/tmp/p",
+            subtitleFilePath = "/tmp/subtitles.srt"
+        ).single().args
+        assertTrue(softArgs.contains("/tmp/subtitles.srt"))
+        assertTrue(softArgs.contains("-c:s") && softArgs.contains("mov_text"))
+        assertTrue(softArgs.contains("-c:v") && softArgs.contains("copy"))
+
+        // Hardsub: ass='...':fontsdir='...', libx264 CRF 16, Turbo = true!
+        val hardCfg = ModeConfigState(
+            mode = ProcessingMode.EMBED_SUBTITLES,
+            subtitleEmbedMode = com.example.domain.SubtitleEmbedMode.HARDSUB,
+            subtitleCues = cues,
+            codec = VideoCodecOption.H264,
+            preset = PresetOption.FAST
+        )
+        assertTrue(com.example.domain.supportsMedia3HardwareTurbo(sampleVideo, hardCfg))
+        assertEquals("clip_Hardsub_H264_CRF16.mp4", FfmpegMath.computeOutputFileName(sampleVideo, hardCfg))
+        val hardArgs = FfmpegMath.buildFfmpegSteps(
+            media = sampleVideo,
+            config = hardCfg,
+            inputTokenProvider = { "\$IN" },
+            outputPath = "/tmp/clip_Hardsub_H264_CRF16.mp4",
+            passLogPrefix = "/tmp/p",
+            subtitleFilePath = "/tmp/subtitles.ass",
+            subtitleFontsDirPath = "/tmp/fonts"
+        ).single().args
+        val vfIdx = hardArgs.indexOf("-vf")
+        assertTrue(vfIdx >= 0)
+        assertTrue(hardArgs[vfIdx + 1].contains("ass='/tmp/subtitles.ass':fontsdir='/tmp/fonts'"))
+        assertTrue(hardArgs.contains("-c:v") && hardArgs.contains("libx264"))
+        assertTrue(hardArgs.contains("-c:a") && hardArgs.contains("copy"))
+    }
 }

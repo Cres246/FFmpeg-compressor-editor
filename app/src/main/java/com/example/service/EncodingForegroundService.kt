@@ -40,6 +40,7 @@ import com.example.domain.Media3IssueKind
 import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
+import com.example.domain.SubtitleEmbedMode
 import com.example.domain.TrimCutStrategy
 import com.example.domain.TrimSubMode
 import com.example.domain.TrimTimeChoice
@@ -582,7 +583,8 @@ class EncodingForegroundService : Service() {
                 (config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY || config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC)
             val isVideoReencode = isTurbo || isTwoPass || isTrimCrf ||
                 config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
-                config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF
+                config.mode == ProcessingMode.VIDEO_AND_AUDIO_CRF ||
+                (config.mode == ProcessingMode.EMBED_SUBTITLES && config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB)
             val supportsFpsAndRes = isTwoPass || isTrimCrf
 
             val resPart = when {
@@ -638,6 +640,7 @@ class EncodingForegroundService : Service() {
             val bps = overrideVideoBitrateBps ?: Media3TurboEngine.estimateInitialVideoBitrateBps(media, config)
             val kbps = (bps / 1000).coerceAtLeast(100)
             val wantsAudioCopy = config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+                config.mode == ProcessingMode.EMBED_SUBTITLES ||
                 (config.mode == ProcessingMode.TRIM_VIDEO && config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY)
             val effectiveAudioKbps: Int = when {
                 !media.hasAudio || wantsAudioCopy -> 0
@@ -761,7 +764,7 @@ class EncodingForegroundService : Service() {
                         else -> listOf(range, config.trimSubMode.localizedTitle(s))
                     }
                 }
-                ProcessingMode.REMUX_FORMAT -> listOf(s.bannerRemux)
+                ProcessingMode.REMUX_FORMAT -> listOf(s.bannerRemuxFormat(config.remuxFormat.extension))
                 ProcessingMode.AUDIO_ONLY_AAC -> {
                     val ab = FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, 256)
                     listOf(s.bannerAudioOnly(ab))
@@ -797,6 +800,15 @@ class EncodingForegroundService : Service() {
                     }
                     listOf(s.bannerExtractAudio(extractFmtLabel))
                 }
+                ProcessingMode.EMBED_SUBTITLES -> when (config.subtitleEmbedMode) {
+                    SubtitleEmbedMode.SOFTSUB -> listOf(
+                        s.bannerSubSoftsub(config.subtitleSoftsubContainer.extension, config.subtitleCues.size)
+                    )
+                    SubtitleEmbedMode.HARDSUB -> listOf(
+                        s.bannerSubHardsub(config.codec.tag, config.codec.crf, config.subtitleFont.displayName, config.subtitleCues.size),
+                        audioCopyPart
+                    )
+                }
                 ProcessingMode.CUSTOM_COMMAND -> listOf(s.bannerCustomCmd)
             }
 
@@ -813,6 +825,7 @@ class EncodingForegroundService : Service() {
                 ProcessingMode.VIDEO_AND_AUDIO_CRF -> true
                 ProcessingMode.TRIM_VIDEO -> config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
                     config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
+                ProcessingMode.EMBED_SUBTITLES -> config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB
                 else -> false
             }
             if (!usesPreset) return null
@@ -1275,13 +1288,25 @@ class EncodingForegroundService : Service() {
             val tempOutFile = File(workDir, expectedOutputName)
             val passLogPrefix = File(workDir, "ff2pass").absolutePath
             val inputPlaceholder = "__FFMPEG_LAZY_INPUT__"
+            val preparedSubs = if (effectiveConfig.mode == ProcessingMode.EMBED_SUBTITLES) {
+                FfmpegEngine.prepareSubtitleWorkFiles(
+                    context = applicationContext,
+                    workDir = workDir,
+                    config = effectiveConfig,
+                    media = media
+                )
+            } else {
+                null
+            }
             val steps = FfmpegMath.buildFfmpegSteps(
                 media = media,
                 config = effectiveConfig,
                 inputTokenProvider = { inputPlaceholder },
                 outputPath = tempOutFile.absolutePath,
                 passLogPrefix = passLogPrefix,
-                strings = s
+                strings = s,
+                subtitleFilePath = preparedSubs?.subtitleFile?.absolutePath,
+                subtitleFontsDirPath = preparedSubs?.fontsDir?.absolutePath
             )
 
             val executedCommands = mutableListOf<String>()
@@ -2727,6 +2752,7 @@ class EncodingForegroundService : Service() {
         workDir: File
     ): File? {
         val wantsAudioCopy = config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+            config.mode == ProcessingMode.EMBED_SUBTITLES ||
             (config.mode == ProcessingMode.TRIM_VIDEO && config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY)
         val srcAudioCodec = media.audioCodec?.lowercase(Locale.US).orEmpty()
         val canCopyAudio = wantsAudioCopy && srcAudioCodec in Media3CompatibilityAdvisor.MP4_COPY_SAFE_AUDIO_CODECS

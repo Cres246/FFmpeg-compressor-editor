@@ -44,13 +44,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.domain.MediaInfo
+import com.example.domain.SubtitleParser
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoLabelStyle
 
@@ -328,6 +333,14 @@ fun MediaHeroCard(
                                 text = "${strings.audioTrackPrefix}: $audioLabel",
                                 modifier = Modifier.testTag("media_audio_chip")
                             )
+                            if (mediaInfo.hasSubtitles) {
+                                val groupedSubs = SubtitleParser.groupSubtitleTrackFormats(mediaInfo.subtitleTracks)
+                                SubtitleMetaChip(
+                                    prefix = strings.subtitleTrackPrefix,
+                                    groups = groupedSubs,
+                                    modifier = Modifier.testTag("media_subtitle_chip")
+                                )
+                            }
                             if (mediaInfo.needsEvenScale) {
                                 CompactMetaChip(text = strings.evenDimensionFixChip)
                             }
@@ -403,6 +416,45 @@ private fun CompactMetaChip(
     ) {
         Text(
             text = text,
+            style = MonoLabelStyle.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
+@Composable
+private fun SubtitleMetaChip(
+    prefix: String,
+    groups: List<Pair<String, Int>>,
+    modifier: Modifier = Modifier
+) {
+    val annotated = buildAnnotatedString {
+        append("$prefix: ")
+        groups.forEachIndexed { idx, (tag, count) ->
+            if (idx > 0) append(" · ")
+            append(tag)
+            if (count > 1) {
+                withStyle(
+                    SpanStyle(
+                        baselineShift = BaselineShift.Superscript,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                ) {
+                    append(count.toString())
+                }
+            }
+        }
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(7.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder)
+    ) {
+        Text(
+            text = annotated,
             style = MonoLabelStyle.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)

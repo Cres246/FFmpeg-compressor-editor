@@ -25,6 +25,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.FrameDropEffect
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Codec
 import androidx.media3.transformer.Composition
@@ -45,6 +46,7 @@ import com.example.domain.MediaInfo
 import com.example.domain.ModeConfigState
 import com.example.domain.ProcessingMode
 import com.example.domain.ResolutionOption
+import com.example.domain.SubtitleEmbedMode
 import com.example.domain.TrimSubMode
 import com.example.domain.VideoCodecOption
 import kotlinx.coroutines.Dispatchers
@@ -411,6 +413,7 @@ object Media3TurboEngine {
         val hwCeiling = minOf(hwCaps.maxBitrateBps, codecHardCeiling).coerceAtLeast(2_000_000)
 
         val wantsAudioCopy = config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+            config.mode == ProcessingMode.EMBED_SUBTITLES ||
             (config.mode == ProcessingMode.TRIM_VIDEO && config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY)
         val defaultAb = if (config.mode == ProcessingMode.TRIM_VIDEO) 192 else 256
         val rawReqAudioBps = if (!media.hasAudio) 0 else FfmpegMath.normalizeAudioBitrate(config.audioBitrateInput, defaultAb) * 1000
@@ -556,6 +559,10 @@ object Media3TurboEngine {
             }
         }
 
+        val hasHardsubOverlay = config.mode == ProcessingMode.EMBED_SUBTITLES &&
+            config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB &&
+            config.subtitleCues.isNotEmpty()
+
         // Tier 1: Optimized Media3 hardware pipeline (CBR for target-size, 2s GOP, safe 4K & 10-bit negotiation)
         val rawAttempt1 = executeSingleAttempt(
             context = context,
@@ -579,33 +586,38 @@ object Media3TurboEngine {
         }
 
         // Wait for Qualcomm/OEM C2 HAL (e.g. vendor.qti.media.c2) to finish asynchronously
-        // releasing Attempt 1's 4K VPU session + EGL surface before launching Tier 2.
+        // releasing Attempt 1's 4K VPU session + EGL surface before launching fallback tier.
         onProgress(-1, 0.0, plan.effectiveDurationSec)
         runCatching { if (outputFile.exists()) outputFile.delete() }
         delay(450L)
 
         // Tier 2: Direct native Android MediaExtractor -> MediaCodec HW Decoder -> OpenGL ES 2.0/3.0 Surface ->
-        // MediaCodec HW Encoder -> MediaMuxer with strict monotonic PTS sanitization + 10-bit HEVC Main10 support.
-        val rawAttempt2 = executeDirectAttempt(
-            context = context,
-            media = media,
-            sourceUri = sourceUri,
-            probe = probe,
-            hwCaps = hwCaps,
-            plan = plan,
-            config = config,
-            videoMime = videoMime,
-            outputFile = outputFile,
-            useCbr = plan.useCbr && hwCaps.supportsCbr,
-            dropTo30Fps = false,
-            onProgress = onProgress
-        )
-        val attempt2 = verifyTenBitSatisfied(rawAttempt2)
-        if (attempt2.success || attempt2.cancelled) {
-            return attempt2
+        // MediaCodec HW Encoder -> MediaMuxer. Skipped for Hardsub overlay jobs so subtitles are NEVER dropped.
+        val attempt2 = if (!hasHardsubOverlay) {
+            val rawAttempt2 = executeDirectAttempt(
+                context = context,
+                media = media,
+                sourceUri = sourceUri,
+                probe = probe,
+                hwCaps = hwCaps,
+                plan = plan,
+                config = config,
+                videoMime = videoMime,
+                outputFile = outputFile,
+                useCbr = plan.useCbr && hwCaps.supportsCbr,
+                dropTo30Fps = false,
+                onProgress = onProgress
+            )
+            val verified2 = verifyTenBitSatisfied(rawAttempt2)
+            if (verified2.success || verified2.cancelled) {
+                return verified2
+            }
+            verified2
+        } else {
+            attempt1
         }
 
-        val needsOpenGlHdrPipeline = attempt2.errorCodeName == DirectMediaCodecTranscoder.ERROR_HDR_NEEDS_OPENGL
+        val needsOpenGlHdrPipeline = hasHardsubOverlay || attempt2.errorCodeName == DirectMediaCodecTranscoder.ERROR_HDR_NEEDS_OPENGL
 
         // Tier 3: Try either Media3 OpenGL pipeline (keeping HDR/10-bit if 10-bit was selected!)
         // or Direct MediaCodec 30 FPS VBR fallback (if 4K60 exceeded the VPU rate ceiling).
@@ -620,11 +632,13 @@ object Media3TurboEngine {
             config.fps != FpsOption.FPS_30 &&
             (outPixels > 1920L * 1080L || srcFps > 61.0 || !hwCaps.areSizeAndRateSupported(outW, outH, srcFps))
 
-        onProgress(-1, 0.0, plan.effectiveDurationSec)
-        runCatching { if (outputFile.exists()) outputFile.delete() }
-        delay(if (needsOpenGlHdrPipeline) 200L else 450L)
+        if (!hasHardsubOverlay) {
+            onProgress(-1, 0.0, plan.effectiveDurationSec)
+            runCatching { if (outputFile.exists()) outputFile.delete() }
+            delay(if (needsOpenGlHdrPipeline) 200L else 450L)
+        }
 
-        if (canTryFpsFallback && !needsOpenGlHdrPipeline) {
+        if (canTryFpsFallback && !needsOpenGlHdrPipeline && !hasHardsubOverlay) {
             val rawAttempt3Direct30 = executeDirectAttempt(
                 context = context,
                 media = media,
@@ -910,6 +924,20 @@ object Media3TurboEngine {
                             Presentation.LAYOUT_SCALE_TO_FIT
                         )
                     )
+                }
+
+                // Burn edited Hardsub cues via zero-garbage GPU OverlayEffect when in EMBED_SUBTITLES Hardsub mode
+                if (config.mode == ProcessingMode.EMBED_SUBTITLES &&
+                    config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB &&
+                    config.subtitleCues.isNotEmpty()
+                ) {
+                    val subtitleOverlay = SubtitleBitmapOverlay(
+                        context = context,
+                        cues = config.subtitleCues,
+                        fontOption = config.subtitleFont,
+                        fontSizeOption = config.subtitleFontSize
+                    )
+                    videoEffects.add(OverlayEffect(listOf(subtitleOverlay)))
                 }
 
                 // Attach unity AudioProcessor ONLY when source is ALREADY AAC and we must re-encode it
@@ -1231,6 +1259,7 @@ object Media3TurboEngine {
 
                 // Keep AAC stream pass-through only when audio copy is requested OR target-size AAC is already compact
                 val wantsAudioCopy = config.mode == ProcessingMode.VIDEO_ONLY_CRF ||
+                    config.mode == ProcessingMode.EMBED_SUBTITLES ||
                     (config.mode == ProcessingMode.TRIM_VIDEO && config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY)
                 if (media.hasAudio && (plan.forceAudioReencode || !(wantsAudioCopy && plan.sourceIsAac))) {
                     transformerBuilder.setAudioMimeType(MimeTypes.AUDIO_AAC)

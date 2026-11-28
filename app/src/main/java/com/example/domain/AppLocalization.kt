@@ -501,6 +501,73 @@ interface AppStrings {
     val turboDiagVideoOnlyIncompatible: (vCodec: String, aCodec: String?) -> String
     val turboAfterVideoAudioFailedTitle: String
     val turboAfterVideoAudioFailedBody: String
+
+    // Subtitle metadata, Preserve Subtitles toggle, Multi-format Remux, and Interactive Subtitle Studio
+    val subtitleTrackPrefix: String
+    val preserveSubtitlesTitle: String
+    val preserveSubtitlesSubMkv: String
+    val preserveSubtitlesSubMp4: String
+    val preserveSubtitlesBitmapSkippedNote: String
+    val preserveSubtitlesBitmapOnlyMkvNote: String
+    val preserveSubtitlesUnsupportedContainerNote: (ext: String) -> String
+    val preserveSubtitlesTrimSyncNote: String
+    val preserveSubtitlesTrimKeepsMkvNote: String
+
+    val remuxFormatTitle: String
+    val remuxFormatSub: (ext: String) -> String
+    val remuxRecommendedTag: String
+    val remuxCompatWebmNote: String
+    val remuxCompatFlvNote: String
+    val remuxCompat3gpNote: String
+    val remuxCompatIsoAudioNote: (audioCodec: String, container: String) -> String
+    val remuxCardDynamicSub: (ext: String, preserveSubs: Boolean) -> String
+    val bannerRemuxFormat: (ext: String) -> String
+    val stepRemuxFormat: (ext: String) -> String
+
+    val subSourceCardTitle: String
+    val subPickExternalButton: String
+    val subLoadEmbeddedButton: (label: String) -> String
+    val subAddManualCueButton: String
+    val subLoadingTrack: String
+    val subLoadedSummary: (name: String, count: Int) -> String
+    val subEmptyHint: String
+    val subPreviewFallbackBadge: String
+    val subPreviewLiveBadge: String
+    val subPlayPauseCd: String
+    val subCurrentTimeLabel: String
+    val subTotalDurationLabel: String
+    val subRibbonTitle: String
+    val subRibbonHint: String
+    val subRibbonEmptyCueHint: String
+    val subInlineEditorTitle: (index: Int) -> String
+    val subInlineEditorTextLabel: String
+    val subInlineEditorStartLabel: String
+    val subInlineEditorEndLabel: String
+    val subInlineEditorDelete: String
+    val subInlineEditorDone: String
+    val subEmbedModeTitle: String
+    val subSoftsubTitle: String
+    val subSoftsubSub: String
+    val subHardsubTitle: String
+    val subHardsubSub: String
+    val subHardsubUnavailableNote: String
+    val subSoftsubContainerLabel: String
+    val subFontSectionTitle: String
+    val subFontSectionSub: String
+    val subFontSizeLabel: String
+    val subSizeSmall: String
+    val subSizeMedium: String
+    val subSizeLarge: String
+    val subSizeXLarge: String
+    val subFontRobotoTag: String
+    val subFontMontserratTag: String
+    val subFontPtSerifTag: String
+    val errNoSubtitlesLoaded: String
+    val errSubtitleLoadFailed: (msg: String) -> String
+    val stepSubSoftsub: (ext: String) -> String
+    val stepSubHardsub: (codecTag: String, bitTag: String, crf: Int) -> String
+    val bannerSubSoftsub: (ext: String, count: Int) -> String
+    val bannerSubHardsub: (codecTag: String, crf: Int, font: String, count: Int) -> String
 }
 
 object TurkishStrings : AppStrings {
@@ -945,6 +1012,79 @@ object TurkishStrings : AppStrings {
     }
     override val turboAfterVideoAudioFailedTitle = "Donanım Motoru Bu Dosyada Başarısız Oldu"
     override val turboAfterVideoAudioFailedBody = "Görüntü ve ses uyumlu biçime dönüştürüldü ancak cihazdaki MediaCodec donanım kodlayıcısı yine de işlemi tamamlayamadı.\n\nDoğrudan FFmpeg yazılım motoruyla sorunsuz devam edebilirsiniz."
+
+    override val subtitleTrackPrefix = "Altyazı"
+    override val preserveSubtitlesTitle = "Altyazıları Koru"
+    override val preserveSubtitlesSubMkv = "Gömülü altyazılar (ve varsa ASS fontları) kayıpsız kopyalanır."
+    override val preserveSubtitlesSubMp4 = "Metin altyazılar (SRT/ASS/VTT) MP4 uyumlu mov_text olarak korunur."
+    override val preserveSubtitlesBitmapSkippedNote = "Not: PGS / VobSub gibi görsel altyazılar MP4/WebM kutusuna sığmaz; yalnızca metin altyazılar korunur."
+    override val preserveSubtitlesBitmapOnlyMkvNote = "Not: Bu videoda yalnızca görsel (PGS/VobSub) altyazı var; bunları korumak için MKV çıktısı gerekir."
+    override val preserveSubtitlesUnsupportedContainerNote: (String) -> String = { ext ->
+        "Not: .$ext kapsayıcısı gömülü softsub desteklemez; altyazılar dahil edilmez."
+    }
+    override val preserveSubtitlesTrimSyncNote = "Kesilen aralıktaki altyazı zamanları da otomatik kırpılıp videoya senkronize edilir."
+    override val preserveSubtitlesTrimKeepsMkvNote = "ASS/PGS altyazıları eksiksiz korumak için çıktı .mkv olarak kaydedilecek."
+
+    override val remuxFormatTitle = "Hedef Format (Kapsayıcı)"
+    override val remuxFormatSub: (String) -> String = { ext -> "Popülerliğe göre sıralı · Aktif: .${ext.uppercase()} (-c copy)" }
+    override val remuxRecommendedTag = "Önerilen"
+    override val remuxCompatWebmNote = "Not: WebM kutusu VP8/VP9/AV1 video ve Opus/Vorbis ses için tasarlanmıştır. H.264/HEVC/AAC akışları kayıpsız remuxta hata verebilir."
+    override val remuxCompatFlvNote = "Not: FLV kutusu yalnızca H.264 video ve AAC/MP3 ses destekler (HEVC/AV1/Opus desteklemez)."
+    override val remuxCompat3gpNote = "Not: 3GP kutusu H.264/MPEG-4 video ve AAC/AMR ses için uygundur."
+    override val remuxCompatIsoAudioNote: (String, String) -> String = { audioCodec, container ->
+        "Not: $audioCodec ses kodeği $container kutusunda sınırlı uyumluluğa sahip olabilir; sorun yaşarsanız MKV seçin veya Sadece Sesi Dönüştür kullanın."
+    }
+    override val remuxCardDynamicSub: (String, Boolean) -> String = { ext, keepSubs ->
+        val subPart = if (keepSubs) "ve uyumlu gömülü altyazılar korunur." else "ve uyumsuz altyazı/veri izleri elenir (-sn -dn)."
+        "Görüntü ve sese dokunmadan (-c copy) .${ext.uppercase()} kabı oluşturulur $subPart"
+    }
+    override val bannerRemuxFormat: (String) -> String = { ext -> "Kayıpsız .${ext.uppercase()} format değişimi (-c copy)" }
+    override val stepRemuxFormat: (String) -> String = { ext -> ".${ext.uppercase()} formatına çevriliyor (-c copy)" }
+
+    override val subSourceCardTitle = "Altyazı Kaynağı"
+    override val subPickExternalButton = "Dosya Seç (.srt / .ass / .vtt)"
+    override val subLoadEmbeddedButton: (String) -> String = { label -> "Videodan Al ($label)" }
+    override val subAddManualCueButton = "Satır Ekle"
+    override val subLoadingTrack = "Altyazı yükleniyor..."
+    override val subLoadedSummary: (String, Int) -> String = { name, count -> "$name · $count satır" }
+    override val subEmptyHint = "Harici bir .srt / .ass / .vtt dosyası seçin, videodaki gömülü altyazıyı yükleyin veya 'Satır Ekle' ile yazmaya başlayın."
+    override val subPreviewFallbackBadge = "Anlık Kare Önizleme (Sessiz)"
+    override val subPreviewLiveBadge = "Media3 Canlı Önizleme"
+    override val subPlayPauseCd = "Oynat / Duraklat"
+    override val subCurrentTimeLabel = "Anlık Süre"
+    override val subTotalDurationLabel = "Toplam Süre"
+    override val subRibbonTitle = "Sonsuz Altyazı Şeridi"
+    override val subRibbonHint = "Sağa/sola kaydır · Düzenlemek için altyazıya dokun"
+    override val subRibbonEmptyCueHint = "Bu noktada altyazı yok — sağa/sola kaydırın veya yeni satır ekleyin"
+    override val subInlineEditorTitle: (Int) -> String = { idx -> "Altyazı #$idx Düzenle" }
+    override val subInlineEditorTextLabel = "Altyazı Metni (Videoda anlık güncellenir)"
+    override val subInlineEditorStartLabel = "Başlangıç"
+    override val subInlineEditorEndLabel = "Bitiş"
+    override val subInlineEditorDelete = "Satırı Sil"
+    override val subInlineEditorDone = "Tamam"
+    override val subEmbedModeTitle = "Gömme Yöntemi"
+    override val subSoftsubTitle = "Softsub (Kayıpsız)"
+    override val subSoftsubSub = "Görüntü %100 copy · Saniyeler sürer · Oynatıcıda açılıp kapatılabilir"
+    override val subHardsubTitle = "Hardsub (Videoya Yak)"
+    override val subHardsubSub = "Her oynatıcıda seçili fontla sabit görünür · Acelem Var (MediaCodec) destekler"
+    override val subHardsubUnavailableNote = "Not: Bu FFmpeg derlemesinde libass filtresi bulunamadı; Softsub kullanabilir veya işlem ekranından 'Acelem Var' (MediaCodec) ile Hardsub yakabilirsiniz."
+    override val subSoftsubContainerLabel = "Softsub Çıktı Formatı"
+    override val subFontSectionTitle = "Yazı Tipi & Boyut (Tam UTF-8)"
+    override val subFontSectionSub = "Türkçe dahil tüm UTF-8 karakterleri sorunsuz destekleyen seçkin fontlar"
+    override val subFontSizeLabel = "Altyazı Boyutu"
+    override val subSizeSmall = "Küçük"
+    override val subSizeMedium = "Orta"
+    override val subSizeLarge = "Büyük"
+    override val subSizeXLarge = "Çok Büyük"
+    override val subFontRobotoTag = "Net · Evrensel"
+    override val subFontMontserratTag = "Modern · Sinema"
+    override val subFontPtSerifTag = "Klasik · Serif"
+    override val errNoSubtitlesLoaded = "Önce bir altyazı dosyası seçin, videodan altyazı alın veya en az bir satır ekleyin."
+    override val errSubtitleLoadFailed: (String) -> String = { msg -> "Altyazı okunamadı: $msg" }
+    override val stepSubSoftsub: (String) -> String = { ext -> "Altyazı kayıpsız gömülüyor (Softsub · .${ext.lowercase()})" }
+    override val stepSubHardsub: (String, String, Int) -> String = { codec, bit, crf -> "Altyazı videoya yakılıyor (${codec}${bit} CRF $crf)" }
+    override val bannerSubSoftsub: (String, Int) -> String = { ext, count -> "Softsub (.${ext.uppercase()}) · $count satır · %100 copy" }
+    override val bannerSubHardsub: (String, Int, String, Int) -> String = { codec, crf, font, count -> "Hardsub · $codec CRF $crf · $font · $count satır" }
 }
 
 object EnglishStrings : AppStrings {
@@ -1391,6 +1531,79 @@ object EnglishStrings : AppStrings {
     }
     override val turboAfterVideoAudioFailedTitle = "Hardware Engine Failed on Prepared File"
     override val turboAfterVideoAudioFailedBody = "Video and audio were converted to a compatible format, yet the device's MediaCodec hardware encoder still could not complete the job.\n\nYou can continue reliably with the FFmpeg software engine."
+
+    override val subtitleTrackPrefix = "Sub"
+    override val preserveSubtitlesTitle = "Keep Subtitles"
+    override val preserveSubtitlesSubMkv = "Embedded subtitles (and ASS fonts if present) are copied losslessly."
+    override val preserveSubtitlesSubMp4 = "Text subtitles (SRT/ASS/VTT) are preserved as MP4-compatible mov_text."
+    override val preserveSubtitlesBitmapSkippedNote = "Note: Image-based subtitles (PGS/VobSub) cannot be stored in MP4/WebM; only text tracks will be kept."
+    override val preserveSubtitlesBitmapOnlyMkvNote = "Note: This video only contains bitmap (PGS/VobSub) subtitles; MKV output is required to keep them."
+    override val preserveSubtitlesUnsupportedContainerNote: (String) -> String = { ext ->
+        "Note: .$ext container does not support safe softsubs; subtitles will be omitted."
+    }
+    override val preserveSubtitlesTrimSyncNote = "Subtitle timestamps are automatically trimmed and re-synced to your cut range."
+    override val preserveSubtitlesTrimKeepsMkvNote = "Output will stay .mkv to preserve ASS/PGS subtitles without loss."
+
+    override val remuxFormatTitle = "Target Format (Container)"
+    override val remuxFormatSub: (String) -> String = { ext -> "Ordered by popularity · Active: .${ext.uppercase()} (-c copy)" }
+    override val remuxRecommendedTag = "Recommended"
+    override val remuxCompatWebmNote = "Note: WebM expects VP8/VP9/AV1 video and Opus/Vorbis audio. Stream-copying H.264/HEVC/AAC may fail."
+    override val remuxCompatFlvNote = "Note: FLV supports H.264 video with AAC/MP3 audio (HEVC/AV1/Opus are unsupported)."
+    override val remuxCompat3gpNote = "Note: 3GP is designed for H.264/MPEG-4 video and AAC/AMR audio."
+    override val remuxCompatIsoAudioNote: (String, String) -> String = { audioCodec, container ->
+        "Note: $audioCodec audio may have limited compatibility in $container; choose MKV or Re-encode Audio Only if needed."
+    }
+    override val remuxCardDynamicSub: (String, Boolean) -> String = { ext, keepSubs ->
+        val subPart = if (keepSubs) "and compatible embedded subtitles are kept." else "and incompatible subtitle/data tracks are stripped (-sn -dn)."
+        "Rewraps streams into .${ext.uppercase()} without re-encoding (-c copy) $subPart"
+    }
+    override val bannerRemuxFormat: (String) -> String = { ext -> "Lossless .${ext.uppercase()} container remux (-c copy)" }
+    override val stepRemuxFormat: (String) -> String = { ext -> "Remuxing to .${ext.uppercase()} (-c copy)" }
+
+    override val subSourceCardTitle = "Subtitle Source"
+    override val subPickExternalButton = "Pick File (.srt / .ass / .vtt)"
+    override val subLoadEmbeddedButton: (String) -> String = { label -> "Import Track ($label)" }
+    override val subAddManualCueButton = "Add Line"
+    override val subLoadingTrack = "Loading subtitles..."
+    override val subLoadedSummary: (String, Int) -> String = { name, count -> "$name · $count cues" }
+    override val subEmptyHint = "Pick an external .srt / .ass / .vtt file, import an embedded subtitle track, or tap 'Add Line' to write from scratch."
+    override val subPreviewFallbackBadge = "Instant Frame Preview (Silent)"
+    override val subPreviewLiveBadge = "Media3 Live Preview"
+    override val subPlayPauseCd = "Play / Pause"
+    override val subCurrentTimeLabel = "Current Time"
+    override val subTotalDurationLabel = "Total Duration"
+    override val subRibbonTitle = "Infinite Subtitle Ribbon"
+    override val subRibbonHint = "Swipe left/right · Tap any subtitle to edit"
+    override val subRibbonEmptyCueHint = "No subtitle here — swipe left/right or add a new line"
+    override val subInlineEditorTitle: (Int) -> String = { idx -> "Edit Subtitle #$idx" }
+    override val subInlineEditorTextLabel = "Subtitle Text (Updates live on video)"
+    override val subInlineEditorStartLabel = "Start"
+    override val subInlineEditorEndLabel = "End"
+    override val subInlineEditorDelete = "Delete Line"
+    override val subInlineEditorDone = "Done"
+    override val subEmbedModeTitle = "Embedding Method"
+    override val subSoftsubTitle = "Softsub (Lossless)"
+    override val subSoftsubSub = "100% video copy · Finishes in seconds · Toggleable in video players"
+    override val subHardsubTitle = "Hardsub (Burn-In)"
+    override val subHardsubSub = "Always visible with exact chosen font on any player · Supports Turbo (MediaCodec)"
+    override val subHardsubUnavailableNote = "Note: libass filter is unavailable in this FFmpeg build; you can use Softsub or tap 'In a Hurry' (MediaCodec Turbo) to burn hardsubs."
+    override val subSoftsubContainerLabel = "Softsub Output Container"
+    override val subFontSectionTitle = "Font & Size (Full UTF-8)"
+    override val subFontSectionSub = "Curated fonts with complete UTF-8 & international character support"
+    override val subFontSizeLabel = "Subtitle Size"
+    override val subSizeSmall = "Small"
+    override val subSizeMedium = "Medium"
+    override val subSizeLarge = "Large"
+    override val subSizeXLarge = "Extra Large"
+    override val subFontRobotoTag = "Crisp · Universal"
+    override val subFontMontserratTag = "Modern · Cinema"
+    override val subFontPtSerifTag = "Classic · Serif"
+    override val errNoSubtitlesLoaded = "Pick a subtitle file, import an embedded track, or add at least one line first."
+    override val errSubtitleLoadFailed: (String) -> String = { msg -> "Failed to read subtitles: $msg" }
+    override val stepSubSoftsub: (String) -> String = { ext -> "Muxing lossless softsub (.${ext.lowercase()})" }
+    override val stepSubHardsub: (String, String, Int) -> String = { codec, bit, crf -> "Burning subtitles (${codec}${bit} CRF $crf)" }
+    override val bannerSubSoftsub: (String, Int) -> String = { ext, count -> "Softsub (.${ext.uppercase()}) · $count cues · 100% copy" }
+    override val bannerSubHardsub: (String, Int, String, Int) -> String = { codec, crf, font, count -> "Hardsub · $codec CRF $crf · $font · $count cues" }
 }
 
 // Localized display helpers for domain enums
@@ -1412,6 +1625,7 @@ fun ProcessingMode.localizedTitle(s: AppStrings): String = when (this) {
     ProcessingMode.AUDIO_ONLY_AAC -> s.modeAudioOnlyTitle
     ProcessingMode.VIDEO_ONLY_CRF -> s.modeVideoOnlyTitle
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> s.modeVideoAndAudioTitle
+    ProcessingMode.EMBED_SUBTITLES -> s.modeEmbedSubtitlesTitle
     ProcessingMode.CUSTOM_COMMAND -> s.modeCustomCmdTitle
 }
 
@@ -1426,6 +1640,7 @@ fun ProcessingMode.localizedShortTitle(s: AppStrings): String = when (this) {
     ProcessingMode.AUDIO_ONLY_AAC -> s.modeAudioOnlyTitle
     ProcessingMode.VIDEO_ONLY_CRF -> s.modeVideoOnlyTitle
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> s.modeVideoAndAudioTitle
+    ProcessingMode.EMBED_SUBTITLES -> s.modeEmbedSubtitlesTitle
     ProcessingMode.CUSTOM_COMMAND -> s.modeCustomCmdTitle
 }
 
@@ -1440,6 +1655,7 @@ fun ProcessingMode.localizedSubtitle(s: AppStrings): String = when (this) {
     ProcessingMode.AUDIO_ONLY_AAC -> s.modeAudioOnlySub
     ProcessingMode.VIDEO_ONLY_CRF -> s.modeVideoOnlySub
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> s.modeVideoAndAudioSub
+    ProcessingMode.EMBED_SUBTITLES -> s.modeEmbedSubtitlesSub
     ProcessingMode.CUSTOM_COMMAND -> s.modeCustomCmdSub
 }
 
@@ -1454,6 +1670,7 @@ fun ProcessingMode.localizedShortSubtitle(s: AppStrings): String = when (this) {
     ProcessingMode.AUDIO_ONLY_AAC -> s.badgeLossless
     ProcessingMode.VIDEO_ONLY_CRF -> s.badgeLossy
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> s.badgeLossy
+    ProcessingMode.EMBED_SUBTITLES -> s.modeEmbedSubtitlesSub
     ProcessingMode.CUSTOM_COMMAND -> ""
 }
 
@@ -1468,7 +1685,21 @@ fun ProcessingMode.localizedQualityTag(s: AppStrings): String = when (this) {
     ProcessingMode.AUDIO_ONLY_AAC -> s.badgeLossless
     ProcessingMode.VIDEO_ONLY_CRF,
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> s.badgeLossy
+    ProcessingMode.EMBED_SUBTITLES -> s.modeEmbedSubtitlesSub
     ProcessingMode.CUSTOM_COMMAND -> ""
+}
+
+fun SubtitleFontSizeOption.localizedLabel(s: AppStrings): String = when (this) {
+    SubtitleFontSizeOption.SMALL -> s.subSizeSmall
+    SubtitleFontSizeOption.MEDIUM -> s.subSizeMedium
+    SubtitleFontSizeOption.LARGE -> s.subSizeLarge
+    SubtitleFontSizeOption.XLARGE -> s.subSizeXLarge
+}
+
+fun SubtitleFontOption.localizedTag(s: AppStrings): String = when (this) {
+    SubtitleFontOption.ROBOTO -> s.subFontRobotoTag
+    SubtitleFontOption.MONTSERRAT -> s.subFontMontserratTag
+    SubtitleFontOption.PT_SERIF -> s.subFontPtSerifTag
 }
 
 fun FpsOption.localizedLabel(s: AppStrings): String = when (this) {

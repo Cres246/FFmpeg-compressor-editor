@@ -727,6 +727,9 @@ object FfmpegMath {
             "webm" -> "video/webm"
             "mov" -> "video/quicktime"
             "avi" -> "video/x-msvideo"
+            "ts", "m2ts", "mts" -> "video/mp2t"
+            "flv" -> "video/x-flv"
+            "3gp" -> "video/3gpp"
             "m4a" -> "audio/mp4"
             "mp3" -> "audio/mpeg"
             "opus" -> "audio/opus"
@@ -736,6 +739,9 @@ object FfmpegMath {
             "ac3" -> "audio/ac3"
             "eac3" -> "audio/eac3"
             "mka" -> "audio/x-matroska"
+            "srt" -> "application/x-subrip"
+            "ass", "ssa" -> "text/x-ssa"
+            "vtt" -> "text/vtt"
             "gif" -> "image/gif"
             "png" -> "image/png"
             "jpg", "jpeg" -> "image/jpeg"
@@ -1200,12 +1206,18 @@ object FfmpegMath {
      * Resolves the safest 100% lossless container extension for [TrimSubMode.FULL_LOSSLESS]:
      * - Keeps `.mkv` when the source is Matroska/WebM and carries non-MP4-native audio
      *   (DTS, TrueHD, AC-3, E-AC-3, FLAC, Opus, Vorbis, PCM, ALAC, etc.) or non-MP4 video,
-     *   so players like MX Player use hardware 10-bit HDR (HW+) + Custom Codec audio identically
-     *   to the original file instead of choking on non-standard `mp4a`/DTS or `hev1` MP4 muxes.
+     *   OR when [preserveSubtitles] is enabled and the source carries ASS/SSA or bitmap
+     *   (PGS/VobSub) subtitles that would lose styling or fail in MP4 `mov_text`.
      * - Uses `.mp4` (with `-tag:v hvc1` for HEVC) for MP4/MOV sources or MKV files whose tracks
      *   are already universally MP4-native (H.264/HEVC/AV1 + AAC/MP3 or silent).
      */
-    fun resolveFullLosslessTrimExtension(media: MediaInfo): String {
+    fun resolveFullLosslessTrimExtension(
+        media: MediaInfo,
+        preserveSubtitles: Boolean = false
+    ): String {
+        if (preserveSubtitles && (media.hasAssSubtitles || media.hasBitmapSubtitles)) {
+            return "mkv"
+        }
         val srcExt = media.extension.lowercase(Locale.US)
         if (srcExt !in setOf("mkv", "webm", "mka")) return "mp4"
         val v = media.videoCodec?.lowercase(Locale.US).orEmpty()
@@ -1213,6 +1225,101 @@ object FfmpegMath {
         val videoIsMp4Native = v.isBlank() || v in setOf("h264", "avc", "avc1", "hevc", "h265", "hvc1", "hev1", "av1", "av01", "mpeg4")
         val audioIsMp4Native = a.isBlank() || a in setOf("aac", "mp3")
         return if (videoIsMp4Native && audioIsMp4Native) "mp4" else "mkv"
+    }
+
+    /**
+     * Safely maps or drops embedded subtitle tracks according to the target container so FFmpeg
+     * NEVER fails on incompatible subtitle codecs (e.g. PGS/VobSub into MP4):
+     * - OFF or no subtitles: `-sn -dn` (identical to baseline, 0 overhead).
+     * - `.mkv` / `.mka`: `-map 0:s? -c:s copy` (+ `-map 0:t? -c:t copy` for embedded ASS fonts).
+     * - `.mp4` / `.mov` / `.m4v`: maps ONLY text tracks (`-map 0:s:<idx>`) with `-c:s mov_text`.
+     * - `.webm`: maps ONLY text tracks with `-c:s webvtt`.
+     * - Other containers (`ts`, `avi`, `flv`, `3gp`): `-sn -dn`.
+     */
+    fun appendSubtitlePreservationArgs(
+        args: MutableList<String>,
+        media: MediaInfo,
+        outputExtension: String,
+        preserveSubtitles: Boolean
+    ) {
+        if (!preserveSubtitles || !media.hasSubtitles) {
+            args.addAll(listOf("-sn", "-dn"))
+            return
+        }
+        args.add("-dn")
+        val ext = outputExtension.lowercase(Locale.US).trimStart('.')
+        when (ext) {
+            "mkv", "mka" -> {
+                args.addAll(listOf("-map", "0:s?", "-c:s", "copy"))
+                if (media.hasAssSubtitles) {
+                    args.addAll(listOf("-map", "0:t?", "-c:t", "copy"))
+                }
+            }
+            "mp4", "mov", "m4v" -> {
+                val textTracks = media.subtitleTracks.filter { it.isTextBased }
+                if (textTracks.isEmpty()) {
+                    args.add("-sn")
+                } else {
+                    for (t in textTracks) {
+                        args.addAll(listOf("-map", "0:s:${t.subtitleStreamIndex}"))
+                    }
+                    args.addAll(listOf("-c:s", "mov_text"))
+                }
+            }
+            "webm" -> {
+                val textTracks = media.subtitleTracks.filter { it.isTextBased }
+                if (textTracks.isEmpty()) {
+                    args.add("-sn")
+                } else {
+                    for (t in textTracks) {
+                        args.addAll(listOf("-map", "0:s:${t.subtitleStreamIndex}"))
+                    }
+                    args.addAll(listOf("-c:s", "webvtt"))
+                }
+            }
+            else -> {
+                args.add("-sn")
+            }
+        }
+    }
+
+    /**
+     * Non-blocking container/codec compatibility hint for [ProcessingMode.REMUX_FORMAT].
+     */
+    fun checkRemuxCompatibilityHint(
+        media: MediaInfo,
+        target: RemuxOutputFormat,
+        strings: AppStrings
+    ): String? {
+        val v = media.videoCodec?.lowercase(Locale.US).orEmpty()
+        val a = media.audioCodec?.lowercase(Locale.US).orEmpty()
+        return when (target) {
+            RemuxOutputFormat.WEBM -> {
+                val vOk = v.isBlank() || v in setOf("vp8", "vp9", "av1", "av01")
+                val aOk = a.isBlank() || a in setOf("opus", "vorbis")
+                if (!vOk || !aOk) strings.remuxCompatWebmNote else null
+            }
+            RemuxOutputFormat.FLV -> {
+                val vOk = v.isBlank() || v in setOf("h264", "avc", "avc1", "flv1", "vp6", "vp6f")
+                val aOk = a.isBlank() || a in setOf("aac", "mp3")
+                if (!vOk || !aOk) strings.remuxCompatFlvNote else null
+            }
+            RemuxOutputFormat.THREE_GP -> {
+                val vOk = v.isBlank() || v in setOf("h264", "avc", "avc1", "mpeg4", "h263")
+                val aOk = a.isBlank() || a in setOf("aac", "amr_nb", "amr_wb")
+                if (!vOk || !aOk) strings.remuxCompat3gpNote else null
+            }
+            RemuxOutputFormat.MP4,
+            RemuxOutputFormat.MOV,
+            RemuxOutputFormat.M4V -> {
+                if (a.isNotBlank() && a !in setOf("aac", "mp3", "ac3", "eac3", "alac", "opus", "flac")) {
+                    strings.remuxCompatIsoAudioNote(a.uppercase(Locale.US), target.label)
+                } else {
+                    null
+                }
+            }
+            else -> null
+        }
     }
 
     /**
@@ -1242,7 +1349,7 @@ object FfmpegMath {
             }
             ProcessingMode.TRIM_VIDEO -> {
                 when (config.trimSubMode) {
-                    TrimSubMode.FULL_LOSSLESS -> "${base}_${clipTag}.${resolveFullLosslessTrimExtension(media)}"
+                    TrimSubMode.FULL_LOSSLESS -> "${base}_${clipTag}.${resolveFullLosslessTrimExtension(media, config.preserveSubtitles)}"
                     TrimSubMode.VIDEO_LOSSLESS_AUDIO_AAC -> {
                         if (!media.hasAudio) "${base}_${clipTag}_${silentTag}.mp4"
                         else {
@@ -1261,7 +1368,7 @@ object FfmpegMath {
                     }
                 }
             }
-            ProcessingMode.REMUX_FORMAT -> "${base}_Remux.mp4"
+            ProcessingMode.REMUX_FORMAT -> "${base}_Remux.${config.remuxFormat.extension}"
             ProcessingMode.AUDIO_ONLY_AAC -> {
                 val ab = normalizeAudioBitrate(config.audioBitrateInput, 256)
                 "${base}_AAC_${ab}k.mp4"
@@ -1298,6 +1405,12 @@ object FfmpegMath {
                     }
                 }
             }
+            ProcessingMode.EMBED_SUBTITLES -> {
+                when (config.subtitleEmbedMode) {
+                    SubtitleEmbedMode.SOFTSUB -> "${base}_Softsub.${config.subtitleSoftsubContainer.extension}"
+                    SubtitleEmbedMode.HARDSUB -> "${base}_Hardsub_${codecTag}${bitTag}_CRF${crfVal}.mp4"
+                }
+            }
             ProcessingMode.CUSTOM_COMMAND -> strings.customCommandOutputPlaceholder
         }
     }
@@ -1313,7 +1426,9 @@ object FfmpegMath {
         outputPath: String,
         passLogPrefix: String,
         strings: AppStrings = AppLanguageController.currentStrings(),
-        cpuTopology: CpuTopology = CpuTopology.current()
+        cpuTopology: CpuTopology = CpuTopology.current(),
+        subtitleFilePath: String? = null,
+        subtitleFontsDirPath: String? = null
     ): List<FfmpegStepSpec> {
         val codec = config.codec
         val pixFmt = config.bitDepth.pixFmt
@@ -1444,7 +1559,8 @@ object FfmpegMath {
                 val (startT, endT, clipDur) = resolveTrimRange(config, media.durationSec)
                 val args = mutableListOf("-y")
                 val sourceIsHevc = isHevcCodec(media.videoCodec)
-                val isMp4Output = outputPath.endsWith(".mp4", ignoreCase = true)
+                val outExt = outputPath.substringAfterLast('.', "mp4").lowercase(Locale.US)
+                val isMp4Output = outExt == "mp4"
                 val srcExt = media.extension.lowercase(Locale.US)
                 val needsAacAdtsBsf = isMp4Output &&
                     media.audioCodec.equals("aac", ignoreCase = true) &&
@@ -1457,7 +1573,9 @@ object FfmpegMath {
                         if (media.hasAudio) {
                             args.addAll(listOf("-map", "0:a:0?"))
                         }
-                        args.addAll(listOf("-sn", "-dn", "-c", "copy"))
+                        args.addAll(listOf("-c:v", "copy"))
+                        if (media.hasAudio) args.addAll(listOf("-c:a", "copy")) else args.add("-an")
+                        appendSubtitlePreservationArgs(args, media, outExt, config.preserveSubtitles)
                         if (isMp4Output && sourceIsHevc) {
                             args.addAll(listOf("-tag:v", "hvc1"))
                         }
@@ -1483,7 +1601,8 @@ object FfmpegMath {
                         if (media.hasAudio) {
                             args.addAll(listOf("-map", "0:a:0?"))
                         }
-                        args.addAll(listOf("-sn", "-dn", "-c:v", "copy"))
+                        args.addAll(listOf("-c:v", "copy"))
+                        appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                         if (isMp4Output && sourceIsHevc) {
                             args.addAll(listOf("-tag:v", "hvc1"))
                         }
@@ -1510,11 +1629,15 @@ object FfmpegMath {
                         if (endT != null) args.addAll(listOf("-to", endT))
                         val vf = buildScaleFilter(media.width, media.height, config.resolution, media.needsEvenScale)
                         args.addAll(listOf("-i", inputTokenProvider()))
+                        if (config.preserveSubtitles && media.hasSubtitles) {
+                            args.addAll(listOf("-map", "0:V:0"))
+                            if (media.hasAudio) args.addAll(listOf("-map", "0:a:0?"))
+                        }
                         config.fps.ffmpegValue?.let { args.addAll(listOf("-r", it)) }
                         vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
+                        appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                         args.addAll(
                             listOf(
-                                "-sn", "-dn",
                                 "-c:v", codec.encoder,
                                 "-threads", videoEncoderThreads,
                                 "-preset", preset,
@@ -1538,11 +1661,15 @@ object FfmpegMath {
                         if (endT != null) args.addAll(listOf("-to", endT))
                         val vf = buildScaleFilter(media.width, media.height, config.resolution, media.needsEvenScale)
                         args.addAll(listOf("-i", inputTokenProvider()))
+                        if (config.preserveSubtitles && media.hasSubtitles) {
+                            args.addAll(listOf("-map", "0:V:0"))
+                            if (media.hasAudio) args.addAll(listOf("-map", "0:a:0?"))
+                        }
                         config.fps.ffmpegValue?.let { args.addAll(listOf("-r", it)) }
                         vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
+                        appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                         args.addAll(
                             listOf(
-                                "-sn", "-dn",
                                 "-c:v", codec.encoder,
                                 "-threads", videoEncoderThreads,
                                 "-preset", preset,
@@ -1572,16 +1699,20 @@ object FfmpegMath {
             }
 
             ProcessingMode.REMUX_FORMAT -> {
+                val targetFmt = config.remuxFormat
                 val args = mutableListOf("-y", "-i", inputTokenProvider(), "-map", "0:V:0")
                 if (media.hasAudio) {
                     args.addAll(listOf("-map", "0:a:0?"))
                 }
-                args.addAll(listOf("-sn", "-dn", "-c", "copy"))
-                if (isHevcCodec(media.videoCodec)) {
+                args.addAll(listOf("-c:v", "copy"))
+                if (media.hasAudio) args.addAll(listOf("-c:a", "copy")) else args.add("-an")
+                appendSubtitlePreservationArgs(args, media, targetFmt.extension, config.preserveSubtitles)
+                if (targetFmt.isIsoBmff && isHevcCodec(media.videoCodec)) {
                     args.addAll(listOf("-tag:v", "hvc1"))
                 }
                 val srcExt = media.extension.lowercase(Locale.US)
-                if (media.audioCodec.equals("aac", ignoreCase = true) &&
+                if (targetFmt.isIsoBmff &&
+                    media.audioCodec.equals("aac", ignoreCase = true) &&
                     srcExt in setOf("ts", "m2ts", "mts", "flv", "aac")
                 ) {
                     args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
@@ -1589,12 +1720,14 @@ object FfmpegMath {
                 args.addAll(
                     listOf(
                         "-avoid_negative_ts", "make_zero",
-                        "-max_muxing_queue_size", "1024",
-                        "-movflags", "+faststart",
-                        outputPath
+                        "-max_muxing_queue_size", "1024"
                     )
                 )
-                listOf(FfmpegStepSpec(strings.stepRemux, args, media.durationSec))
+                if (targetFmt.isIsoBmff) {
+                    args.addAll(listOf("-movflags", "+faststart"))
+                }
+                args.add(outputPath)
+                listOf(FfmpegStepSpec(strings.stepRemuxFormat(targetFmt.label), args, media.durationSec))
             }
 
             ProcessingMode.AUDIO_ONLY_AAC -> {
@@ -1603,7 +1736,8 @@ object FfmpegMath {
                 if (media.hasAudio) {
                     args.addAll(listOf("-map", "0:a:0?"))
                 }
-                args.addAll(listOf("-sn", "-dn", "-c:v", "copy"))
+                args.addAll(listOf("-c:v", "copy"))
+                appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                 if (isHevcCodec(media.videoCodec)) {
                     args.addAll(listOf("-tag:v", "hvc1"))
                 }
@@ -1627,9 +1761,9 @@ object FfmpegMath {
                     args.addAll(listOf("-map", "0:a:0?"))
                 }
                 vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
+                appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                 args.addAll(
                     listOf(
-                        "-sn", "-dn",
                         // Keep exact original video frame PTS so -c:a copy never drifts on VFR clips
                         "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
@@ -1676,9 +1810,9 @@ object FfmpegMath {
                     args.addAll(listOf("-map", "0:a:0?"))
                 }
                 vf?.let { args.addAll(listOf("-filter_threads", "0", "-vf", it)) }
+                appendSubtitlePreservationArgs(args, media, "mp4", config.preserveSubtitles)
                 args.addAll(
                     listOf(
-                        "-sn", "-dn",
                         "-fps_mode", "passthrough",
                         "-c:v", codec.encoder,
                         "-threads", videoEncoderThreads,
@@ -1754,6 +1888,120 @@ object FfmpegMath {
                     }
                 }
                 listOf(FfmpegStepSpec(label, args, media.durationSec))
+            }
+
+            ProcessingMode.EMBED_SUBTITLES -> {
+                when (config.subtitleEmbedMode) {
+                    SubtitleEmbedMode.SOFTSUB -> {
+                        val subPath = subtitleFilePath ?: "subtitles.srt"
+                        val container = config.subtitleSoftsubContainer
+                        val isMp4 = container == SubtitleSoftsubContainer.MP4
+                        val args = mutableListOf(
+                            "-y",
+                            "-i", inputTokenProvider(),
+                            "-i", subPath,
+                            "-map", "0:V:0"
+                        )
+                        if (media.hasAudio) {
+                            args.addAll(listOf("-map", "0:a:0?"))
+                        }
+                        args.addAll(listOf("-map", "1:0", "-dn", "-c:v", "copy"))
+                        if (media.hasAudio) {
+                            args.addAll(listOf("-c:a", "copy"))
+                        } else {
+                            args.add("-an")
+                        }
+                        args.addAll(
+                            listOf(
+                                "-c:s", if (isMp4) "mov_text" else "srt",
+                                "-disposition:s:0", "default"
+                            )
+                        )
+                        if (isMp4 && isHevcCodec(media.videoCodec)) {
+                            args.addAll(listOf("-tag:v", "hvc1"))
+                        }
+                        val srcExt = media.extension.lowercase(Locale.US)
+                        if (isMp4 &&
+                            media.audioCodec.equals("aac", ignoreCase = true) &&
+                            srcExt in setOf("ts", "m2ts", "mts", "flv", "aac")
+                        ) {
+                            args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
+                        }
+                        args.addAll(
+                            listOf(
+                                "-avoid_negative_ts", "make_zero",
+                                "-max_muxing_queue_size", "1024"
+                            )
+                        )
+                        if (isMp4) {
+                            args.addAll(listOf("-movflags", "+faststart"))
+                        }
+                        args.add(outputPath)
+                        listOf(
+                            FfmpegStepSpec(
+                                strings.stepSubSoftsub(container.extension),
+                                args,
+                                media.durationSec
+                            )
+                        )
+                    }
+                    SubtitleEmbedMode.HARDSUB -> {
+                        val assPath = subtitleFilePath ?: "subtitles.ass"
+                        val escapedAss = SubtitleParser.escapeForFfmpegFilterPath(assPath)
+                        val assFilter = if (!subtitleFontsDirPath.isNullOrBlank()) {
+                            val escapedFonts = SubtitleParser.escapeForFfmpegFilterPath(subtitleFontsDirPath)
+                            "ass='$escapedAss':fontsdir='$escapedFonts'"
+                        } else {
+                            "ass='$escapedAss'"
+                        }
+                        val evenScale = buildScaleFilter(media.width, media.height, ResolutionOption.ORIGINAL, media.needsEvenScale)
+                        val fullVf = if (evenScale != null) "$evenScale,$assFilter" else assFilter
+                        val args = mutableListOf("-y", "-i", inputTokenProvider(), "-map", "0:V:0")
+                        if (media.hasAudio) {
+                            args.addAll(listOf("-map", "0:a:0?"))
+                        }
+                        args.addAll(
+                            listOf(
+                                "-filter_threads", "0",
+                                "-vf", fullVf,
+                                "-sn", "-dn",
+                                "-fps_mode", "passthrough",
+                                "-c:v", codec.encoder,
+                                "-threads", videoEncoderThreads,
+                                "-preset", preset,
+                                "-crf", codec.crf.toString(),
+                                "-pix_fmt", pixFmt
+                            )
+                        )
+                        addH265CrfArgs(args)
+                        if (!media.hasAudio) {
+                            args.add("-an")
+                        } else {
+                            args.addAll(listOf("-c:a", "copy"))
+                            val ext = media.extension.lowercase(Locale.US)
+                            if (media.audioCodec.equals("aac", ignoreCase = true) &&
+                                ext in setOf("ts", "m2ts", "mts", "flv", "aac")
+                            ) {
+                                args.addAll(listOf("-bsf:a", "aac_adtstoasc"))
+                            }
+                        }
+                        args.addAll(
+                            listOf(
+                                "-avoid_negative_ts", "make_zero",
+                                "-max_muxing_queue_size", "1024",
+                                "-movflags", "+faststart",
+                                outputPath
+                            )
+                        )
+                        listOf(
+                            FfmpegStepSpec(
+                                strings.stepSubHardsub(codec.tag, config.bitDepth.tag, codec.crf),
+                                args,
+                                media.durationSec
+                            )
+                        )
+                    }
+                }
             }
 
             ProcessingMode.CUSTOM_COMMAND -> emptyList()

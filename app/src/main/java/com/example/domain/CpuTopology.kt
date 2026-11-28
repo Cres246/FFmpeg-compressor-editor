@@ -481,6 +481,16 @@ object ActivePerformanceStamps {
                 }
             }
         }
+        ProcessingMode.EMBED_SUBTITLES -> when (config.subtitleEmbedMode) {
+            SubtitleEmbedMode.SOFTSUB -> SoftwareWorkloadKind.STREAM_COPY
+            SubtitleEmbedMode.HARDSUB -> {
+                if (config.codec == VideoCodecOption.H265) {
+                    SoftwareWorkloadKind.VIDEO_X265
+                } else {
+                    SoftwareWorkloadKind.VIDEO_X264
+                }
+            }
+        }
         ProcessingMode.CUSTOM_COMMAND -> SoftwareWorkloadKind.VIDEO_OTHER_TRANSCODE
     }
 

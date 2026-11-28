@@ -7,6 +7,36 @@ enum class MediaPickSource {
     FILE_PICKER
 }
 
+data class SubtitleTrackInfo(
+    val subtitleStreamIndex: Int,
+    val globalStreamIndex: Int,
+    val codec: String,
+    val language: String? = null,
+    val title: String? = null
+) {
+    val formatTag: String
+        get() = when (codec.lowercase(java.util.Locale.US)) {
+            "subrip", "srt", "text" -> ".srt"
+            "ass", "ssa" -> ".ass"
+            "webvtt", "vtt" -> ".vtt"
+            "mov_text", "tx3g" -> ".tx3g"
+            "hdmv_pgs_subtitle", "pgssub" -> ".pgs"
+            "dvd_subtitle", "dvdsub", "vobsub" -> ".vobsub"
+            "dvb_subtitle", "dvbsub" -> ".dvb"
+            "eia_608", "cc_dec" -> ".cc"
+            else -> ".${codec.lowercase(java.util.Locale.US).take(6)}"
+        }
+
+    val isTextBased: Boolean
+        get() = codec.lowercase(java.util.Locale.US) in setOf(
+            "subrip", "srt", "ass", "ssa", "webvtt", "vtt", "mov_text", "tx3g",
+            "text", "sami", "microdvd", "mpl2", "jacosub", "realtext"
+        )
+
+    val isBitmapBased: Boolean
+        get() = !isTextBased
+}
+
 data class MediaInfo(
     val uri: Uri,
     val fileName: String,
@@ -26,7 +56,8 @@ data class MediaInfo(
     val colorTransfer: String? = null,
     val colorSpace: String? = null,
     val colorPrimaries: String? = null,
-    val bitsPerRawSample: Int? = null
+    val bitsPerRawSample: Int? = null,
+    val subtitleTracks: List<SubtitleTrackInfo> = emptyList()
 ) {
     val bitDepthIn: String
         get() = when {
@@ -79,13 +110,46 @@ data class MediaInfo(
             return c in setOf("flac", "alac", "wavpack", "truehd", "mlp", "ape", "tta", "tak") ||
                 c.startsWith("pcm_")
         }
+
+    val hasSubtitles: Boolean
+        get() = subtitleTracks.isNotEmpty()
+
+    val hasTextSubtitles: Boolean
+        get() = subtitleTracks.any { it.isTextBased }
+
+    val hasBitmapSubtitles: Boolean
+        get() = subtitleTracks.any { it.isBitmapBased }
+
+    val hasAssSubtitles: Boolean
+        get() = subtitleTracks.any {
+            it.codec.equals("ass", ignoreCase = true) || it.codec.equals("ssa", ignoreCase = true)
+        }
 }
 
 data class EncoderCapabilities(
     val x264Supports10Bit: Boolean = false,
     val x265Supports10Bit: Boolean = true,
+    val libassSupportsHardsub: Boolean = true,
     val probed: Boolean = false
 )
+
+enum class RemuxOutputFormat(
+    val extension: String,
+    val label: String,
+    val isRecommended: Boolean = false,
+    val isIsoBmff: Boolean = false,
+    val supportsSafeSoftsub: Boolean = false
+) {
+    MP4("mp4", "MP4", isRecommended = true, isIsoBmff = true, supportsSafeSoftsub = true),
+    MKV("mkv", "MKV", isRecommended = false, isIsoBmff = false, supportsSafeSoftsub = true),
+    MOV("mov", "MOV", isRecommended = false, isIsoBmff = true, supportsSafeSoftsub = true),
+    WEBM("webm", "WEBM", isRecommended = false, isIsoBmff = false, supportsSafeSoftsub = true),
+    TS("ts", "TS", isRecommended = false, isIsoBmff = false, supportsSafeSoftsub = false),
+    AVI("avi", "AVI", isRecommended = false, isIsoBmff = false, supportsSafeSoftsub = false),
+    FLV("flv", "FLV", isRecommended = false, isIsoBmff = false, supportsSafeSoftsub = false),
+    M4V("m4v", "M4V", isRecommended = false, isIsoBmff = true, supportsSafeSoftsub = true),
+    THREE_GP("3gp", "3GP", isRecommended = false, isIsoBmff = true, supportsSafeSoftsub = false)
+}
 
 enum class ModeCategory(val title: String) {
     TARGET_SIZE("Hedef Boyut"),
@@ -234,6 +298,18 @@ enum class ProcessingMode(
         category = ModeCategory.OTHER,
         requiresVideo = true
     ),
+    EMBED_SUBTITLES(
+        number = 12,
+        title = "Altyazı Göm",
+        shortTitle = "Altyazı Göm",
+        subtitle = "Canlı önizleme · Softsub / Hardsub",
+        shortSubtitle = "Softsub · Hardsub",
+        badge = "ALTYAZI",
+        qualityTag = "Soft · Hard",
+        qualityTone = QualityBadgeTone.PARTIAL,
+        category = ModeCategory.OTHER,
+        requiresVideo = true
+    ),
     CUSTOM_COMMAND(
         number = 11,
         title = "Özel FFmpeg Komutu",
@@ -358,6 +434,18 @@ data class ModeConfigState(
     val trimScan: TrimScanState = TrimScanState(),
     // Audio extract specific
     val audioExtractFormat: AudioExtractFormat = AudioExtractFormat.ORIGINAL,
+    // Optional embedded subtitle preservation across Trim / Remux / CRF / Audio-Only modes
+    val preserveSubtitles: Boolean = false,
+    // Remux container target (ordered by popularity; MP4 recommended)
+    val remuxFormat: RemuxOutputFormat = RemuxOutputFormat.MP4,
+    // Interactive Embed Subtitles studio state
+    val subtitleEmbedMode: SubtitleEmbedMode = SubtitleEmbedMode.HARDSUB,
+    val subtitleSourceName: String = "",
+    val subtitleCues: List<SubtitleCue> = emptyList(),
+    val subtitleFont: SubtitleFontOption = SubtitleFontOption.ROBOTO,
+    val subtitleFontSize: SubtitleFontSizeOption = SubtitleFontSizeOption.MEDIUM,
+    val subtitleSoftsubContainer: SubtitleSoftsubContainer = SubtitleSoftsubContainer.MP4,
+    val subtitleSourceEmbeddedIndex: Int? = null,
     // Custom command specific
     val customCommandInput: String = ""
 )
@@ -475,6 +563,8 @@ fun supportsMedia3HardwareTurbo(media: MediaInfo, config: ModeConfigState): Bool
         ProcessingMode.TRIM_VIDEO ->
             config.trimSubMode == TrimSubMode.CRF_AUDIO_COPY ||
                 config.trimSubMode == TrimSubMode.CRF_AUDIO_AAC
+        ProcessingMode.EMBED_SUBTITLES ->
+            config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB && config.subtitleCues.isNotEmpty()
         else -> false
     }
 }

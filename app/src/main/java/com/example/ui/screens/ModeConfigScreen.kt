@@ -10,8 +10,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -49,6 +52,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -74,6 +78,9 @@ import com.example.domain.ModeConfigState
 import com.example.domain.PendingTurboContinuation
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
+import com.example.domain.RemuxOutputFormat
+import com.example.domain.SubtitleEmbedMode
+import com.example.domain.SubtitleParser
 import com.example.domain.TrimSubMode
 import com.example.domain.localizedLabel
 import com.example.domain.localizedTitle
@@ -84,6 +91,9 @@ import com.example.ui.components.ConfigSectionCard
 import com.example.ui.components.FpsAndResolutionSection
 import com.example.ui.components.OutputAndCommandPreviewCard
 import com.example.ui.components.PresetSection
+import com.example.ui.components.SubtitleEmbedModeCard
+import com.example.ui.components.SubtitleFontAndSizeSection
+import com.example.ui.components.SubtitleStudioSection
 import com.example.ui.components.TrimScrubState
 import com.example.ui.components.TrimSubModeSelector
 import com.example.ui.components.TrimTimeAndKeyframeSection
@@ -102,7 +112,9 @@ fun ModeConfigScreen(
     viewModel: MainViewModel,
     pendingTurboContinuation: PendingTurboContinuation? = null,
     isActiveStage: Boolean = true,
+    isLoadingSubtitle: Boolean = false,
     onPlaySourceMedia: () -> Unit = {},
+    onPickSubtitleFile: () -> Unit = {},
     onStartClick: () -> Unit
 ) {
     BackHandler(enabled = isActiveStage) { viewModel.closeConfig() }
@@ -473,28 +485,47 @@ fun ModeConfigScreen(
                             )
                         }
                     }
+                    if (media.hasSubtitles) {
+                        val trimTargetExt = if (config.trimSubMode == TrimSubMode.FULL_LOSSLESS) {
+                            FfmpegMath.resolveFullLosslessTrimExtension(media, config.preserveSubtitles)
+                        } else {
+                            "mp4"
+                        }
+                        item {
+                            PreserveSubtitlesToggleCard(
+                                media = media,
+                                preserveSubtitles = config.preserveSubtitles,
+                                targetExtension = trimTargetExt,
+                                isTrimMode = true,
+                                trimSwitchedToMkv = config.trimSubMode == TrimSubMode.FULL_LOSSLESS &&
+                                    config.preserveSubtitles &&
+                                    trimTargetExt == "mkv" &&
+                                    (media.hasAssSubtitles || media.hasBitmapSubtitles),
+                                onToggle = viewModel::updatePreserveSubtitles
+                            )
+                        }
+                    }
                 }
 
                 ProcessingMode.REMUX_FORMAT -> {
                     item {
-                        ConfigSectionCard(
-                            title = strings.remuxCardTitle,
-                            subtitle = strings.remuxCardSub
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Bolt,
-                                    contentDescription = null,
-                                    tint = extColors.lossless,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    text = strings.remuxCardHighlight,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = extColors.lossless
-                                )
-                            }
+                        RemuxFormatPickerCard(
+                            media = media,
+                            selectedFormat = config.remuxFormat,
+                            preserveSubtitles = config.preserveSubtitles,
+                            onSelectFormat = viewModel::updateRemuxFormat
+                        )
+                    }
+                    if (media.hasSubtitles) {
+                        item {
+                            PreserveSubtitlesToggleCard(
+                                media = media,
+                                preserveSubtitles = config.preserveSubtitles,
+                                targetExtension = config.remuxFormat.extension,
+                                isTrimMode = false,
+                                trimSwitchedToMkv = false,
+                                onToggle = viewModel::updatePreserveSubtitles
+                            )
                         }
                     }
                 }
@@ -527,6 +558,18 @@ fun ModeConfigScreen(
                             sourceAudioChannels = media.audioChannels,
                             isLosslessSource = media.isLosslessAudio
                         )
+                    }
+                    if (media.hasSubtitles) {
+                        item {
+                            PreserveSubtitlesToggleCard(
+                                media = media,
+                                preserveSubtitles = config.preserveSubtitles,
+                                targetExtension = "mp4",
+                                isTrimMode = false,
+                                trimSwitchedToMkv = false,
+                                onToggle = viewModel::updatePreserveSubtitles
+                            )
+                        }
                     }
                 }
 
@@ -571,6 +614,18 @@ fun ModeConfigScreen(
                             onSelectPreset = viewModel::updatePreset
                         )
                     }
+                    if (media.hasSubtitles) {
+                        item {
+                            PreserveSubtitlesToggleCard(
+                                media = media,
+                                preserveSubtitles = config.preserveSubtitles,
+                                targetExtension = "mp4",
+                                isTrimMode = false,
+                                trimSwitchedToMkv = false,
+                                onToggle = viewModel::updatePreserveSubtitles
+                            )
+                        }
+                    }
                 }
 
                 ProcessingMode.VIDEO_AND_AUDIO_CRF -> {
@@ -606,6 +661,18 @@ fun ModeConfigScreen(
                             onSelectPreset = viewModel::updatePreset
                         )
                     }
+                    if (media.hasSubtitles) {
+                        item {
+                            PreserveSubtitlesToggleCard(
+                                media = media,
+                                preserveSubtitles = config.preserveSubtitles,
+                                targetExtension = "mp4",
+                                isTrimMode = false,
+                                trimSwitchedToMkv = false,
+                                onToggle = viewModel::updatePreserveSubtitles
+                            )
+                        }
+                    }
                 }
 
                 ProcessingMode.EXTRACT_AUDIO -> {
@@ -632,6 +699,60 @@ fun ModeConfigScreen(
                                 sourceAudioCodec = media.audioCodec,
                                 sourceAudioChannels = media.audioChannels,
                                 isLosslessSource = media.isLosslessAudio
+                            )
+                        }
+                    }
+                }
+
+                ProcessingMode.EMBED_SUBTITLES -> {
+                    item {
+                        SubtitleStudioSection(
+                            media = media,
+                            config = config,
+                            isLoadingSubtitle = isLoadingSubtitle,
+                            isActiveStage = isActiveStage,
+                            onPickSubtitleFile = onPickSubtitleFile,
+                            onLoadEmbeddedTrack = viewModel::loadEmbeddedSubtitleTrack,
+                            onUpdateCue = viewModel::updateSubtitleCue,
+                            onAddCueAt = viewModel::addSubtitleCueAt,
+                            onDeleteCue = viewModel::deleteSubtitleCue
+                        )
+                    }
+                    item {
+                        SubtitleEmbedModeCard(
+                            selectedMode = config.subtitleEmbedMode,
+                            softsubContainer = config.subtitleSoftsubContainer,
+                            capabilities = capabilities,
+                            onSelectEmbedMode = viewModel::updateSubtitleEmbedMode,
+                            onSelectSoftsubContainer = viewModel::updateSubtitleSoftsubContainer
+                        )
+                    }
+                    item {
+                        SubtitleFontAndSizeSection(
+                            selectedFont = config.subtitleFont,
+                            selectedSize = config.subtitleFontSize,
+                            onSelectFont = viewModel::updateSubtitleFont,
+                            onSelectSize = viewModel::updateSubtitleFontSize
+                        )
+                    }
+                    if (config.subtitleEmbedMode == SubtitleEmbedMode.HARDSUB) {
+                        item {
+                            CodecAndBitDepthSection(
+                                media = media,
+                                capabilities = capabilities,
+                                selectedCodec = config.codec,
+                                selectedBitDepth = config.bitDepth,
+                                showCrfBadge = true,
+                                onSelectCodec = viewModel::updateCodec,
+                                onSelectBitDepth = viewModel::updateBitDepth
+                            )
+                        }
+                        item {
+                            PresetSection(
+                                selectedPreset = config.preset,
+                                recommendedPreset = PresetOption.FAST,
+                                isTargetSizeMode = false,
+                                onSelectPreset = viewModel::updatePreset
                             )
                         }
                     }
@@ -1077,6 +1198,258 @@ private fun CustomCommandSection(
                     onClick = { onCommandChange(template) },
                     label = { Text(chipLabel, style = MonoLabelStyle) }
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RemuxFormatPickerCard(
+    media: MediaInfo,
+    selectedFormat: RemuxOutputFormat,
+    preserveSubtitles: Boolean,
+    onSelectFormat: (RemuxOutputFormat) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
+    val compatHint = remember(media, selectedFormat, strings) {
+        FfmpegMath.checkRemuxCompatibilityHint(media, selectedFormat, strings)
+    }
+
+    ConfigSectionCard(
+        title = strings.remuxFormatTitle,
+        subtitle = strings.remuxFormatSub(selectedFormat.extension)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                RemuxOutputFormat.entries.forEach { fmt ->
+                    val selected = selectedFormat == fmt
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onSelectFormat(fmt) }
+                            .testTag("remux_format_${fmt.extension}"),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                        border = BorderStroke(
+                            width = if (selected) 1.6.dp else 1.dp,
+                            color = if (selected) MaterialTheme.colorScheme.primary else extColors.subtleBorder
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                text = fmt.label,
+                                style = MonoLabelStyle.copy(
+                                    fontSize = 12.5.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+                                ),
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (fmt.isRecommended) {
+                                Surface(
+                                    shape = RoundedCornerShape(5.dp),
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = "★ ${strings.remuxRecommendedTag}",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = strings.remuxCardDynamicSub(selectedFormat.extension, preserveSubtitles),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.Bolt,
+                    contentDescription = null,
+                    tint = extColors.lossless,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = strings.remuxCardHighlight,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = extColors.lossless
+                )
+            }
+
+            if (!compatHint.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = compatHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreserveSubtitlesToggleCard(
+    media: MediaInfo,
+    preserveSubtitles: Boolean,
+    targetExtension: String,
+    isTrimMode: Boolean,
+    trimSwitchedToMkv: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val extColors = LocalExtendedColors.current
+    val extLower = targetExtension.lowercase()
+    val groupsSummary = remember(media.subtitleTracks) {
+        SubtitleParser.groupSubtitleTrackFormats(media.subtitleTracks).joinToString(" · ") { (tag, count) ->
+            if (count > 1) "$tag${SubtitleParser.toSuperscriptDigits(count)}" else tag
+        }
+    }
+
+    val containerSupportsSoftsub = extLower in setOf("mkv", "mka", "mp4", "mov", "m4v", "webm")
+    val isMkvTarget = extLower in setOf("mkv", "mka")
+    val subExplanation = when {
+        !containerSupportsSoftsub -> strings.preserveSubtitlesUnsupportedContainerNote(extLower)
+        isMkvTarget -> strings.preserveSubtitlesSubMkv
+        else -> strings.preserveSubtitlesSubMp4
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("preserve_subtitles_card"),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            width = if (preserveSubtitles) 1.3.dp else 1.dp,
+            color = if (preserveSubtitles) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else extColors.subtleBorder
+        ),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Subtitles,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = strings.preserveSubtitlesTitle,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (groupsSummary.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                border = BorderStroke(1.dp, extColors.subtleBorder)
+                            ) {
+                                Text(
+                                    text = groupsSummary,
+                                    style = MonoLabelStyle.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = subExplanation,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = preserveSubtitles,
+                    onCheckedChange = onToggle,
+                    enabled = containerSupportsSoftsub,
+                    modifier = Modifier.testTag("preserve_subtitles_switch")
+                )
+            }
+
+            if (preserveSubtitles && containerSupportsSoftsub) {
+                if (isTrimMode) {
+                    Text(
+                        text = strings.preserveSubtitlesTrimSyncNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = extColors.lossless
+                    )
+                }
+                if (trimSwitchedToMkv) {
+                    Text(
+                        text = strings.preserveSubtitlesTrimKeepsMkvNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (!isMkvTarget && media.hasBitmapSubtitles) {
+                    Text(
+                        text = if (media.hasTextSubtitles) {
+                            strings.preserveSubtitlesBitmapSkippedNote
+                        } else {
+                            strings.preserveSubtitlesBitmapOnlyMkvNote
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }

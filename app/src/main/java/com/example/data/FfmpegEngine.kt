@@ -13,12 +13,19 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.LogRedirectionStrategy
 import com.arthenica.ffmpegkit.ReturnCode
+import com.example.BuildConfig
 import com.example.domain.ActiveEncoderSimdReport
 import com.example.domain.AppLanguageController
 import com.example.domain.EncoderCapabilities
 import com.example.domain.FfmpegMath
 import com.example.domain.KeyframePointResult
 import com.example.domain.MediaInfo
+import com.example.domain.ModeConfigState
+import com.example.domain.SubtitleCue
+import com.example.domain.SubtitleEmbedMode
+import com.example.domain.SubtitleFontOption
+import com.example.domain.SubtitleParser
+import com.example.domain.SubtitleTrackInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -453,6 +460,30 @@ object FfmpegEngine {
             throw IllegalStateException(AppLanguageController.currentStrings().errUnsupportedMediaFile)
         }
 
+        val subtitleTracks = mutableListOf<SubtitleTrackInfo>()
+        var subStreamIdx = 0
+        for (stream in streams) {
+            if (stream.getType()?.equals("subtitle", ignoreCase = true) == true) {
+                val codecName = stream.getCodec()?.trim().orEmpty().ifBlank { "sub" }
+                val props = runCatching { stream.getAllProperties() }.getOrNull()
+                val globalIdx = props?.optInt("index", subStreamIdx) ?: subStreamIdx
+                val tags = props?.optJSONObject("tags")
+                val lang = tags?.optString("language")?.trim()
+                    ?.takeIf { it.isNotEmpty() && !it.equals("und", ignoreCase = true) }
+                val title = tags?.optString("title")?.trim()?.takeIf { it.isNotEmpty() }
+                subtitleTracks.add(
+                    SubtitleTrackInfo(
+                        subtitleStreamIndex = subStreamIdx,
+                        globalStreamIndex = globalIdx,
+                        codec = codecName,
+                        language = lang,
+                        title = title
+                    )
+                )
+                subStreamIdx++
+            }
+        }
+
         MediaInfo(
             uri = uri,
             fileName = safeFileName,
@@ -472,7 +503,8 @@ object FfmpegEngine {
             colorTransfer = colorTransfer,
             colorSpace = colorSpace,
             colorPrimaries = colorPrimaries,
-            bitsPerRawSample = bitsPerRawSample
+            bitsPerRawSample = bitsPerRawSample,
+            subtitleTracks = subtitleTracks
         )
     }
 
@@ -930,9 +962,36 @@ object FfmpegEngine {
                     !testLog.contains("auto-selecting format", ignoreCase = true)
             }
 
+            val assSession = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-h", "filter=ass"))
+            val assOut = buildString {
+                append(assSession.getAllLogsAsString().orEmpty())
+                append('\n')
+                append(assSession.getOutput().orEmpty())
+            }
+            val libassSupported = when {
+                assOut.contains("Unknown filter", ignoreCase = true) -> false
+                assOut.contains("Filter ass", ignoreCase = true) ||
+                    assOut.contains("ass AVOptions", ignoreCase = true) ||
+                    assOut.contains("fontsdir", ignoreCase = true) -> true
+                else -> {
+                    val filtersSession = FFmpegKit.executeWithArguments(arrayOf("-hide_banner", "-filters"))
+                    val filtersOut = buildString {
+                        append(filtersSession.getAllLogsAsString().orEmpty())
+                        append('\n')
+                        append(filtersSession.getOutput().orEmpty())
+                    }
+                    when {
+                        filtersOut.contains(" ass ") || filtersOut.contains(" subtitles ") -> true
+                        filtersOut.isBlank() -> BuildConfig.CUSTOM_ARM64_SIMD_FFMPEG
+                        else -> false
+                    }
+                }
+            }
+
             val caps = EncoderCapabilities(
                 x264Supports10Bit = x264Out.contains("yuv420p10le"),
                 x265Supports10Bit = x265TenBit,
+                libassSupportsHardsub = libassSupported,
                 probed = true
             )
             cachedCapabilities = caps
@@ -942,6 +1001,153 @@ object FfmpegEngine {
                 nativeInitFailure = t
             }
             EncoderCapabilities(probed = false)
+        }
+    }
+
+    data class LoadedExternalSubtitle(
+        val fileName: String,
+        val cues: List<SubtitleCue>
+    )
+
+    data class PreparedSubtitleWork(
+        val subtitleFile: File,
+        val fontsDir: File?
+    )
+
+    /**
+     * Reads and parses an external `.srt`, `.ass`, `.ssa`, or `.vtt` file picked via SAF with
+     * automatic UTF-8 / BOM / Turkish Windows-1254 decoding (capped at 10 MB safety limit).
+     */
+    suspend fun readExternalSubtitleFile(
+        context: Context,
+        uri: Uri
+    ): LoadedExternalSubtitle = withContext(Dispatchers.IO) {
+        val (displayName, _) = queryFileNameAndSize(context, uri)
+        val safeName = displayName.ifBlank { "subtitles.srt" }
+        val maxBytes = 10 * 1024 * 1024
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val n = input.read(chunk)
+                if (n <= 0) break
+                total += n
+                if (total > maxBytes) {
+                    throw IllegalArgumentException("Subtitle file exceeds 10 MB limit")
+                }
+                buf.write(chunk, 0, n)
+            }
+            buf.toByteArray()
+        } ?: throw IllegalStateException(AppLanguageController.currentStrings().errSafReadFailed)
+        val decoded = SubtitleParser.decodeBytesSmart(bytes)
+        LoadedExternalSubtitle(
+            fileName = safeName,
+            cues = SubtitleParser.parse(decoded)
+        )
+    }
+
+    /**
+     * Extracts a single embedded text subtitle track (`0:s:<subtitleStreamIndex>`) directly from
+     * a video via zero-copy SAF without copying the video, parses it into editable [SubtitleCue]s,
+     * and deletes its temporary output file immediately.
+     */
+    suspend fun extractEmbeddedSubtitleCues(
+        context: Context,
+        uri: Uri,
+        subtitleStreamIndex: Int
+    ): List<SubtitleCue> = withContext(Dispatchers.IO) {
+        ensureSilentLogcat()
+        val tempFile = File(context.cacheDir, "fflab_sub_extract_${System.currentTimeMillis()}.srt")
+        try {
+            val safPath = resolveInputPath(context, uri)
+            val session = FFmpegKit.executeWithArguments(
+                arrayOf(
+                    "-y",
+                    "-i", safPath,
+                    "-map", "0:s:$subtitleStreamIndex",
+                    "-c:s", "srt",
+                    tempFile.absolutePath
+                )
+            )
+            if (ReturnCode.isSuccess(session.getReturnCode()) && tempFile.exists() && tempFile.length() > 0L) {
+                val text = SubtitleParser.decodeBytesSmart(tempFile.readBytes())
+                return@withContext SubtitleParser.parse(text)
+            }
+            // Fallback to WebVTT extraction if SRT encoder rejects exotic text stream
+            val vttFile = File(context.cacheDir, "fflab_sub_extract_${System.currentTimeMillis()}.vtt")
+            try {
+                val safPath2 = resolveInputPath(context, uri)
+                val vttSession = FFmpegKit.executeWithArguments(
+                    arrayOf(
+                        "-y",
+                        "-i", safPath2,
+                        "-map", "0:s:$subtitleStreamIndex",
+                        "-c:s", "webvtt",
+                        vttFile.absolutePath
+                    )
+                )
+                if (ReturnCode.isSuccess(vttSession.getReturnCode()) && vttFile.exists() && vttFile.length() > 0L) {
+                    val text = SubtitleParser.decodeBytesSmart(vttFile.readBytes())
+                    return@withContext SubtitleParser.parse(text)
+                }
+            } finally {
+                runCatching { vttFile.delete() }
+            }
+            emptyList()
+        } finally {
+            runCatching { tempFile.delete() }
+        }
+    }
+
+    /**
+     * Materializes the user's edited cues into `workDir` (`subtitles.srt` for Softsub, or
+     * `subtitles.ass` + bundled full-UTF-8 TTF fonts in `workDir/fonts` + fontconfig registration
+     * for Hardsub libass rendering).
+     */
+    fun prepareSubtitleWorkFiles(
+        context: Context,
+        workDir: File,
+        config: ModeConfigState,
+        media: MediaInfo
+    ): PreparedSubtitleWork {
+        return when (config.subtitleEmbedMode) {
+            SubtitleEmbedMode.SOFTSUB -> {
+                val srtFile = File(workDir, "subtitles.srt")
+                srtFile.writeText(SubtitleParser.toSrt(config.subtitleCues), Charsets.UTF_8)
+                PreparedSubtitleWork(subtitleFile = srtFile, fontsDir = null)
+            }
+            SubtitleEmbedMode.HARDSUB -> {
+                val fontsDir = File(workDir, "fonts").apply { mkdirs() }
+                for (fontOpt in SubtitleFontOption.entries) {
+                    val dest = File(fontsDir, fontOpt.assetFileName)
+                    if (!dest.exists()) {
+                        runCatching {
+                            context.assets.open(fontOpt.assetPath).use { input ->
+                                dest.outputStream().use { out -> input.copyTo(out) }
+                            }
+                        }
+                    }
+                }
+                val fontMap = SubtitleFontOption.entries.associate { it.assFontName to it.assFontName }
+                runCatching {
+                    FFmpegKitConfig.setFontDirectoryList(
+                        context,
+                        listOf(fontsDir.absolutePath),
+                        fontMap
+                    )
+                }
+                val assFile = File(workDir, "subtitles.ass")
+                val assText = SubtitleParser.toAss(
+                    cues = config.subtitleCues,
+                    font = config.subtitleFont,
+                    fontSize = config.subtitleFontSize,
+                    videoWidth = media.width,
+                    videoHeight = media.height
+                )
+                assFile.writeText(assText, Charsets.UTF_8)
+                PreparedSubtitleWork(subtitleFile = assFile, fontsDir = fontsDir)
+            }
         }
     }
 

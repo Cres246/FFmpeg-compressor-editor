@@ -391,6 +391,15 @@ private fun FFLabAppRoot(
         }
     }
 
+    // Zero-permission Storage Access Framework picker for external subtitle files (.srt / .ass / .vtt)
+    val subtitlePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.loadExternalSubtitleUri(uri)
+        }
+    }
+
     // Optional notification permission for API 33+ progress / Magic Capsule notification
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -571,7 +580,13 @@ private fun FFLabAppRoot(
                                 viewModel = viewModel,
                                 pendingTurboContinuation = uiState.pendingTurboContinuation,
                                 isActiveStage = currentStage == AppScreenStage.CONFIG,
+                                isLoadingSubtitle = uiState.isLoadingSubtitle,
                                 onPlaySourceMedia = { onPlaySourceMedia(media) },
+                                onPickSubtitleFile = {
+                                    subtitlePickerLauncher.launch(
+                                        arrayOf("*/*")
+                                    )
+                                },
                                 onStartClick = { launchEncodingWithNotifCheck() }
                             )
                         }

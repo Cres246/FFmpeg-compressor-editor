@@ -23,7 +23,14 @@ import com.example.domain.ModeConfigState
 import com.example.domain.PendingTurboContinuation
 import com.example.domain.PresetOption
 import com.example.domain.ProcessingMode
+import com.example.domain.RemuxOutputFormat
 import com.example.domain.ResolutionOption
+import com.example.domain.SubtitleCue
+import com.example.domain.SubtitleEmbedMode
+import com.example.domain.SubtitleFontOption
+import com.example.domain.SubtitleFontSizeOption
+import com.example.domain.SubtitleSoftsubContainer
+import com.example.domain.SubtitleTrackInfo
 import com.example.domain.TrimCutStrategy
 import com.example.domain.TrimScanState
 import com.example.domain.TrimSubMode
@@ -55,6 +62,7 @@ data class WorkbenchUiState(
     val audioBitrateTouched: Boolean = false,
     val fpsTouched: Boolean = false,
     val resolutionTouched: Boolean = false,
+    val isLoadingSubtitle: Boolean = false,
     val showHistorySheet: Boolean = false
 )
 
@@ -68,6 +76,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var probeErrorAutoClearJob: Job? = null
     private var mediaProbeJob: Job? = null
     private var keyframeScanJob: Job? = null
+    private var subtitleLoadJob: Job? = null
 
     val encodingState: StateFlow<EncodingState> = EncodingJobController.state
     val appLanguage: StateFlow<AppLanguage> = AppLanguageController.language
@@ -203,6 +212,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             maxKbps = 768
         ).toString()
 
+        val defaultSubEmbedMode = if (_uiState.value.capabilities.libassSupportsHardsub) {
+            SubtitleEmbedMode.HARDSUB
+        } else {
+            SubtitleEmbedMode.SOFTSUB
+        }
+
         val initialConfig = ModeConfigState(
             mode = mode,
             targetMbInput = defaultTargetMb,
@@ -214,11 +229,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             audioBitrateInput = defaultAudioKbps,
             trimSubMode = TrimSubMode.FULL_LOSSLESS,
             audioExtractFormat = AudioExtractFormat.ORIGINAL,
+            preserveSubtitles = false,
+            remuxFormat = RemuxOutputFormat.MP4,
+            subtitleEmbedMode = defaultSubEmbedMode,
             customCommandInput = ""
         )
 
         keyframeScanJob?.cancel()
         keyframeScanJob = null
+        subtitleLoadJob?.cancel()
+        subtitleLoadJob = null
         _uiState.update {
             it.copy(
                 activeConfig = initialConfig,
@@ -227,6 +247,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 audioBitrateTouched = false,
                 fpsTouched = false,
                 resolutionTouched = false,
+                isLoadingSubtitle = false,
                 probeError = null
             )
         }
@@ -235,11 +256,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeConfig() {
         keyframeScanJob?.cancel()
         keyframeScanJob = null
+        subtitleLoadJob?.cancel()
+        subtitleLoadJob = null
         _uiState.update {
             it.copy(
                 activeConfig = null,
                 pendingTurboContinuation = null,
-                validationError = null
+                validationError = null,
+                isLoadingSubtitle = false
             )
         }
     }
@@ -588,6 +612,173 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateConfig { it.copy(customCommandInput = command) }
     }
 
+    fun updatePreserveSubtitles(preserve: Boolean) {
+        updateConfig { it.copy(preserveSubtitles = preserve) }
+    }
+
+    fun updateRemuxFormat(format: RemuxOutputFormat) {
+        updateConfig { it.copy(remuxFormat = format) }
+    }
+
+    fun updateSubtitleEmbedMode(embedMode: SubtitleEmbedMode) {
+        updateConfig { it.copy(subtitleEmbedMode = embedMode) }
+    }
+
+    fun updateSubtitleFont(font: SubtitleFontOption) {
+        updateConfig { it.copy(subtitleFont = font) }
+    }
+
+    fun updateSubtitleFontSize(size: SubtitleFontSizeOption) {
+        updateConfig { it.copy(subtitleFontSize = size) }
+    }
+
+    fun updateSubtitleSoftsubContainer(container: SubtitleSoftsubContainer) {
+        updateConfig { it.copy(subtitleSoftsubContainer = container) }
+    }
+
+    fun loadExternalSubtitleUri(uri: Uri) {
+        subtitleLoadJob?.cancel()
+        subtitleLoadJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingSubtitle = true, validationError = null) }
+            try {
+                val loaded = FfmpegEngine.readExternalSubtitleFile(appContext, uri)
+                _uiState.update { state ->
+                    val cfg = state.activeConfig ?: return@update state.copy(isLoadingSubtitle = false)
+                    state.copy(
+                        isLoadingSubtitle = false,
+                        activeConfig = cfg.copy(
+                            subtitleSourceName = loaded.fileName,
+                            subtitleCues = loaded.cues,
+                            subtitleSourceEmbeddedIndex = null
+                        ),
+                        validationError = if (loaded.cues.isEmpty()) {
+                            AppLanguageController.currentStrings().errNoSubtitlesLoaded
+                        } else null
+                    )
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                val curS = AppLanguageController.currentStrings()
+                _uiState.update {
+                    it.copy(
+                        isLoadingSubtitle = false,
+                        validationError = curS.errSubtitleLoadFailed(t.message ?: curS.errUnknown)
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadEmbeddedSubtitleTrack(track: SubtitleTrackInfo) {
+        val media = _uiState.value.mediaInfo ?: return
+        subtitleLoadJob?.cancel()
+        subtitleLoadJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingSubtitle = true, validationError = null) }
+            try {
+                val cues = FfmpegEngine.extractEmbeddedSubtitleCues(
+                    context = appContext,
+                    uri = media.uri,
+                    subtitleStreamIndex = track.subtitleStreamIndex
+                )
+                val label = buildString {
+                    append(track.formatTag)
+                    if (!track.language.isNullOrBlank()) append(" (${track.language.uppercase()})")
+                    else if (!track.title.isNullOrBlank()) append(" (${track.title.take(14)})")
+                    else append(" #${track.subtitleStreamIndex + 1}")
+                }
+                _uiState.update { state ->
+                    val cfg = state.activeConfig ?: return@update state.copy(isLoadingSubtitle = false)
+                    state.copy(
+                        isLoadingSubtitle = false,
+                        activeConfig = cfg.copy(
+                            subtitleSourceName = label,
+                            subtitleCues = cues,
+                            subtitleSourceEmbeddedIndex = track.subtitleStreamIndex
+                        ),
+                        validationError = if (cues.isEmpty()) {
+                            AppLanguageController.currentStrings().errNoSubtitlesLoaded
+                        } else null
+                    )
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                val curS = AppLanguageController.currentStrings()
+                _uiState.update {
+                    it.copy(
+                        isLoadingSubtitle = false,
+                        validationError = curS.errSubtitleLoadFailed(t.message ?: curS.errUnknown)
+                    )
+                }
+            }
+        }
+    }
+
+    fun updateSubtitleCue(
+        cueId: Long,
+        newText: String,
+        newStartSec: Double? = null,
+        newEndSec: Double? = null
+    ) {
+        updateConfig { cfg ->
+            val updated = cfg.subtitleCues.map { cue ->
+                if (cue.id == cueId) {
+                    val s = (newStartSec ?: cue.startSec).coerceAtLeast(0.0)
+                    val e = maxOf(newEndSec ?: cue.endSec, s + 0.1)
+                    cue.copy(startSec = s, endSec = e, text = newText)
+                } else {
+                    cue
+                }
+            }
+            val finalList = if (newStartSec != null || newEndSec != null) {
+                updated.sortedWith(compareBy<SubtitleCue> { it.startSec }.thenBy { it.endSec })
+            } else {
+                updated
+            }
+            cfg.copy(subtitleCues = finalList)
+        }
+    }
+
+    fun addSubtitleCueAt(timeSec: Double): Long {
+        val mediaDur = _uiState.value.mediaInfo?.durationSec
+        val safeStart = if (mediaDur != null && mediaDur > 0.3) {
+            timeSec.coerceIn(0.0, (mediaDur - 0.3).coerceAtLeast(0.0))
+        } else {
+            timeSec.coerceAtLeast(0.0)
+        }
+        val safeEnd = if (mediaDur != null && mediaDur > safeStart + 0.2) {
+            (safeStart + 2.5).coerceAtMost(mediaDur)
+        } else {
+            safeStart + 2.5
+        }
+        val nextId = ((_uiState.value.activeConfig?.subtitleCues?.maxOfOrNull { it.id } ?: 0L) + 1L)
+        val defaultText = if (AppLanguageController.currentLanguage() == AppLanguage.TR) {
+            "Yeni altyazı"
+        } else {
+            "New subtitle"
+        }
+        updateConfig { cfg ->
+            val nextList = (cfg.subtitleCues + SubtitleCue(
+                id = nextId,
+                startSec = safeStart,
+                endSec = maxOf(safeEnd, safeStart + 0.2),
+                text = defaultText
+            )).sortedWith(compareBy<SubtitleCue> { it.startSec }.thenBy { it.endSec })
+            cfg.copy(
+                subtitleSourceName = cfg.subtitleSourceName.ifBlank { "manual.srt" },
+                subtitleCues = nextList
+            )
+        }
+        return nextId
+    }
+
+    fun deleteSubtitleCue(cueId: Long) {
+        updateConfig { cfg ->
+            cfg.copy(subtitleCues = cfg.subtitleCues.filterNot { it.id == cueId })
+        }
+    }
+
     fun scanTrimKeyframes() {
         val s = AppLanguageController.currentStrings()
         val media = _uiState.value.mediaInfo ?: return
@@ -917,6 +1108,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProcessingMode.EXTRACT_AUDIO -> {
                 if (!media.hasAudio) {
                     _uiState.update { it.copy(validationError = s.errNoAudioTrack) }
+                    return false
+                }
+            }
+            ProcessingMode.EMBED_SUBTITLES -> {
+                if (cfg.subtitleCues.none { it.text.isNotBlank() }) {
+                    _uiState.update { it.copy(validationError = s.errNoSubtitlesLoaded) }
                     return false
                 }
             }

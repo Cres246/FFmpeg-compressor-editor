@@ -283,6 +283,7 @@ add_flag_if_supported "--enable-gpl" || MISSING_MANDATORY+=("--enable-gpl")
 add_first_supported "--enable-lib-x264" "--enable-x264" "--enable-libx264" || MISSING_MANDATORY+=("--enable-lib-x264")
 add_first_supported "--enable-lib-x265" "--enable-x265" "--enable-libx265" || MISSING_MANDATORY+=("--enable-lib-x265")
 add_first_supported "--enable-lib-lame" "--enable-lame" "--enable-libmp3lame" || MISSING_MANDATORY+=("--enable-lib-lame")
+add_first_supported "--enable-lib-libass" "--enable-libass" || MISSING_MANDATORY+=("--enable-lib-libass")
 
 if (( ${#MISSING_MANDATORY[@]} > 0 )); then
   echo "[error] Missing mandatory codec flags in upstream ffmpeg-kit-next: ${MISSING_MANDATORY[*]}" >&2
@@ -291,7 +292,7 @@ if (( ${#MISSING_MANDATORY[@]} > 0 )); then
   exit 1
 fi
 
-# Full codec suite required by all 11 modes + Custom Commands
+# Full codec & subtitle suite required by all modes + Custom Commands
 add_first_supported "--enable-lib-android-zlib" "--enable-android-zlib" || true
 add_first_supported "--enable-lib-android-media-codec" "--enable-android-media-codec" || true
 add_first_supported "--enable-lib-opus" "--enable-opus" "--enable-libopus" || true
@@ -537,7 +538,11 @@ if ! grep -qE '(8bit\+10bit|x265_10bit)' <<< "${CODEC_STRINGS}"; then
   echo "[error] Compiled arm64-v8a libx265 does not include 10-bit Main10 (8bit+10bit / x265_10bit)!" >&2
   exit 1
 fi
-echo "[verify] Gate 2 passed (arm64-v8a .so + libx264, libx265 8-bit+10-bit Main10, libmp3lame verified)."
+if ! grep -qE '(ass_render_frame|--enable-libass)' <<< "${CODEC_STRINGS}"; then
+  echo "[error] Compiled arm64-v8a libavfilter does not include libass hardsub support!" >&2
+  exit 1
+fi
+echo "[verify] Gate 2 passed (arm64-v8a .so + libx264, libx265 8-bit+10-bit Main10, libmp3lame, libass verified)."
 
 # Gate 3: 16 KB ELF page-size alignment check across EVERY bundled arm64-v8a .so library
 echo "[verify] Checking 16 KB ELF page alignment across arm64-v8a .so libraries..."

@@ -81,6 +81,7 @@ private fun modeIcon(mode: ProcessingMode): ImageVector = when (mode) {
     ProcessingMode.VIDEO_ONLY_CRF -> Icons.Rounded.HighQuality
     ProcessingMode.VIDEO_AND_AUDIO_CRF -> Icons.Rounded.AutoFixHigh
     ProcessingMode.EXTRACT_AUDIO -> Icons.Rounded.MusicNote
+    ProcessingMode.EMBED_SUBTITLES -> Icons.Rounded.Subtitles
     ProcessingMode.CUSTOM_COMMAND -> Icons.Rounded.Terminal
 }
 
@@ -340,10 +341,6 @@ fun OtherModesList(
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         modes.forEach { mode ->
-            if (mode == ProcessingMode.CUSTOM_COMMAND) {
-                EmbedSubtitlesPlaceholderRow(mediaInfo = mediaInfo)
-            }
-
             val missingAudio = mediaInfo != null && mode.requiresAudio && !mediaInfo.hasAudio
             val missingVideo = mediaInfo != null && mode.requiresVideo && !mediaInfo.hasVideo
             val available = mediaInfo != null && !missingAudio && !missingVideo
@@ -412,85 +409,6 @@ fun OtherModesList(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * Planned placeholder row positioned directly above Custom FFmpeg Command ("Özel FFmpeg Komutu"),
- * keeping identical row height, icon framing, alignment, and right chevron while the
- * Embed Subtitles (Hardsub / Softsub) workflow is being planned.
- */
-@Composable
-private fun EmbedSubtitlesPlaceholderRow(
-    mediaInfo: MediaInfo?
-) {
-    val strings = LocalAppStrings.current
-    val available = mediaInfo != null && mediaInfo.hasVideo
-    val iconColor = MaterialTheme.colorScheme.primary
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (available) 1f else 0.84f)
-            .clip(MaterialTheme.shapes.small)
-            .testTag("mode_card_embed_subtitles_placeholder"),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, LocalExtendedColors.current.subtleBorder),
-        tonalElevation = 0.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 11.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Subtitles,
-                    contentDescription = strings.modeEmbedSubtitlesTitle,
-                    tint = iconColor,
-                    modifier = Modifier.size(17.dp)
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
-            ) {
-                Text(
-                    text = strings.modeEmbedSubtitlesTitle,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = strings.modeEmbedSubtitlesSub,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 10.5.sp,
-                        lineHeight = 13.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
-            )
         }
     }
 }
