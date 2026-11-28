@@ -267,11 +267,30 @@ def patch_function_android(root: Path) -> None:
         count=1,
     )
 
+    # 7. Ensure ALL cross-compiled host build helpers (fribidi's gen-unicode-version,
+    #    freetype's apinames, fontconfig, etc.) use Nix's HOST_CC (clang matching Nix glibc 2.40)
+    #    instead of Ubuntu's /usr/bin/gcc (glibc 2.39 ld-linux + Nix glibc 2.40 libc.so.6 mismatch).
+    host_cc_marker = "# FFMPEGKIT-HOST-CC-FOR-BUILD"
+    if host_cc_marker not in updated and 'set_host_cc ' in updated:
+        updated = re.sub(
+            r'(set_host_cc[ \t]+[^\n]+)',
+            r'\1\n'
+            f'  {host_cc_marker}\n'
+            '  export CC_FOR_BUILD="${HOST_CC}"\n'
+            '  export BUILD_CC="${HOST_CC}"\n'
+            '  export CC_BUILD="${HOST_CC}"\n'
+            '  export CPP_FOR_BUILD="${HOST_CC} -E"\n'
+            '  export CFLAGS_FOR_BUILD=""\n'
+            '  export LDFLAGS_FOR_BUILD=""',
+            updated,
+            count=1,
+        )
+
     if updated != original:
         target.write_text(updated, encoding="utf-8")
         print(
             f"[patch] OK: Patched {target.relative_to(root)} "
-            "(-O3, -Wl,--lto-O3, clean LTO CFLAGS, zero-PLT on both APP_LDFLAGS & arm64 LDFLAGS, Clang 21 compat)"
+            "(-O3, -Wl,--lto-O3, clean LTO CFLAGS, zero-PLT on both APP_LDFLAGS & arm64 LDFLAGS, Clang 21 compat, CC_FOR_BUILD)"
         )
     else:
         print(f"[patch] INFO: {target.relative_to(root)} already up to date.")
@@ -788,6 +807,44 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
         print(f"[patch] INFO: {target.relative_to(root)} already keeps ARM64 assembly / -O3 intact.")
 
 
+def patch_fribidi_script(root: Path) -> None:
+    """
+    Explicitly passes Nix's HOST_CC as CC_FOR_BUILD into fribidi's configure & gen.tab build
+    so host table generators (gen-unicode-version, gen-bidi-type-tab, etc.) never mix Ubuntu's
+    /usr/bin/gcc glibc-2.39 dynamic linker with Nix's glibc-2.40 libc.so.6.
+    """
+    target = find_first(root, "scripts/android/fribidi.sh", "fribidi.sh")
+    if target is None:
+        return
+
+    original = target.read_text(encoding="utf-8", errors="replace")
+    updated = original
+
+    marker = "# FRIBIDI-HOST-CC-FOR-BUILD"
+    if marker not in updated:
+        hook = (
+            f"\n{marker}\n"
+            'rm -f gen.tab/*.o gen.tab/gen-unicode-version gen.tab/gen-*-tab 2>/dev/null || true\n'
+            'export CC_FOR_BUILD="${HOST_CC:-$(command -v clang)}"\n'
+            'export BUILD_CC="${CC_FOR_BUILD}"\n'
+            'export CPP_FOR_BUILD="${CC_FOR_BUILD} -E"\n'
+            'export CFLAGS_FOR_BUILD=""\n'
+            'export LDFLAGS_FOR_BUILD=""\n'
+        )
+        m = re.search(r"^([ \t]*)\./configure\b", updated, flags=re.MULTILINE)
+        if m:
+            indent = m.group(1)
+            replacement = (
+                f'{hook}\n'
+                f'{indent}CC_FOR_BUILD="${{CC_FOR_BUILD}}" CFLAGS_FOR_BUILD="" LDFLAGS_FOR_BUILD="" ./configure'
+            )
+            updated = updated[: m.start()] + replacement + updated[m.end() :]
+
+    if updated != original:
+        target.write_text(updated, encoding="utf-8")
+        print(f"[patch] OK: Patched {target.relative_to(root)} (Nix HOST_CC CC_FOR_BUILD for gen.tab)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Patch arthenica/ffmpeg-kit-next for ARM64-O3 LTO-O3 zero-PLT + runtime-dispatched SIMD."
@@ -813,6 +870,7 @@ def main() -> int:
     patch_libvpx_script(args.repo)
     patch_x264_script(args.repo)
     patch_x265_script(args.repo, self_path)
+    patch_fribidi_script(args.repo)
     return 0
 
 
