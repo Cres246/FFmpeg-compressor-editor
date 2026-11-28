@@ -299,7 +299,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     EMBED_SUBTITLES(
-        number = 12,
+        number = 11,
         title = "Altyazı Göm",
         shortTitle = "Altyazı Göm",
         subtitle = "Canlı önizleme · Softsub / Hardsub",
@@ -311,7 +311,7 @@ enum class ProcessingMode(
         requiresVideo = true
     ),
     CUSTOM_COMMAND(
-        number = 11,
+        number = 12,
         title = "Özel FFmpeg Komutu",
         shortTitle = "Özel FFmpeg Komutu",
         subtitle = "Tam komut yapıştır (&& zinciri dahil)",
