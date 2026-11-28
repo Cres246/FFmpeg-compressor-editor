@@ -431,15 +431,18 @@ object FfmpegEngine {
                 primaryAudioStream.getAllProperties()?.optInt("channels", 0)?.takeIf { it > 0 }
             }.getOrNull()
 
-            var audioBps = extractStreamBitrateBps(primaryAudioStream)
+            var audioBps = extractStreamBitrateBps(primaryAudioStream, durationSec)
             if (audioBps == null) {
-                audioBps = probeAudioBitrateWithExtractor(context, uri)
+                audioBps = probeAudioBitrateWithExtractor(context, uri, durationSec)
             }
             if (audioBps == null && primaryVideoStream == null) {
                 audioBps = info.getBitrate()?.toLongOrNull()?.takeIf { it > 0L }
                     ?: if (sizeBytes > 0L && durationSec != null && durationSec > 0.5) {
                         ((sizeBytes * 8.0) / durationSec).toLong().takeIf { it > 0L }
                     } else null
+            }
+            if (audioBps == null) {
+                audioBps = probeAudioBitrateWithFfprobePackets(context, uri, durationSec)
             }
             aBitrateKbps = audioBps
                 ?.let { kotlin.math.round(it / 1000.0).toInt() }
@@ -699,25 +702,53 @@ object FfmpegEngine {
         }.getOrDefault(0)
     }
 
-    private fun extractStreamBitrateBps(stream: com.arthenica.ffmpegkit.StreamInformation): Long? {
+    private fun extractStreamBitrateBps(
+        stream: com.arthenica.ffmpegkit.StreamInformation,
+        containerDurationSec: Double? = null
+    ): Long? {
         val direct = stream.getBitrate()?.trim()?.toLongOrNull()?.takeIf { it > 0L }
         if (direct != null) return direct
-        // MKV/WebM files often store exact per-stream bitrate in `tags.BPS` or `tags.BPS-eng`
         return runCatching {
-            val tags = stream.getAllProperties()?.optJSONObject("tags") ?: return@runCatching null
+            val props = stream.getAllProperties() ?: return@runCatching null
+            val propDirect = props.optString("bit_rate").trim().toLongOrNull()?.takeIf { it > 0L }
+                ?: props.optString("max_bit_rate").trim().toLongOrNull()?.takeIf { it > 0L }
+            if (propDirect != null) return@runCatching propDirect
+
+            // MKV/WebM files often store exact per-stream bitrate in `tags.BPS`, `tags.BPS-eng`,
+            // or `tags.NUMBER_OF_BYTES` + `tags.DURATION`.
+            val tags = props.optJSONObject("tags") ?: return@runCatching null
+            var numberOfBytes: Long? = null
+            var tagDurationSec: Double? = null
             val keys = tags.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
-                if (key.equals("BPS", ignoreCase = true) || key.startsWith("BPS-", ignoreCase = true)) {
-                    val v = tags.optString(key).trim().toLongOrNull()
-                    if (v != null && v > 0L) return@runCatching v
+                when {
+                    key.equals("BPS", ignoreCase = true) || key.startsWith("BPS-", ignoreCase = true) -> {
+                        val v = tags.optString(key).trim().toLongOrNull()
+                        if (v != null && v > 0L) return@runCatching v
+                    }
+                    numberOfBytes == null && (key.equals("NUMBER_OF_BYTES", ignoreCase = true) || key.startsWith("NUMBER_OF_BYTES-", ignoreCase = true)) -> {
+                        numberOfBytes = tags.optString(key).trim().toLongOrNull()?.takeIf { it > 0L }
+                    }
+                    tagDurationSec == null && (key.equals("DURATION", ignoreCase = true) || key.startsWith("DURATION-", ignoreCase = true)) -> {
+                        tagDurationSec = FfmpegMath.parseTimestampToSeconds(tags.optString(key))?.takeIf { it > 0.2 }
+                    }
                 }
+            }
+            val effectiveDur = tagDurationSec ?: containerDurationSec?.takeIf { it > 0.2 }
+            if (numberOfBytes != null && effectiveDur != null) {
+                val computed = ((numberOfBytes * 8.0) / effectiveDur).toLong()
+                if (computed in 8_000L..20_000_000L) return@runCatching computed
             }
             null
         }.getOrNull()
     }
 
-    private fun probeAudioBitrateWithExtractor(context: Context, uri: Uri): Long? {
+    private fun probeAudioBitrateWithExtractor(
+        context: Context,
+        uri: Uri,
+        durationSec: Double? = null
+    ): Long? {
         val extractor = android.media.MediaExtractor()
         return try {
             if (uri.scheme.equals("file", ignoreCase = true) && !uri.path.isNullOrBlank()) {
@@ -730,12 +761,65 @@ object FfmpegEngine {
                     extractor.setDataSource(context, uri, null)
                 }
             }
+            var audioTrackIdx = -1
             for (i in 0 until extractor.trackCount) {
                 val fmt = extractor.getTrackFormat(i)
                 val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: continue
-                if (mime.startsWith("audio/") && fmt.containsKey(android.media.MediaFormat.KEY_BIT_RATE)) {
-                    val br = runCatching { fmt.getInteger(android.media.MediaFormat.KEY_BIT_RATE).toLong() }.getOrNull()
-                    if (br != null && br > 0L) return br
+                if (mime.startsWith("audio/")) {
+                    if (audioTrackIdx < 0) audioTrackIdx = i
+                    if (fmt.containsKey(android.media.MediaFormat.KEY_BIT_RATE)) {
+                        val br = runCatching { fmt.getInteger(android.media.MediaFormat.KEY_BIT_RATE).toLong() }.getOrNull()
+                        if (br != null && br > 0L) return br
+                    }
+                }
+            }
+            // Fast header-only packet size sampling (~3-8ms, zero decoding) for WebM/MKV Opus & VBR tracks
+            // that omit container-level KEY_BIT_RATE.
+            if (audioTrackIdx >= 0) {
+                extractor.selectTrack(audioTrackIdx)
+                val seekPointsUs = if (durationSec != null && durationSec > 24.0) {
+                    listOf((durationSec * 0.25 * 1_000_000.0).toLong(), (durationSec * 0.65 * 1_000_000.0).toLong())
+                } else {
+                    listOf(0L)
+                }
+                var accumBytes = 0L
+                var accumSpanUs = 0L
+                val maxPacketsPerWindow = 220
+                val maxSpanPerWindowUs = 5_000_000L
+
+                for (seekUs in seekPointsUs) {
+                    if (seekUs > 0L) {
+                        extractor.seekTo(seekUs, android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                    }
+                    var firstPtsUs = -1L
+                    var lastPtsUs = -1L
+                    var winBytes = 0L
+                    var lastSz = 0L
+                    var count = 0
+                    while (count < maxPacketsPerWindow) {
+                        val sz = extractor.sampleSize
+                        val pts = extractor.sampleTime
+                        if (sz <= 0L || pts < 0L) break
+                        if (firstPtsUs < 0L) firstPtsUs = pts
+                        if (pts >= lastPtsUs) {
+                            lastPtsUs = pts
+                            lastSz = sz
+                        }
+                        winBytes += sz
+                        count++
+                        if (lastPtsUs - firstPtsUs >= maxSpanPerWindowUs) break
+                        if (!extractor.advance()) break
+                    }
+                    val spanUs = lastPtsUs - firstPtsUs
+                    val effectiveBytes = (winBytes - lastSz).coerceAtLeast(0L)
+                    if (count >= 8 && spanUs >= 200_000L && effectiveBytes > 0L) {
+                        accumBytes += effectiveBytes
+                        accumSpanUs += spanUs
+                    }
+                }
+                if (accumSpanUs >= 200_000L && accumBytes > 0L) {
+                    val estimatedBps = ((accumBytes * 8.0 * 1_000_000.0) / accumSpanUs).toLong()
+                    if (estimatedBps in 8_000L..20_000_000L) return estimatedBps
                 }
             }
             null
@@ -745,6 +829,36 @@ object FfmpegEngine {
             runCatching { extractor.release() }
         }
     }
+
+    /**
+     * Header-only fallback (~15-35ms, zero decoding) via FFprobe packet sizes for containers
+     * that Android's MediaExtractor cannot open (e.g. certain MKV/Ogg/Opus/MKA muxes).
+     */
+    private fun probeAudioBitrateWithFfprobePackets(
+        context: Context,
+        uri: Uri,
+        durationSec: Double?
+    ): Long? = runCatching {
+        val safPath = resolveInputPath(context, uri)
+        val interval = if (durationSec != null && durationSec > 18.0) {
+            val startSec = (durationSec * 0.35).toInt().coerceAtLeast(0)
+            "${startSec}%+10"
+        } else {
+            "0%+12"
+        }
+        val session = FFprobeKit.executeWithArguments(
+            arrayOf(
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-read_intervals", interval,
+                "-show_packets",
+                "-show_entries", "packet=pts_time,dts_time,duration_time,size",
+                "-of", "compact=p=0",
+                safPath
+            )
+        )
+        FfmpegMath.estimateAudioBitrateBpsFromPackets(session.getOutput().orEmpty())
+    }.getOrNull()
 
     private fun parseFrameRate(raw: String?): Double? {
         val cleaned = raw?.trim().orEmpty()
@@ -800,7 +914,7 @@ object FfmpegEngine {
                         "-frames:v", "1",
                         "-c:v", "libx265",
                         "-pix_fmt", "yuv420p10le",
-                        "-threads", "1",
+                        "-x265-params", "log-level=warning:pools=1",
                         "-preset", "ultrafast",
                         "-f", "null",
                         "/dev/null"

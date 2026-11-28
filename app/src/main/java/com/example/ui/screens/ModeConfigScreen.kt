@@ -501,9 +501,14 @@ fun ModeConfigScreen(
 
                 ProcessingMode.AUDIO_ONLY_AAC -> {
                     item {
+                        val audioTag = buildString {
+                            append(media.audioCodec?.uppercase() ?: "?")
+                            val abr = media.audioBitrateKbps
+                            if (abr != null && abr > 0) append(" ${abr}k")
+                        }
                         ConfigSectionCard(
                             title = strings.audioOnlyCardTitle,
-                            subtitle = strings.audioOnlyCardSub(media.audioCodec?.uppercase() ?: "?")
+                            subtitle = strings.audioOnlyCardSub(audioTag)
                         ) {
                             Text(
                                 text = strings.audioOnlyCardBody,
@@ -538,10 +543,15 @@ fun ModeConfigScreen(
                         )
                     }
                     item {
+                        val audioTag = buildString {
+                            append(media.audioCodec?.uppercase() ?: "?")
+                            val abr = media.audioBitrateKbps
+                            if (abr != null && abr > 0) append(" ${abr}k")
+                        }
                         ConfigSectionCard(
                             title = strings.videoOnlyAudioTitle,
                             subtitle = if (media.hasAudio) {
-                                strings.videoOnlyAudioCopySub(media.audioCodec?.uppercase() ?: "?")
+                                strings.videoOnlyAudioCopySub(audioTag)
                             } else {
                                 strings.videoOnlyNoAudioSub
                             }

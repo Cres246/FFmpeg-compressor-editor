@@ -313,6 +313,75 @@ object FfmpegMath {
     fun parseAudioBitrateInput(raw: String): Int? =
         raw.trim().replace("k", "", ignoreCase = true).toIntOrNull()?.takeIf { it > 0 }
 
+    /**
+     * Estimates average audio bitrate (in bits/sec) from compact `ffprobe -show_packets` output
+     * (`packet=pts_time,dts_time,duration_time,size`) for containers like WebM/MKV Opus that omit
+     * stream-level `bit_rate` and `BPS` tags. Prefers exact packet `duration_time` sums (exact for
+     * 20ms Opus frames) and falls back to PTS/DTS span across packets.
+     */
+    fun estimateAudioBitrateBpsFromPackets(ffprobeOutput: String): Long? {
+        if (ffprobeOutput.isBlank()) return null
+        var totalBytesAll = 0L
+        var totalDurationSec = 0.0
+        var durPacketCount = 0
+
+        var firstTimeSec: Double? = null
+        var lastTimeSec: Double? = null
+        var lastPacketSize = 0L
+        var timedPacketCount = 0
+        var totalBytesTimed = 0L
+
+        for (line in ffprobeOutput.lineSequence()) {
+            if (line.isBlank()) continue
+            var sizeBytes: Long? = null
+            var durSec: Double? = null
+            var ptsSec: Double? = null
+            var dtsSec: Double? = null
+            for (token in line.split('|')) {
+                when {
+                    token.startsWith("size=") ->
+                        sizeBytes = token.removePrefix("size=").trim().toLongOrNull()?.takeIf { it > 0L }
+                    token.startsWith("duration_time=") ->
+                        durSec = token.removePrefix("duration_time=").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+                    token.startsWith("pts_time=") ->
+                        ptsSec = token.removePrefix("pts_time=").trim().toDoubleOrNull()?.takeIf { it.isFinite() }
+                    token.startsWith("dts_time=") ->
+                        dtsSec = token.removePrefix("dts_time=").trim().toDoubleOrNull()?.takeIf { it.isFinite() }
+                }
+            }
+            val sz = sizeBytes ?: continue
+            if (durSec != null) {
+                totalBytesAll += sz
+                totalDurationSec += durSec
+                durPacketCount++
+            }
+            val t = ptsSec ?: dtsSec
+            if (t != null) {
+                if (firstTimeSec == null) firstTimeSec = t
+                if (lastTimeSec == null || t >= lastTimeSec) {
+                    lastTimeSec = t
+                    lastPacketSize = sz
+                }
+                totalBytesTimed += sz
+                timedPacketCount++
+            }
+        }
+
+        val bpsFromDur = if (durPacketCount >= 5 && totalDurationSec >= 0.15 && totalBytesAll > 0L) {
+            ((totalBytesAll * 8.0) / totalDurationSec).toLong()
+        } else null
+
+        val bpsFromSpan = if (timedPacketCount >= 5 && firstTimeSec != null && lastTimeSec != null) {
+            val span = lastTimeSec - firstTimeSec
+            val effectiveBytes = (totalBytesTimed - lastPacketSize).coerceAtLeast(0L)
+            if (span >= 0.15 && effectiveBytes > 0L) {
+                ((effectiveBytes * 8.0) / span).toLong()
+            } else null
+        } else null
+
+        return (bpsFromDur ?: bpsFromSpan)?.takeIf { it in 8_000L..20_000_000L }
+    }
+
     private val STANDARD_AAC_QUICK_KBPS = listOf(64, 128, 192, 256, 320, 384, 512, 640, 768)
     private val STANDARD_MP3_QUICK_KBPS = listOf(64, 128, 192, 256, 320)
     private const val AUDIO_SOURCE_TOLERANCE_KBPS = 12
@@ -1825,6 +1894,37 @@ object FfmpegMath {
         if (totalDurationSec == null || totalDurationSec <= 0.0) return null
         val pct = ((currentSec / totalDurationSec) * 100.0).roundToInt()
         return pct.coerceIn(0, 100)
+    }
+
+    /**
+     * Formats the exact executed FFmpeg / FFprobe command for display at the top of the
+     * processing screen terminal: replaces opaque `saf:<fd>` / lazy input tokens with the
+     * readable source filename and trims internal temp workDir path prefixes for clarity.
+     */
+    fun formatCommandForTerminal(
+        toolBinary: String,
+        args: List<String>,
+        mediaFileName: String,
+        workDirPath: String? = null,
+        inputPlaceholder: String? = null
+    ): String {
+        val safeInputName = mediaFileName.trim().ifBlank { "input.mp4" }
+        val normalizedWorkDir = workDirPath?.trimEnd('/')?.takeIf { it.isNotEmpty() }
+        return "$toolBinary " + args.joinToString(" ") { rawArg ->
+            var cleaned = when {
+                inputPlaceholder != null && rawArg == inputPlaceholder -> safeInputName
+                rawArg.startsWith("saf:") -> safeInputName
+                else -> rawArg
+            }
+            if (normalizedWorkDir != null) {
+                cleaned = cleaned.replace("$normalizedWorkDir/", "")
+            }
+            if (cleaned.any { it.isWhitespace() } || cleaned.contains(';') || cleaned.contains('&')) {
+                "\"$cleaned\""
+            } else {
+                cleaned
+            }
+        }
     }
 
     /**

@@ -21,8 +21,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,7 +56,6 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -88,9 +85,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -102,7 +103,6 @@ import com.example.domain.FfmpegMath
 import com.example.domain.LocalAppStrings
 import com.example.service.CpuPerformanceBooster
 import com.example.ui.components.AutoFitSingleLineText
-import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoCodeStyle
 import com.example.ui.theme.MonoLabelStyle
@@ -328,8 +328,14 @@ fun ProcessingScreen(
                                 LogConsoleCard(
                                     logs = running.logs,
                                     expanded = showLogs,
-                                    onToggle = { showLogs = !showLogs }
+                                    onToggle = { showLogs = !showLogs },
+                                    commandText = running.executedCommand
                                 )
+                            }
+                            if (running.activePerfStamps.isNotEmpty()) {
+                                item {
+                                    ModestActiveEngineStamps(stamps = running.activePerfStamps)
+                                }
                             }
                         }
                     }
@@ -356,12 +362,13 @@ fun ProcessingScreen(
                                     onShare = { onShareOutput(output) }
                                 )
                             }
-                            if (success.logs.isNotEmpty()) {
+                            if (success.logs.isNotEmpty() || !success.executedCommand.isNullOrBlank()) {
                                 item {
                                     LogConsoleCard(
                                         logs = success.logs,
                                         expanded = showLogs,
-                                        onToggle = { showLogs = !showLogs }
+                                        onToggle = { showLogs = !showLogs },
+                                        commandText = success.executedCommand
                                     )
                                 }
                             }
@@ -380,12 +387,14 @@ fun ProcessingScreen(
                                     logs = failed.logs
                                 )
                             }
-                            if (failed.logs.isNotEmpty()) {
+                            val hideDuplicateLogConsole = failed.isCustomCommand && !failed.wasCancelled
+                            if (!hideDuplicateLogConsole && (failed.logs.isNotEmpty() || !failed.executedCommand.isNullOrBlank())) {
                                 item {
                                     LogConsoleCard(
                                         logs = failed.logs,
                                         expanded = showLogs,
-                                        onToggle = { showLogs = !showLogs }
+                                        onToggle = { showLogs = !showLogs },
+                                        commandText = failed.executedCommand
                                     )
                                 }
                             }
@@ -647,14 +656,6 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            if (state.activePerfStamps.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                ActivePerfStampBox(
-                    stamps = state.activePerfStamps,
-                    title = strings.activePerfStampTitle
-                )
-            }
-
             if (Build.VERSION.SDK_INT >= 36) {
                 val context = LocalContext.current
                 val lifecycleOwner = LocalLifecycleOwner.current
@@ -704,99 +705,65 @@ private fun RunningMonitorCard(state: EncodingState.Running) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * Understated, unboxed editorial colophon listing only genuinely active runtime optimizations
+ * ordered from highest performance impact to lowest, tapering smoothly in size and ink opacity.
+ * Rendered as a single remembered AnnotatedString (zero animations, zero extra layout nodes).
+ */
 @Composable
-private fun ActivePerfStampBox(
-    stamps: List<String>,
-    title: String
-) {
-    val extColors = LocalExtendedColors.current
-    val stampInk = extColors.lossless
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("active_perf_stamp_box"),
-        shape = RoundedCornerShape(12.dp),
-        color = extColors.losslessContainer.copy(alpha = 0.28f),
-        border = BorderStroke(1.dp, stampInk.copy(alpha = 0.34f))
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Verified,
-                    contentDescription = null,
-                    tint = stampInk,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelMedium.copy(
+private fun ModestActiveEngineStamps(stamps: List<String>) {
+    val baseInk = MaterialTheme.colorScheme.onSurfaceVariant
+    val styledLine = remember(stamps, baseInk) {
+        val count = stamps.size
+        val maxSp = 15.0f
+        val minSp = 9.5f
+        val stepSp = if (count > 1) ((maxSp - minSp) / (count - 1)).coerceAtMost(1.15f) else 0f
+        buildAnnotatedString {
+            stamps.forEachIndexed { idx, stamp ->
+                if (idx > 0) {
+                    withStyle(
+                        SpanStyle(
+                            color = baseInk.copy(alpha = 0.28f),
+                            fontSize = 10.sp,
+                            fontFamily = PlayfairDisplayFontFamily
+                        )
+                    ) {
+                        append("  ·  ")
+                    }
+                }
+                val sizeSp = (maxSp - idx * stepSp).coerceAtLeast(minSp)
+                val fraction = if (count > 1) idx.toFloat() / (count - 1).toFloat() else 0f
+                val alpha = (0.80f - fraction * 0.34f).coerceIn(0.44f, 0.82f)
+                val weight = when {
+                    idx <= 1 -> FontWeight.SemiBold
+                    idx <= 3 -> FontWeight.Medium
+                    else -> FontWeight.Normal
+                }
+                withStyle(
+                    SpanStyle(
+                        color = baseInk.copy(alpha = alpha),
+                        fontSize = sizeSp.sp,
                         fontFamily = PlayfairDisplayFontFamily,
                         fontStyle = FontStyle.Italic,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.5.sp,
-                        lineHeight = 16.sp,
+                        fontWeight = weight,
                         letterSpacing = 0.35.sp
-                    ),
-                    color = stampInk,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(0.75.dp)
-                        .background(stampInk.copy(alpha = 0.22f))
-                )
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                stamps.forEach { stamp ->
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(0.85.dp, stampInk.copy(alpha = 0.38f))
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(5.dp)
-                                    .clip(CircleShape)
-                                    .background(stampInk)
-                            )
-                            Spacer(Modifier.width(5.dp))
-                            Text(
-                                text = stamp,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 10.5.sp,
-                                    lineHeight = 13.sp,
-                                    letterSpacing = 0.5.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
-                    }
+                    )
+                ) {
+                    append(stamp)
                 }
             }
         }
     }
+
+    Text(
+        text = styledLine,
+        textAlign = TextAlign.Center,
+        lineHeight = 22.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp)
+            .testTag("active_perf_stamp_box")
+    )
 }
 
 @Composable
@@ -1188,12 +1155,16 @@ private fun FailureBannerCard(
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
-                                    .padding(top = 1.dp)
-                                    .size(17.dp)
+                                    .padding(top = 2.dp)
+                                    .size(19.dp)
                             )
                             Text(
                                 text = strings.aiErrorCopyGuidance,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -1252,16 +1223,51 @@ private fun FailureBannerCard(
 private fun LogConsoleCard(
     logs: List<String>,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    commandText: String? = null
 ) {
     val context = LocalContext.current
     val extColors = LocalExtendedColors.current
     val strings = LocalAppStrings.current
     val lastLine = logs.lastOrNull()
+    val formattedCommand = remember(commandText) {
+        commandText?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+            raw.lines().joinToString("\n") { line ->
+                val trimmed = line.trim()
+                if (trimmed.startsWith("&&") || trimmed.startsWith("\$")) trimmed else "\$ $trimmed"
+            }
+        }
+    }
     val formattedLogs = remember(logs) {
         if (logs.isEmpty()) "" else logs.takeLast(80).joinToString("\n")
     }
-    var copiedLogs by remember(formattedLogs) { mutableStateOf(false) }
+    val hasTerminalContent = formattedCommand != null || formattedLogs.isNotEmpty()
+    val cmdInk = MaterialTheme.colorScheme.onSurface
+    val logInk = MaterialTheme.colorScheme.onSurfaceVariant
+    val consoleAnnotatedText = remember(formattedCommand, formattedLogs, cmdInk, logInk, strings.logConsoleEmpty) {
+        buildAnnotatedString {
+            if (!hasTerminalContent) {
+                withStyle(SpanStyle(color = logInk)) {
+                    append(strings.logConsoleEmpty)
+                }
+            } else {
+                if (formattedCommand != null) {
+                    withStyle(SpanStyle(color = cmdInk, fontWeight = FontWeight.Medium)) {
+                        append(formattedCommand)
+                    }
+                    if (formattedLogs.isNotEmpty()) {
+                        append("\n\n")
+                    }
+                }
+                if (formattedLogs.isNotEmpty()) {
+                    withStyle(SpanStyle(color = logInk)) {
+                        append(formattedLogs)
+                    }
+                }
+            }
+        }
+    }
+    var copiedLogs by remember(formattedCommand, formattedLogs) { mutableStateOf(false) }
 
     LaunchedEffect(copiedLogs) {
         if (copiedLogs) {
@@ -1307,7 +1313,9 @@ private fun LogConsoleCard(
             AnimatedVisibility(visible = expanded) {
                 val consoleScroll = rememberScrollState()
                 LaunchedEffect(logs.size, lastLine) {
-                    consoleScroll.animateScrollTo(consoleScroll.maxValue)
+                    if (logs.size > 4) {
+                        consoleScroll.animateScrollTo(consoleScroll.maxValue)
+                    }
                 }
                 Column(
                     modifier = Modifier
@@ -1323,9 +1331,8 @@ private fun LogConsoleCard(
                     ) {
                         SelectionContainer {
                             Text(
-                                text = if (formattedLogs.isEmpty()) strings.logConsoleEmpty else formattedLogs,
+                                text = consoleAnnotatedText,
                                 style = MonoCodeStyle.copy(fontSize = 11.sp, lineHeight = 16.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 96.dp, max = 260.dp)
@@ -1335,10 +1342,19 @@ private fun LogConsoleCard(
                         }
                     }
 
-                    if (formattedLogs.isNotEmpty()) {
+                    if (hasTerminalContent) {
                         FilledTonalButton(
                             onClick = {
-                                copyTextToClipboard(context, "FFmpeg Logs", logs.joinToString("\n"))
+                                val fullCopy = buildString {
+                                    if (formattedCommand != null) {
+                                        append(formattedCommand)
+                                        if (logs.isNotEmpty()) append("\n\n")
+                                    }
+                                    if (logs.isNotEmpty()) {
+                                        append(logs.joinToString("\n"))
+                                    }
+                                }
+                                copyTextToClipboard(context, "FFmpeg Logs", fullCopy)
                                 copiedLogs = true
                             },
                             modifier = Modifier

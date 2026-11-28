@@ -835,4 +835,45 @@ class FfmpegMathTest {
         val audioOnlyArgs = FfmpegMath.buildFfmpegSteps(mkvHevcDts, ModeConfigState(mode = ProcessingMode.AUDIO_ONLY_AAC, audioBitrateInput = "256"), { "\$IN" }, "out.mp4", "/tmp/p").single().args
         assertTrue(audioOnlyArgs.contains("-tag:v") && audioOnlyArgs.contains("hvc1"))
     }
+
+    @Test
+    fun estimateAudioBitrateBpsFromPacketsComputesExactOpusBitrate() {
+        // Simulate 20ms Opus frames of 320 bytes each -> 320 * 8 / 0.020 = 128,000 bps (128 kbps)
+        val opusPackets = (0 until 20).joinToString("\n") { i ->
+            val pts = String.format(java.util.Locale.US, "%.6f", i * 0.020)
+            "pts_time=$pts|dts_time=$pts|duration_time=0.020000|size=320"
+        }
+        val bps = FfmpegMath.estimateAudioBitrateBpsFromPackets(opusPackets)
+        assertEquals(128_000L, bps)
+
+        // Fallback when duration_time is N/A -> uses PTS span across packets
+        val noDurPackets = (0 until 11).joinToString("\n") { i ->
+            val pts = String.format(java.util.Locale.US, "%.6f", i * 0.020)
+            "pts_time=$pts|dts_time=$pts|duration_time=N/A|size=400"
+        }
+        val spanBps = FfmpegMath.estimateAudioBitrateBpsFromPackets(noDurPackets)
+        assertEquals(160_000L, spanBps)
+
+        assertEquals(null, FfmpegMath.estimateAudioBitrateBpsFromPackets(""))
+    }
+
+    @Test
+    fun formatCommandForTerminalSanitizesSafAndWorkDirCleanly() {
+        val cmd = FfmpegMath.formatCommandForTerminal(
+            toolBinary = "ffmpeg",
+            args = listOf(
+                "-y", "-i", "__FFMPEG_LAZY_INPUT__",
+                "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+                "-x265-params", "log-level=warning:pools=+:pass=1:stats=/data/cache/fflab_work_1/ff2pass.log",
+                "/data/cache/fflab_work_1/my clip_H265_10bit.mp4"
+            ),
+            mediaFileName = "my clip.mkv",
+            workDirPath = "/data/cache/fflab_work_1",
+            inputPlaceholder = "__FFMPEG_LAZY_INPUT__"
+        )
+        assertEquals(
+            "ffmpeg -y -i \"my clip.mkv\" -c:v libx265 -pix_fmt yuv420p10le -x265-params log-level=warning:pools=+:pass=1:stats=ff2pass.log \"my clip_H265_10bit.mp4\"",
+            cmd
+        )
+    }
 }

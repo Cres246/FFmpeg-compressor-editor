@@ -632,7 +632,9 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
     # 1. Upgrade BOTH -Os and -O2 -> -O3
     updated = re.sub(r"(?<=[\s\"'])-O[s2](?=[\s\"'])", "-O3", updated)
 
-    # 2. Enforce -O3 + zero-PLT flags + safe ARM64 DotProd/I8MM CMake probe before the first cmake
+    # 2. Enforce -O3 + zero-PLT flags + safe ARM64 DotProd/I8MM CMake probe + 8-bit & 10-bit
+    #    multilib libx265 (LINKED_10BIT=ON) so 8-bit keeps 100% native uint8_t speed (0% overhead)
+    #    while true 10-bit Main10 (`yuv420p10le`) is compiled with full ARM64 SIMD assembly.
     flag_marker = "# X265-ARM64-O3-ZERO-PLT"
     if flag_marker not in updated:
         sanitizer = ARM64_RUNTIME_FLAG_SANITIZER_TEMPLATE.format(
@@ -641,10 +643,49 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
         )
         safe_extra = (
             'X265_EXTRA_SIMD_FLAGS=""\n'
+            'X265_MULTILIB_8BIT_FLAGS=""\n'
             'if [[ "${ARCH:-}" == "arm64-v8a" || "${FFMPEG_KIT_ARCH:-}" == "arm64-v8a" ]]; then\n'
             '  PY_BIN="$(command -v python3 || echo /usr/bin/python3)"\n'
             f'  X265_EXTRA_SIMD_FLAGS="$("${{PY_BIN}}" "{self_script_path.resolve()}" --inspect-x265 "${{BASEDIR}}/src/${{LIB_NAME}}" 2>/dev/null || echo "")"\n'
             '  echo "[x265] Verified runtime-safe ARM64 CMake SIMD flags: ${X265_EXTRA_SIMD_FLAGS:-"(upstream default)"}"\n'
+            '  # Build isolated 10-bit Main10 static sub-library (x265_10bit namespace, zero impact on 8-bit)\n'
+            '  X265_BUILD_ABS="$(pwd)"\n'
+            '  X265_10BIT_DIR="${X265_BUILD_ABS}_10bit"\n'
+            '  rm -rf "${X265_10BIT_DIR}"\n'
+            '  mkdir -p "${X265_10BIT_DIR}" || return 1\n'
+            '  echo "[x265] Building ARM64 10-bit Main10 sub-library (-DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF)..."\n'
+            '  (\n'
+            '    cd "${X265_10BIT_DIR}" || exit 1\n'
+            '    cmake -Wno-dev \\\n'
+            '      -DCMAKE_VERBOSE_MAKEFILE=0 \\\n'
+            '      -DCMAKE_C_FLAGS="${CFLAGS}" \\\n'
+            '      -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \\\n'
+            '      -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \\\n'
+            '      -DCMAKE_FIND_ROOT_PATH="${ANDROID_SYSROOT}" \\\n'
+            '      -DCMAKE_BUILD_TYPE=Release \\\n'
+            '      -DCMAKE_INSTALL_PREFIX="${LIB_INSTALL_PREFIX}" \\\n'
+            '      -DCMAKE_SYSTEM_NAME=Android \\\n'
+            '      -DCMAKE_CROSSCOMPILING=True \\\n'
+            '      -DCMAKE_SYSTEM_VERSION="${API}" \\\n'
+            '      -DCMAKE_C_COMPILER="${ANDROID_TOOLCHAIN}/bin/$CC" \\\n'
+            '      -DCMAKE_CXX_COMPILER="${ANDROID_TOOLCHAIN}/bin/$CXX" \\\n'
+            '      -DCMAKE_LINKER="${ANDROID_TOOLCHAIN}/bin/$LD" \\\n'
+            '      -DCMAKE_AR="${ANDROID_TOOLCHAIN}/bin/$AR" \\\n'
+            '      -DCMAKE_POSITION_INDEPENDENT_CODE=1 \\\n'
+            '      -DSTATIC_LINK_CRT=1 \\\n'
+            '      -DENABLE_PIC=1 \\\n'
+            '      -DENABLE_CLI=0 \\\n'
+            '      -DHIGH_BIT_DEPTH=ON \\\n'
+            '      -DMAIN12=OFF \\\n'
+            '      -DEXPORT_C_API=OFF \\\n'
+            '      ${ASM_OPTIONS} ${X265_EXTRA_SIMD_FLAGS} \\\n'
+            '      -DCMAKE_SYSTEM_PROCESSOR="$(get_cmake_system_processor)" \\\n'
+            '      -DENABLE_SHARED=0 "${BASEDIR}/src/${LIB_NAME}/source" || exit 1\n'
+            '    make -j$(get_cpu_count) || exit 1\n'
+            '  ) || return 1\n'
+            '  cp -f "${X265_10BIT_DIR}/libx265.a" "${X265_BUILD_ABS}/libx265_main10.a" || return 1\n'
+            '  X265_MULTILIB_8BIT_FLAGS="-DEXTRA_LIB=x265_main10.a -DEXTRA_LINK_FLAGS=-L${X265_BUILD_ABS} -DLINKED_10BIT=ON"\n'
+            '  echo "[x265] OK: Built 10-bit archive (${X265_BUILD_ABS}/libx265_main10.a)"\n'
             'fi\n'
         )
         cmake_match = re.search(r"^[ \t]*cmake\b", updated, flags=re.MULTILINE)
@@ -657,13 +698,60 @@ def patch_x265_script(root: Path, self_script_path: Path) -> None:
                 + "\n"
                 + updated[cmake_match.start() :]
             )
-            # Append ${X265_EXTRA_SIMD_FLAGS} right after ${ASM_OPTIONS} inside the cmake call
-            updated = re.sub(
-                r"(\$\{ASM_OPTIONS\})",
-                r"\1 ${X265_EXTRA_SIMD_FLAGS}",
-                updated,
-                count=1,
+            # Append ${X265_EXTRA_SIMD_FLAGS} ${X265_MULTILIB_8BIT_FLAGS} right after ${ASM_OPTIONS}
+            # inside the 8-bit cmake call (the second cmake invocation now that 10-bit precedes it).
+            asm_matches = list(re.finditer(r"\$\{ASM_OPTIONS\}(?!\s+\$\{X265_EXTRA_SIMD_FLAGS\})", updated))
+            if asm_matches:
+                m_asm = asm_matches[-1]
+                updated = (
+                    updated[: m_asm.end()]
+                    + " ${X265_EXTRA_SIMD_FLAGS} ${X265_MULTILIB_8BIT_FLAGS}"
+                    + updated[m_asm.end() :]
+                )
+
+        # Merge 8-bit and 10-bit static archives into installed libx265.a right after `make install`
+        merge_marker = "# X265-ARM64-MULTILIB-10BIT-MERGE"
+        if merge_marker not in updated:
+            merge_hook = (
+                f"\n{merge_marker}\n"
+                'X265_BUILD_ABS="$(pwd)"\n'
+                'if [[ -f "${X265_BUILD_ABS}/libx265_main10.a" && -f "${X265_BUILD_ABS}/libx265.a" ]]; then\n'
+                '  cp -f "${X265_BUILD_ABS}/libx265.a" "${X265_BUILD_ABS}/libx265_main8.a" || return 1\n'
+                '  if [[ -x "${AR:-}" ]]; then\n'
+                '    X265_AR_BIN="${AR}"\n'
+                '  elif [[ -x "${ANDROID_TOOLCHAIN}/bin/${AR:-llvm-ar}" ]]; then\n'
+                '    X265_AR_BIN="${ANDROID_TOOLCHAIN}/bin/${AR:-llvm-ar}"\n'
+                '  else\n'
+                '    X265_AR_BIN="$(command -v llvm-ar || command -v ar)"\n'
+                '  fi\n'
+                '  echo "[x265] Merging 8-bit + 10-bit archives into ${LIB_INSTALL_PREFIX}/lib/libx265.a via ${X265_AR_BIN} -M..."\n'
+                '  "${X265_AR_BIN}" -M <<EOF || return 1\n'
+                'CREATE ${LIB_INSTALL_PREFIX}/lib/libx265.a\n'
+                'ADDLIB ${X265_BUILD_ABS}/libx265_main8.a\n'
+                'ADDLIB ${X265_BUILD_ABS}/libx265_main10.a\n'
+                'SAVE\n'
+                'END\n'
+                'EOF\n'
+                '  if [[ -x "${RANLIB:-}" ]]; then\n'
+                '    "${RANLIB}" "${LIB_INSTALL_PREFIX}/lib/libx265.a" || true\n'
+                '  elif [[ -n "${RANLIB:-}" && -x "${ANDROID_TOOLCHAIN}/bin/${RANLIB}" ]]; then\n'
+                '    "${ANDROID_TOOLCHAIN}/bin/${RANLIB}" "${LIB_INSTALL_PREFIX}/lib/libx265.a" || true\n'
+                '  fi\n'
+                '  cp -f "${LIB_INSTALL_PREFIX}/lib/libx265.a" "${X265_BUILD_ABS}/libx265.a" || true\n'
+                '  if ! strings "${LIB_INSTALL_PREFIX}/lib/libx265.a" | grep -qE "(8bit\\+10bit|x265_10bit)"; then\n'
+                '    echo "[x265] ERROR: Merged libx265.a is missing 10-bit (8bit+10bit / x265_10bit) symbols!" >&2\n'
+                '    return 1\n'
+                '  fi\n'
+                '  echo "[x265] OK: Multi-bitdepth (8-bit + 10-bit Main10) libx265.a verified!"\n'
+                'fi\n'
             )
+            install_match = re.search(r"^[ \t]*make[ \t]+install[^\n]*$", updated, flags=re.MULTILINE)
+            if install_match:
+                updated = (
+                    updated[: install_match.end()]
+                    + merge_hook
+                    + updated[install_match.end() :]
+                )
 
     # 3. Also handle legacy scripts that explicitly disabled assembly (`-DENABLE_ASSEMBLY=0/OFF`)
     marker = "# X265-ARM64-SIMD-RUNTIME-SAFE"

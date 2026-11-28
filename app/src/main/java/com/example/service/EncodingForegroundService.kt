@@ -1284,10 +1284,20 @@ class EncodingForegroundService : Service() {
                 strings = s
             )
 
+            val executedCommands = mutableListOf<String>()
+
             for ((idx, step) in steps.withIndex()) {
                 if (!EncodingJobController.isRunActive(runId)) return
                 val passNum = idx + 1
                 val totalPasses = steps.size
+                val stepTerminalCmd = FfmpegMath.formatCommandForTerminal(
+                    toolBinary = "ffmpeg",
+                    args = step.args,
+                    mediaFileName = media.fileName,
+                    workDirPath = workDir.absolutePath,
+                    inputPlaceholder = inputPlaceholder
+                )
+                executedCommands.add(stepTerminalCmd)
                 if (totalPasses > 1) {
                     appendLog("${s.logTagStep(passNum, totalPasses)} ${step.label}")
                 }
@@ -1310,7 +1320,8 @@ class EncodingForegroundService : Service() {
                         videoSpecsSummary = videoSpecsSummary,
                         presetLabel = presetLabel,
                         canSwitchToTurbo = canSwitchToTurbo,
-                        activePerfStamps = activePerfStamps
+                        activePerfStamps = activePerfStamps,
+                        executedCommand = stepTerminalCmd
                     )
                 )
                 updateNotificationThrottled(
@@ -1373,7 +1384,8 @@ class EncodingForegroundService : Service() {
                                     videoSpecsSummary = videoSpecsSummary,
                                     presetLabel = presetLabel,
                                     canSwitchToTurbo = canSwitchToTurbo,
-                                    activePerfStamps = activePerfStamps
+                                    activePerfStamps = activePerfStamps,
+                                    executedCommand = stepTerminalCmd
                                 )
                             )
                         }
@@ -1436,6 +1448,7 @@ class EncodingForegroundService : Service() {
                             hint = hint,
                             logs = snapLogs,
                             wasCancelled = false,
+                            executedCommand = stepTerminalCmd,
                             rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
                                 modeTitle = modeTitle,
                                 errorMessage = errMsg,
@@ -1458,6 +1471,8 @@ class EncodingForegroundService : Service() {
 
             if (!EncodingJobController.isRunActive(runId)) return
 
+            val combinedExecutedCommand = executedCommands.joinToString("\n&& ").ifBlank { null }
+
             if (!tempOutFile.exists() || tempOutFile.length() == 0L) {
                 val curS = AppLanguageController.currentStrings()
                 appendLog("${curS.logTagError} ${curS.errOutputNotCreated}")
@@ -1469,6 +1484,7 @@ class EncodingForegroundService : Service() {
                         errorMessage = curS.errOutputNotCreated,
                         hint = resolveContextualHint(config, curS),
                         logs = snapLogs,
+                        executedCommand = combinedExecutedCommand,
                         rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
                             modeTitle = modeTitle,
                             errorMessage = curS.errOutputNotCreated,
@@ -1511,7 +1527,8 @@ class EncodingForegroundService : Service() {
                     outputs = listOf(completed),
                     modeTitle = modeTitle,
                     summaryMessage = curS.successOutputSize(FfmpegMath.formatSizeBytes(saved.sizeBytes)),
-                    logs = currentLogs()
+                    logs = currentLogs(),
+                    executedCommand = combinedExecutedCommand
                 )
             )
         } catch (_: CancellationException) {
@@ -1789,6 +1806,12 @@ class EncodingForegroundService : Service() {
                     }
                 }
                 val expectedDur = bracket?.expectedSpanSec ?: media.durationSec
+                val remuxTerminalCmd = FfmpegMath.formatCommandForTerminal(
+                    toolBinary = "ffmpeg",
+                    args = remuxArgs,
+                    mediaFileName = media.fileName,
+                    workDirPath = remuxWorkDir.absolutePath
+                )
                 var lastUiEmitMs = 0L
                 var lastEmittedPct: Int? = null
                 var lastEmittedWholeSec = -1L
@@ -1833,7 +1856,8 @@ class EncodingForegroundService : Service() {
                                     isHardwareTurbo = false,
                                     canSwitchToTurbo = false,
                                     isTurboPreRemux = true,
-                                    activePerfStamps = remuxActiveStamps
+                                    activePerfStamps = remuxActiveStamps,
+                                    executedCommand = remuxTerminalCmd
                                 )
                             )
                         }
@@ -2083,6 +2107,13 @@ class EncodingForegroundService : Service() {
                 )
             }
 
+            val audioTerminalCmd = FfmpegMath.formatCommandForTerminal(
+                toolBinary = "ffmpeg",
+                args = audioArgs,
+                mediaFileName = media.fileName,
+                workDirPath = audioWorkDir.absolutePath
+            )
+
             var lastUiEmitMs = 0L
             var lastEmittedPct: Int? = null
             var lastEmittedWholeSec = -1L
@@ -2127,7 +2158,8 @@ class EncodingForegroundService : Service() {
                                 isHardwareTurbo = false,
                                 canSwitchToTurbo = false,
                                 isTurboPreRemux = true,
-                                activePerfStamps = audioPrepActiveStamps
+                                activePerfStamps = audioPrepActiveStamps,
+                                executedCommand = audioTerminalCmd
                             )
                         )
                     }
@@ -2343,6 +2375,13 @@ class EncodingForegroundService : Service() {
                 if (!EncodingJobController.isRunActive(runId)) return
                 val passNum = idx + 1
                 val totalPasses = steps.size
+                val prepTerminalCmd = FfmpegMath.formatCommandForTerminal(
+                    toolBinary = "ffmpeg",
+                    args = step.args,
+                    mediaFileName = media.fileName,
+                    workDirPath = prepWorkDir.absolutePath,
+                    inputPlaceholder = inputPlaceholder
+                )
                 val stepArgs = step.args.map { arg ->
                     if (arg == inputPlaceholder) {
                         FfmpegEngine.resolveInputPath(applicationContext, effectivePrepMedia.uri)
@@ -2397,7 +2436,8 @@ class EncodingForegroundService : Service() {
                                     isHardwareTurbo = false,
                                     canSwitchToTurbo = false,
                                     isTurboPreRemux = true,
-                                    activePerfStamps = prepActiveStamps
+                                    activePerfStamps = prepActiveStamps,
+                                    executedCommand = prepTerminalCmd
                                 )
                             )
                         }
@@ -3319,6 +3359,7 @@ class EncodingForegroundService : Service() {
                     errorMessage = s.errCustomCmdEmpty,
                     hint = s.hintCustomCmdExample,
                     logs = snapLogs,
+                    isCustomCommand = true,
                     rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
                         modeTitle = modeTitle,
                         errorMessage = s.errCustomCmdEmpty,
@@ -3336,6 +3377,7 @@ class EncodingForegroundService : Service() {
         val displayOutName = plan.primaryFinalOutputName
             ?: if (plan.isProbeOnly) s.customCmdProbeOutputPlaceholder else s.customCmdOutputLabel
         val collectedCommandOutputs = mutableListOf<String>()
+        val executedCommands = mutableListOf<String>()
         val customUsesSafRead = media.uri.scheme.equals("content", ignoreCase = true) &&
             plan.steps.any { step -> step.args.any { it == inputPlaceholder } }
         val customActivePerfStamps = resolveOneShotActivePerfStamps(
@@ -3347,6 +3389,15 @@ class EncodingForegroundService : Service() {
         for ((idx, step) in plan.steps.withIndex()) {
             if (!EncodingJobController.isRunActive(runId)) return
             val isProbeStep = step.tool == CustomCommandTool.FFPROBE
+            val toolBin = if (isProbeStep) "ffprobe" else "ffmpeg"
+            val stepTerminalCmd = FfmpegMath.formatCommandForTerminal(
+                toolBinary = toolBin,
+                args = step.args,
+                mediaFileName = media.fileName,
+                workDirPath = workDir.absolutePath,
+                inputPlaceholder = inputPlaceholder
+            )
+            executedCommands.add(stepTerminalCmd)
             val resolvedArgs = step.args.map { arg ->
                 if (arg == inputPlaceholder) {
                     FfmpegEngine.resolveInputPath(applicationContext, media.uri)
@@ -3381,7 +3432,8 @@ class EncodingForegroundService : Service() {
                     sizeKb = 0L,
                     logs = currentLogs(),
                     summaryBanner = summaryBanner,
-                    activePerfStamps = customActivePerfStamps
+                    activePerfStamps = customActivePerfStamps,
+                    executedCommand = stepTerminalCmd
                 )
             )
             updateNotificationThrottled(
@@ -3443,7 +3495,8 @@ class EncodingForegroundService : Service() {
                                     sizeKb = kb,
                                     logs = currentLogs(),
                                     summaryBanner = summaryBanner,
-                                    activePerfStamps = customActivePerfStamps
+                                    activePerfStamps = customActivePerfStamps,
+                                    executedCommand = stepTerminalCmd
                                 )
                             )
                         }
@@ -3488,14 +3541,15 @@ class EncodingForegroundService : Service() {
                 val errMsg = curS.errCustomCmdFailed(res.returnCode)
                 appendLog("${curS.logTagError} $errMsg")
                 val snapLogs = currentLogs()
-                val toolBin = if (isProbeStep) "ffprobe" else "ffmpeg"
                 EncodingJobController.updateStateIfActive(
                     runId,
                     EncodingState.Failed(
                         modeTitle = modeTitle,
                         errorMessage = errMsg,
-                        hint = curS.hintCustomCmdSyntax(media.extension),
+                        hint = null,
                         logs = snapLogs,
+                        isCustomCommand = true,
+                        executedCommand = stepTerminalCmd,
                         rawErrorDetails = FfmpegMath.buildAiRawErrorReport(
                             modeTitle = modeTitle,
                             errorMessage = errMsg,
@@ -3593,7 +3647,8 @@ class EncodingForegroundService : Service() {
                 modeTitle = modeTitle,
                 summaryMessage = summary,
                 logs = currentLogs(),
-                commandOutput = commandOutputText
+                commandOutput = commandOutputText,
+                executedCommand = executedCommands.joinToString("\n&& ").ifBlank { null }
             )
         )
     }

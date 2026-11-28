@@ -42,7 +42,7 @@ jobs:
           path: |
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar
             app/libs/ffmpeg-kit-custom-arm64-gpl.aar.info.txt
-          key: ffmpeg-kit-next-arm64-simd-v4-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
+          key: ffmpeg-kit-next-arm64-simd-v5-${{ hashFiles('scripts/build_optimized_ffmpegkit_arm64.sh', 'scripts/patch_ffmpegkit_arm64_simd.py') }}
 
       - name: Nix Derlemesi Icin Disk Alani Ac
         if: ${{ github.event_name != 'pull_request' && (steps.ffmpeg-cache.outputs.cache-hit != 'true' || inputs.rebuild_ffmpeg_aar == true) }}
@@ -208,6 +208,11 @@ jobs:
 
           if ! strings /tmp/verify-release-apk/classes*.dex | grep -qF "FFmpegKit Next"; then
             echo "::error::KRITIK HATA: Release APK BuildConfig icinde 'FFmpegKit Next' bulunamadi!"
+            exit 1
+          fi
+
+          if ! strings /tmp/verify-release-apk/lib/arm64-v8a/libavcodec.so | grep -qE '(8bit\+10bit|x265_10bit)'; then
+            echo "::error::KRITIK HATA: Release APK libx265 icinde 10-bit Main10 (8bit+10bit) destegi bulunamadi!"
             exit 1
           fi
 

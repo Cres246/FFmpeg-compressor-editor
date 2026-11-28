@@ -416,7 +416,8 @@ sealed interface EncodingState {
         val canSwitchToTurbo: Boolean = false,
         val isTurboPreRemux: Boolean = false,
         val elapsedSec: Double = 0.0,
-        val activePerfStamps: List<String> = emptyList()
+        val activePerfStamps: List<String> = emptyList(),
+        val executedCommand: String? = null
     ) : EncodingState
 
     data class Success(
@@ -426,7 +427,8 @@ sealed interface EncodingState {
         val logs: List<String>,
         val isHardwareTurbo: Boolean = false,
         val elapsedSec: Double = 0.0,
-        val commandOutput: String? = null
+        val commandOutput: String? = null,
+        val executedCommand: String? = null
     ) : EncodingState
 
     data class Failed(
@@ -448,7 +450,9 @@ sealed interface EncodingState {
         val hasTriedAudioConvert: Boolean = false,
         val hasTriedVideoOnlyConvert: Boolean = false,
         val hasTriedVideoAudioConvert: Boolean = false,
-        val rawErrorDetails: String? = null
+        val rawErrorDetails: String? = null,
+        val executedCommand: String? = null,
+        val isCustomCommand: Boolean = false
     ) : EncodingState
 }
 

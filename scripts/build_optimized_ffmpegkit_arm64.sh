@@ -533,7 +533,11 @@ for req_codec in "libx264" "libx265" "libmp3lame"; do
     exit 1
   fi
 done
-echo "[verify] Gate 2 passed (arm64-v8a .so + libx264, libx265, libmp3lame verified)."
+if ! grep -qE '(8bit\+10bit|x265_10bit)' <<< "${CODEC_STRINGS}"; then
+  echo "[error] Compiled arm64-v8a libx265 does not include 10-bit Main10 (8bit+10bit / x265_10bit)!" >&2
+  exit 1
+fi
+echo "[verify] Gate 2 passed (arm64-v8a .so + libx264, libx265 8-bit+10-bit Main10, libmp3lame verified)."
 
 # Gate 3: 16 KB ELF page-size alignment check across EVERY bundled arm64-v8a .so library
 echo "[verify] Checking 16 KB ELF page alignment across arm64-v8a .so libraries..."
