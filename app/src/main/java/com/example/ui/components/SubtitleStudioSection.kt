@@ -652,7 +652,7 @@ fun SubtitleStudioSection(
                     }
 
                     // In-place Play/Pause center icon (never launches external video player!)
-                    AnimatedVisibility(
+                    androidx.compose.animation.AnimatedVisibility(
                         visible = showPlayOverlay || !isPlaying,
                         enter = fadeIn(tween(150)),
                         exit = fadeOut(tween(220)),

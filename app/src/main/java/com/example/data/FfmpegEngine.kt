@@ -1129,7 +1129,11 @@ object FfmpegEngine {
                         }
                     }
                 }
-                val fontMap = SubtitleFontOption.entries.associate { it.assFontName to it.assFontName }
+                val fontMap: Map<String?, String?> = buildMap {
+                    for (opt in SubtitleFontOption.entries) {
+                        put(opt.assFontName, opt.assFontName)
+                    }
+                }
                 runCatching {
                     FFmpegKitConfig.setFontDirectoryList(
                         context,
